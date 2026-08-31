@@ -49,13 +49,15 @@ type Collector struct {
 	// window counters, reset each tick
 	total, typeb, edifact         int64
 	kindAVS, kindMVT, kindRES     int64
-	kindASM, kindOther            int64
+	kindASM, kindPNL, kindBag     int64
+	kindOther                     int64
 	undeliverable, bookings, mvts int64
 	queuePlaced                   int64
 
 	// series, per second
 	sTotal, sTypeb, sEdifact        ring
 	sAVS, sMVT, sRES, sASM, sOther  ring
+	sPNL, sBag                      ring
 	sUndeliv, sBookings, sMovements ring
 	sAirborne, sQueued              ring
 
@@ -148,6 +150,10 @@ func (c *Collector) OnMessage(payload map[string]any) {
 		c.kindRES++
 	case "ASM", "SSM":
 		c.kindASM++
+	case "PNL", "ADL":
+		c.kindPNL++
+	case "BSM", "BPM":
+		c.kindBag++
 	default:
 		c.kindOther++
 	}

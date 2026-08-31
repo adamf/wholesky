@@ -13,15 +13,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
+	"github.com/adamf/jetway/pkg/baggage"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/matip"
 	"github.com/adamf/jetway/pkg/mvt"
+	"github.com/adamf/jetway/pkg/pnl"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/jetway/pkg/typeb"
@@ -49,6 +52,11 @@ type Tenant struct {
 	distribution []string
 	partners     []string
 	log          *slog.Logger
+
+	// pnlSent remembers what each flight's PNL said, keyed by flight/date,
+	// so the ADL can carry the diff rather than the world.
+	pnlMu   sync.Mutex
+	pnlSent map[string]map[string]pnl.Name
 
 	// The link runs under its own sub-context so chaos can cut it without
 	// touching the tenant. bootCtx is what a restored link derives from.
@@ -165,6 +173,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		flights: flights, client: client, watch: opts.WatchAddress,
 		distribution: opts.DistributionAddresses,
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
+		pnlSent: map[string]map[string]pnl.Name{},
 	}
 	linkCtx, linkCancel := context.WithCancel(ctx)
 	t.linkCancel = linkCancel
@@ -405,4 +414,198 @@ func (t *Tenant) sendTypeBTo(ctx context.Context, addrs []string, text, kind str
 	peer := t.Gateway.Peer("net")
 	_, err = t.Gateway.Send(ctx, peer, raw, kind, "", "")
 	return err
+}
+
+// nameItems lists the flight's booked parties from the tenant's own store:
+// what this carrier believes it is boarding, which is exactly what a name
+// list asserts. Keyed by locator so the ADL can say what changed.
+func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (map[string]pnl.Name, string, error) {
+	wireDate := strings.ToUpper(day.Format("02Jan"))
+	recs, err := t.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wireDate, 5000)
+	if err != nil {
+		return nil, wireDate, err
+	}
+	items := map[string]pnl.Name{}
+	for _, r := range recs {
+		if len(r.Passengers) == 0 {
+			continue
+		}
+		n := pnl.Name{
+			Party:   len(r.Passengers),
+			Surname: r.Passengers[0].Surname,
+		}
+		for _, p := range r.Passengers {
+			n.Givens = append(n.Givens, p.Given+p.Title)
+		}
+		if r.RecordLocator != "" {
+			n.Elements = append(n.Elements, ".L/"+r.RecordLocator)
+		}
+		items[r.RecordLocator+"/"+n.Surname] = n
+	}
+	return items, wireDate, nil
+}
+
+// SendPNL builds the passenger name list for one departure from the store
+// and sends it, remembering what it said so a later ADL can send the diff.
+func (t *Tenant) SendPNL(ctx context.Context, f world.Flight, day time.Time) error {
+	items, wireDate, err := t.nameItems(ctx, f, day)
+	if err != nil {
+		return err
+	}
+	var names []pnl.Name
+	count := 0
+	for _, k := range sortedKeys(items) {
+		names = append(names, items[k])
+		count += items[k].Party
+	}
+	parts, err := pnl.BuildParts(pnl.KindPNL, f.Carrier+f.Number, wireDate, f.From,
+		[]pnl.Group{{Dest: f.To, Count: count, Class: "Y", Names: names}})
+	if err != nil {
+		return err
+	}
+	for _, part := range parts {
+		if err := t.sendTypeB(ctx, part, "PNL"); err != nil {
+			return err
+		}
+	}
+	t.pnlMu.Lock()
+	t.pnlSent[f.Carrier+f.Number+"/"+wireDate] = items
+	t.pnlMu.Unlock()
+	return nil
+}
+
+// SendADL sends the additions and deletions since the PNL, or nothing when
+// nothing changed -- an empty ADL is noise a check-in agent never wants.
+func (t *Tenant) SendADL(ctx context.Context, f world.Flight, day time.Time) error {
+	items, wireDate, err := t.nameItems(ctx, f, day)
+	if err != nil {
+		return err
+	}
+	t.pnlMu.Lock()
+	before := t.pnlSent[f.Carrier+f.Number+"/"+wireDate]
+	t.pnlMu.Unlock()
+	if before == nil {
+		return nil // no PNL went out; there is nothing to amend
+	}
+	var del, add []pnl.Name
+	for _, k := range sortedKeys(before) {
+		if _, ok := items[k]; !ok {
+			del = append(del, before[k])
+		}
+	}
+	for _, k := range sortedKeys(items) {
+		if _, ok := before[k]; !ok {
+			add = append(add, items[k])
+		}
+	}
+	if len(del) == 0 && len(add) == 0 {
+		return nil
+	}
+	count := 0
+	for _, n := range items {
+		count += n.Party
+	}
+	g := pnl.Group{Dest: f.To, Count: count, Class: "Y"}
+	if len(del) > 0 {
+		g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeDEL, Names: del})
+	}
+	if len(add) > 0 {
+		g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeADD, Names: add})
+	}
+	parts, err := pnl.BuildParts(pnl.KindADL, f.Carrier+f.Number, wireDate, f.From, []pnl.Group{g})
+	if err != nil {
+		return err
+	}
+	for _, part := range parts {
+		if err := t.sendTypeB(ctx, part, "ADL"); err != nil {
+			return err
+		}
+	}
+	t.pnlMu.Lock()
+	t.pnlSent[f.Carrier+f.Number+"/"+wireDate] = items
+	t.pnlMu.Unlock()
+	return nil
+}
+
+// SendBaggage emits the bag messages for one departure: a BSM per party
+// that checked bags -- deterministically about six in ten -- and one BPM at
+// departure confirming what was loaded.
+func (t *Tenant) SendBaggage(ctx context.Context, f world.Flight, day time.Time, processed bool) error {
+	items, wireDate, err := t.nameItems(ctx, f, day)
+	if err != nil {
+		return err
+	}
+	var loaded []baggage.Tag
+	for _, k := range sortedKeys(items) {
+		n := items[k]
+		h := hashOf(k + f.Carrier + f.Number + wireDate)
+		if h%10 >= 6 {
+			continue // travelling light
+		}
+		bags := 1 + h/10%2
+		tag := baggage.Tag{
+			Number: fmt.Sprintf("0%03d%06d", 100+hashOf(f.Carrier)%900, h%1000000),
+			Count:  bags,
+		}
+		loaded = append(loaded, tag)
+		if processed {
+			continue
+		}
+		m := &baggage.Message{
+			Kind:     baggage.KindBSM,
+			Version:  "1L" + f.From,
+			Outbound: &baggage.FlightLeg{Flight: f.Carrier + f.Number, Date: wireDate, City: f.To, Class: "Y"},
+			Tags:     []baggage.Tag{tag},
+			Surname:  n.Surname,
+		}
+		if len(n.Givens) > 0 {
+			m.Givens = []string{n.Givens[0]}
+		}
+		text, err := baggage.Build(m)
+		if err != nil {
+			return err
+		}
+		if err := t.sendTypeB(ctx, text, "BSM"); err != nil {
+			return err
+		}
+	}
+	if !processed || len(loaded) == 0 {
+		return nil
+	}
+	// The loading report: every tag on one message, the sortation system's
+	// word that the bags this flight owns are on board.
+	if len(loaded) > 40 {
+		loaded = loaded[:40]
+	}
+	m := &baggage.Message{
+		Kind:     baggage.KindBPM,
+		Version:  "1L" + f.From,
+		Outbound: &baggage.FlightLeg{Flight: f.Carrier + f.Number, Date: wireDate, City: f.To},
+		Tags:     loaded,
+	}
+	text, err := baggage.Build(m)
+	if err != nil {
+		return err
+	}
+	return t.sendTypeB(ctx, text, "BPM")
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hashOf(s string) int {
+	h := 0
+	for _, r := range s {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return h
 }

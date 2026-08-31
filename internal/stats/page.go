@@ -55,7 +55,8 @@ const pageHTML = `<!doctype html>
   <div class="card"><h3>by traffic class</h3><div class="big" id="b-kind"></div>
     <canvas id="c-kind"></canvas>
     <div class="legend"><i style="color:#5f96be">avs</i><i style="color:#e0b93c">mvt</i>
-      <i style="color:#5fd38d">res</i><i style="color:#e05a5a">asm</i></div></div>
+      <i style="color:#5fd38d">res</i><i style="color:#e05a5a">asm</i>
+      <i style="color:#b48fd9">pnl</i><i style="color:#8fd9c4">bag</i></div></div>
   <div class="card"><h3>bookings / second</h3><div class="big" id="b-bkg"></div>
     <canvas id="c-bkg"></canvas>
     <div class="legend"><i style="color:#5fd38d">record events at the gds</i></div></div>
@@ -121,7 +122,8 @@ async function poll(){
   drawSeries($("c-fmt"),[S.typeb,S.edifact],["#5fd38d","#e0b93c"],{maxLabel:1});
   $("b-kind").innerHTML=last(S.mvt).toFixed(0)+" <small>mvt/s</small> · "+
     last(S.avs).toFixed(0)+" <small>avs/s</small>";
-  drawSeries($("c-kind"),[S.avs,S.mvt,S.res,S.asm],["#5f96be","#e0b93c","#5fd38d","#e05a5a"],{maxLabel:1});
+  drawSeries($("c-kind"),[S.avs,S.mvt,S.res,S.asm,S.pnl,S.bag],
+    ["#5f96be","#e0b93c","#5fd38d","#e05a5a","#b48fd9","#8fd9c4"],{maxLabel:1});
   $("b-bkg").innerHTML=last(S.bookings).toFixed(1)+" <small>/s</small>";
   drawSeries($("c-bkg"),[S.bookings],["#5fd38d"],{maxLabel:1});
   $("b-air").innerHTML=last(S.airborne).toFixed(0)+" <small>aircraft</small>";

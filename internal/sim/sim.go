@@ -438,10 +438,39 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					reg = fmt.Sprintf("SKY%03d", regHash(f)%1000)
 				}
 				depDelay, arrDelay := delayFor(f, day)
+				// The ground story of a departure, at the hours it really
+				// happens: the name list for check-in, the bags as they are
+				// checked, the amendments as the door nears.
+				if w := f.DepMin - 180; w > prev && w <= cur {
+					go func(f world.Flight) {
+						if err := t.SendPNL(ctx, f, day); err != nil {
+							s.log.Debug("pnl not sent", "flight", f.Carrier+f.Number, "err", err)
+						}
+					}(f)
+				}
+				if w := f.DepMin - 90; w > prev && w <= cur {
+					go func(f world.Flight) {
+						if err := t.SendBaggage(ctx, f, day, false); err != nil {
+							s.log.Debug("bsm not sent", "flight", f.Carrier+f.Number, "err", err)
+						}
+					}(f)
+				}
+				if w := f.DepMin - 60; w > prev && w <= cur {
+					go func(f world.Flight) {
+						if err := t.SendADL(ctx, f, day); err != nil {
+							s.log.Debug("adl not sent", "flight", f.Carrier+f.Number, "err", err)
+						}
+					}(f)
+				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
 					if err := t.Depart(ctx, f, day, reg, depDelay); err != nil {
 						s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
 					}
+					go func(f world.Flight) {
+						if err := t.SendBaggage(ctx, f, day, true); err != nil {
+							s.log.Debug("bpm not sent", "flight", f.Carrier+f.Number, "err", err)
+						}
+					}(f)
 				}
 				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
 					if err := t.Arrive(ctx, f, day, reg, arrDelay); err != nil {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/store"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -534,5 +535,129 @@ func TestDelaysAreDeterministicAndShaped(t *testing.T) {
 	}
 	if !changed {
 		t.Error("every flight is exactly as late tomorrow; the day is not in the dice")
+	}
+}
+
+// The ground story of a departure: the PNL lists what the carrier's own
+// store believes it is boarding, the ADL carries exactly the diff after a
+// cancellation, and the bag messages tag real parties. All of it crosses
+// the switch to the watcher like any other traffic.
+func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	day := s.BookingDate
+
+	var locs []string
+	for i := 0; i < 5; i++ {
+		res, err := s.Book(ctx, f, "Y", 0, fmt.Sprintf("GROUND%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		locs = append(locs, res.PNR.RecordLocator)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for _, l := range locs {
+		for {
+			if ok, _ := s.Settled(ctx, l); ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s never settled", l)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+
+	tn := s.Tenants[c.Designator]
+	findAtWatcher := func(kind string) *store.Message {
+		msgs, _ := s.GDSStore.ListMessages(ctx, store.MessageFilter{Limit: 10000})
+		for _, msg := range msgs {
+			if strings.HasPrefix(msg.Kind, kind) && msg.Direction == store.Inbound {
+				full, err := s.GDSStore.GetMessage(ctx, msg.ID)
+				if err == nil {
+					return full
+				}
+			}
+		}
+		return nil
+	}
+	waitAtWatcher := func(kind string) *store.Message {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			if m := findAtWatcher(kind); m != nil {
+				return m
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no %s message ever reached the watcher", kind)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if err := tn.SendPNL(ctx, f, day); err != nil {
+		t.Fatalf("SendPNL: %v", err)
+	}
+	pnlMsg := waitAtWatcher("PNL/")
+	text := string(pnlMsg.Raw)
+	for i := 0; i < 5; i++ {
+		if !strings.Contains(text, fmt.Sprintf("GROUND%d", i)) {
+			t.Errorf("the PNL is missing GROUND%d:\n%s", i, text)
+		}
+	}
+	if !strings.Contains(text, "ENDPNL") {
+		t.Errorf("the PNL has no END line:\n%s", text)
+	}
+
+	// One traveller cancels; the ADL must carry exactly that.
+	if _, err := s.GDS.Cancel(ctx, locs[0], gateway.CancelOptions{By: "test"}); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number,
+			strings.ToUpper(day.Format("02Jan")), 100)
+		if len(recs) == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the carrier still holds %d records after the cancellation", len(recs))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := tn.SendADL(ctx, f, day); err != nil {
+		t.Fatalf("SendADL: %v", err)
+	}
+	adlMsg := waitAtWatcher("ADL/")
+	adl := string(adlMsg.Raw)
+	if !strings.Contains(adl, "DEL") || !strings.Contains(adl, "GROUND0") {
+		t.Errorf("the ADL does not delete the cancelled party:\n%s", adl)
+	}
+	if strings.Contains(adl, "ADD") {
+		t.Errorf("the ADL invents an addition nobody made:\n%s", adl)
+	}
+
+	// Bags: source messages at check-in, the processed report at departure.
+	if err := tn.SendBaggage(ctx, f, day, false); err != nil {
+		t.Fatalf("SendBaggage: %v", err)
+	}
+	if err := tn.SendBaggage(ctx, f, day, true); err != nil {
+		t.Fatalf("SendBaggage processed: %v", err)
+	}
+	bsm := waitAtWatcher("BSM/")
+	if !strings.Contains(string(bsm.Raw), ".N/0") {
+		t.Errorf("the BSM carries no licence plate:\n%s", bsm.Raw)
+	}
+	if waitAtWatcher("BPM") == nil {
+		t.Error("no BPM reached the watcher")
 	}
 }
