@@ -25,4 +25,6 @@ ENTRYPOINT ["/usr/local/bin/skyd"]
 CMD ["-world", "/etc/wholesky/whole.json", \
      "-carriers", "0", "-demand", "60", "-warp", "60", \
      "-avs-interval", "60s", "-max-messages", "2000", "-max-records", "4000", \
+     "-gds", "3", \
+     "-stats-snapshot", "/tmp/wholesky-stats.json", \
      "-console", "0.0.0.0:8080"]

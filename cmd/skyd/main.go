@@ -21,6 +21,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"sort"
@@ -49,10 +51,20 @@ func run() error {
 		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
 		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
 		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
+		gdsCount  = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
 		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
+		pprofAddr = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
 		verbose   = flag.Bool("v", false, "debug logging")
 	)
 	flag.Parse()
+	if *pprofAddr != "" {
+		go func() {
+			// The default mux carries the pprof handlers via the import.
+			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
+				slog.Error("pprof listener ended", "err", err)
+			}
+		}()
+	}
 
 	level := slog.LevelInfo
 	if *verbose {
@@ -76,6 +88,7 @@ func run() error {
 	s, err := sim.Boot(ctx, &m, sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
+		GDSCount:      *gdsCount,
 		StatsSnapshot: *statsSnap,
 	})
 	if err != nil {
