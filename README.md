@@ -37,11 +37,21 @@ own, on `-console`, where every message can be opened and read field by field.
 
 ## Status
 
-Phase one, early. Works: world compilation at any scale from a continent to
-the planet; the switch/tenant/GDS topology over real sockets; free-sale and
-request-reply bookings through the switch; the flight day as MVT traffic.
-Not yet: EDIFACT relay at the switch (phase-one worlds force Type B), demand
-generation beyond smoke bookings, PNL/ADL and baggage, the globe.
+Phase one. Works, and `go test ./...` proves it on every run: world
+compilation at any scale from a continent to the planet, deterministic by
+seed; the switch/tenant/GDS topology over real sockets; bookings settled in
+**both dialects** -- AIRIMP over Type B and PADIS over EDIFACT, relayed by
+address line and UNB recipient respectively; continuous seeded demand (a
+20-carrier European run: 299 bookings, 0 failures, both formats crossing the
+switch); and the flight day as real MVT traffic (1,286 movements through the
+fabric in the first simulated morning). Not yet: the real demand model
+(booking curve, channels, parties), PNL/ADL and baggage, the Eye and the
+globe, the virtual clock.
+
+## Licence
+
+MIT. The vendored OpenFlights data is separately licensed under the Open
+Database License; see Data below.
 
 ## Data
 

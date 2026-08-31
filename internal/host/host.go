@@ -95,8 +95,14 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 
 	// From the tenant's side the peer is the network. Whoever a message is
 	// really from is read off its origin line; the network is just the wire.
+	// The peer's format is this carrier's own dialect, because it is what
+	// replies built for traffic arriving over the network are encoded in.
+	format := store.FormatTypeB
+	if c.Format == "edifact" {
+		format = store.FormatEDIFACT
+	}
 	gw.AddPeer(&gateway.Peer{
-		Name: "net", Format: store.FormatTypeB, TTYAddress: opts.WatchAddress,
+		Name: "net", Format: format, TTYAddress: opts.WatchAddress,
 	})
 	client.OnMessage = func(ctx context.Context, peer string, raw []byte) error {
 		_, err := gw.Ingest(ctx, "net", raw)
