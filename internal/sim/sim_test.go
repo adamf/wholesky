@@ -34,7 +34,11 @@ func smallWorld(t *testing.T) *world.Manifest {
 		t.Fatalf("the compiled world holds %d carriers; the vendored data is broken", len(m.Carriers))
 	}
 	m.Carriers[0].Format = "typeb"
+	// The first carrier also dials in over MATIP, so every suite that boots
+	// this world exercises the airline transport end to end.
+	m.Carriers[0].Transport = "matip"
 	m.Carriers[1].Format = "edifact"
+	m.Carriers[1].Transport = "tcp"
 	return m
 }
 

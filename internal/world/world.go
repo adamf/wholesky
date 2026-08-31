@@ -50,6 +50,10 @@ type Carrier struct {
 	// Assigned deterministically so roughly the real-world share of each is
 	// represented and a given world always assigns the same way.
 	Format string `json:"format"`
+	// Transport is how the carrier's circuit reaches the switch: "tcp" for
+	// the plain framed link, "matip" for the airline transport (RFC 2351),
+	// which carries Type B only. Assigned by the same stable hash as Format.
+	Transport string `json:"transport,omitempty"`
 	// Routes is how many directed route entries the carrier operates, kept
 	// because it is the size measure sigma filters on.
 	Routes int `json:"routes"`

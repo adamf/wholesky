@@ -20,6 +20,7 @@ import (
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/matip"
 	"github.com/adamf/jetway/pkg/mvt"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
@@ -29,6 +30,13 @@ import (
 )
 
 // Tenant is one carrier's running system.
+// link is the shape both circuit clients share: the plain framed transport
+// and MATIP. A tenant runs whichever its carrier's circuit uses.
+type link interface {
+	Run(ctx context.Context) error
+	Send(ctx context.Context, peer string, raw []byte) error
+}
+
 type Tenant struct {
 	Carrier   world.Carrier
 	Gateway   *gateway.Gateway
@@ -36,7 +44,7 @@ type Tenant struct {
 	Inventory *gateway.Inventory
 
 	flights  []world.Flight
-	client   *transport.Client
+	client   link
 	watch    string // teletype address operational messages are copied to
 	partners []string
 	log      *slog.Logger
@@ -105,13 +113,33 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	}
 	gw.Responder = inv
 
-	client := &transport.Client{
-		Addr:   opts.SwitchAddr,
-		Framer: transport.DefaultFramer(),
-		Log:    log.With("carrier", c.Designator),
-		// The switch identifies this tenant by the listener it dialled, the
-		// way a real circuit identifies its subscriber.
-		SkipHello: true,
+	// The switch identifies this tenant by the listener it dialled, the way
+	// a real circuit identifies its subscriber. Which client dials depends on
+	// the carrier's circuit: most use the plain framed link, and a share of
+	// the teletype world uses MATIP, the airline transport.
+	var client link
+	onMessage := func(ctx context.Context, raw []byte) error {
+		_, err := gw.Ingest(ctx, "net", raw)
+		return err
+	}
+	if c.Transport == "matip" {
+		client = &matip.Client{
+			Addr: opts.SwitchAddr,
+			Log:  log.With("carrier", c.Designator),
+			OnMessage: func(ctx context.Context, raw []byte) error {
+				return onMessage(ctx, raw)
+			},
+		}
+	} else {
+		client = &transport.Client{
+			Addr:      opts.SwitchAddr,
+			Framer:    transport.DefaultFramer(),
+			Log:       log.With("carrier", c.Designator),
+			SkipHello: true,
+			OnMessage: func(ctx context.Context, peer string, raw []byte) error {
+				return onMessage(ctx, raw)
+			},
+		}
 	}
 	gw.Sender = client
 
@@ -126,11 +154,6 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	gw.AddPeer(&gateway.Peer{
 		Name: "net", Format: format, TTYAddress: opts.WatchAddress,
 	})
-	client.OnMessage = func(ctx context.Context, peer string, raw []byte) error {
-		_, err := gw.Ingest(ctx, "net", raw)
-		return err
-	}
-
 	t := &Tenant{
 		Carrier: c, Gateway: gw, Store: st, Inventory: inv,
 		flights: flights, client: client, watch: opts.WatchAddress,

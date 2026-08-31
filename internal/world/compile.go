@@ -112,11 +112,19 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 		if hash32(code)%3 == 0 {
 			format = "edifact"
 		}
+		// Among the teletype carriers, a share dials in over MATIP -- the
+		// airline transport -- rather than the plain framed link. MATIP
+		// carries Type B only, so EDIFACT carriers stay on the plain link.
+		transport := "tcp"
+		if format == "typeb" && hash32(code)%5 == 1 {
+			transport = "matip"
+		}
 		carriers = append(carriers, Carrier{
 			Designator: code, Name: a.name, Country: a.country,
 			Hub:        hub,
 			TTYAddress: ttyAddress(hub, code),
 			Format:     format,
+			Transport:  transport,
 			Routes:     len(a.routes),
 		})
 	}

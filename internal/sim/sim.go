@@ -196,7 +196,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			}
 		}
 	})
-	s.Fleet.Add(ctx, "1X", "the switch", fleet.KindSwitch, "typeb", "", 0, sw.Store, sw.Bus)
+	s.Fleet.Add(ctx, "1X", "the switch", fleet.KindSwitch, "typeb", "", "", 0, sw.Store, sw.Bus)
 	s.Fleet.LivePeers = sw.LivePeers
 	s.Fleet.LinkControl = s.LinkControl
 	if opts.Console != "" {
@@ -232,7 +232,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		}
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
-			c.Format, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
+			c.Format, c.Transport, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
 		s.mountConsole(c.Designator, &api.Server{
 			Gateway: t.Gateway, Store: t.Store, Bus: tenantBus,
 			Log: log.With("console", c.Designator), Console: true,
@@ -245,7 +245,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		return nil, err
 	}
 	s.GDS, s.GDSStore = gds, gdsStore
-	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", 0, gdsStore, nil)
+	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", "", 0, gdsStore, nil)
 	// The sweeper is what notices silence -- a request nobody answered, a
 	// ticketing deadline that passed. The GDS ran without one until the
 	// demand model started ticketing, which is when its absence would have
@@ -397,9 +397,13 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	cfg.Ingress = nil
 	cfg.Peers = nil
 
-	add := func(name, designator, tty, format string) {
+	add := func(name, designator, tty, format, transport string) {
+		ingressType := "tcp"
+		if transport == "matip" {
+			ingressType = "matip"
+		}
 		cfg.Ingress = append(cfg.Ingress, config.Ingress{
-			Name: name, Type: "tcp", Addr: "127.0.0.1:0",
+			Name: name, Type: ingressType, Addr: "127.0.0.1:0",
 			Identify: config.Identify{Peer: designator},
 		})
 		cfg.Peers = append(cfg.Peers, config.Peer{
@@ -409,9 +413,9 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 		})
 	}
 	for _, c := range m.Carriers {
-		add("link-"+strings.ToLower(c.Designator), c.Designator, c.TTYAddress, c.Format)
+		add("link-"+strings.ToLower(c.Designator), c.Designator, c.TTYAddress, c.Format, c.Transport)
 	}
-	add("link-gds", GDSDesignator, GDSAddress, "typeb")
+	add("link-gds", GDSDesignator, GDSAddress, "typeb", "tcp")
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("switch config: %w", err)

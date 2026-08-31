@@ -48,6 +48,7 @@ const pageHTML = `<!doctype html>
   .fmt { font-size:10.5px; padding:1px 7px; border-radius:9px; letter-spacing:.05em; }
   .fmt.typeb { background:#13251b; color:var(--hot); }
   .fmt.edifact { background:#241f10; color:var(--amber); }
+  .fmt.matip { background:#101a24; color:#5f96be; }
   #drawer { width:0; overflow:hidden; transition:width .15s; background:var(--panel);
     border-left:1px solid var(--line); position:sticky; top:46px; height:calc(100vh - 46px); }
   #drawer.open { width:520px; }
@@ -119,7 +120,7 @@ function render(){
     "<tr class='row' onclick=\"openNode('"+n.code+"')\">"+
     "<td><span class='dot"+(n.link?"":" down")+"'></span></td>"+
     "<td style='color:#e8eef4'>"+n.code+"</td><td>"+esc(n.name)+"</td>"+
-    "<td><span class='fmt "+n.format+"'>"+n.format+"</span></td>"+
+    "<td><span class='fmt "+n.format+"'>"+n.format+"</span>"+(n.transport==="matip"?" <span class='fmt matip'>matip</span>":"")+"</td>"+
     "<td>"+(n.hub||"")+"</td><td class='r'>"+(n.flights||"")+"</td>"+
     "<td class='r'>"+n.in+"</td><td class='r'>"+n.out+"</td>"+
     "<td>"+fmtAgo(n.last_at)+"</td><td style='color:#5b6b7d'>"+esc(n.last_kind||"")+"</td></tr>").join("");
@@ -143,7 +144,7 @@ async function refreshDrawer(){
     "<div style='display:flex;justify-content:space-between'><h2>"+n.code+
     " <a href='/node/"+n.code+"/' target='_blank' style='font-size:12px;color:#5fd38d'>open console →</a></h2>"+
     "<a onclick=\"closeDrawer()\" style='cursor:pointer'>✕</a></div>"+
-    "<div class='sub'>"+esc(n.name)+(n.hub?" · hub "+n.hub:"")+(n.format?" · "+n.format:"")+
+    "<div class='sub'>"+esc(n.name)+(n.hub?" · hub "+n.hub:"")+(n.format?" · "+n.format:"")+(n.transport==="matip"?" · matip":"")+
     (n.kind==="carrier"?(n.link
       ?" · <a onclick=\"linkCtl('"+n.code+"','sever')\" style='color:#e05a5a;cursor:pointer'>✂ sever link</a>"
       :" · <a onclick=\"linkCtl('"+n.code+"','restore')\" style='color:#5fd38d;cursor:pointer'>⟳ restore link</a>"):"")+

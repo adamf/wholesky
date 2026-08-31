@@ -33,12 +33,15 @@ const (
 
 // node is one Jetway system's live ledger.
 type node struct {
-	Code    string   `json:"code"`
-	Name    string   `json:"name"`
-	Kind    NodeKind `json:"kind"`
-	Format  string   `json:"format,omitempty"`
-	Hub     string   `json:"hub,omitempty"`
-	Flights int      `json:"flights,omitempty"`
+	Code   string   `json:"code"`
+	Name   string   `json:"name"`
+	Kind   NodeKind `json:"kind"`
+	Format string   `json:"format,omitempty"`
+	// Transport names the circuit type when it is not the plain framed link:
+	// "matip" for carriers dialling in over the airline transport.
+	Transport string `json:"transport,omitempty"`
+	Hub       string `json:"hub,omitempty"`
+	Flights   int    `json:"flights,omitempty"`
 
 	mu       sync.Mutex
 	in, out  int64
@@ -75,10 +78,10 @@ func New() *Collector {
 // increments a counter and stamps the clock, and that is all. The store
 // handle is kept only for the drill-down, which reads one node at a time.
 func (c *Collector) Add(ctx context.Context, code, name string, kind NodeKind,
-	format, hub string, flights int, st store.Store, bus *gateway.Bus) {
+	format, transport, hub string, flights int, st store.Store, bus *gateway.Bus) {
 
 	n := &node{Code: code, Name: name, Kind: kind, Format: format,
-		Hub: hub, Flights: flights, st: st}
+		Transport: transport, Hub: hub, Flights: flights, st: st}
 	c.mu.Lock()
 	c.nodes[code] = n
 	c.order = append(c.order, code)
@@ -180,17 +183,18 @@ func (c *Collector) nodesJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	type row struct {
-		Code     string   `json:"code"`
-		Name     string   `json:"name"`
-		Kind     NodeKind `json:"kind"`
-		Format   string   `json:"format,omitempty"`
-		Hub      string   `json:"hub,omitempty"`
-		Flights  int      `json:"flights,omitempty"`
-		In       int64    `json:"in"`
-		Out      int64    `json:"out"`
-		LastAt   string   `json:"last_at,omitempty"`
-		LastKind string   `json:"last_kind,omitempty"`
-		Link     bool     `json:"link"`
+		Code      string   `json:"code"`
+		Name      string   `json:"name"`
+		Kind      NodeKind `json:"kind"`
+		Format    string   `json:"format,omitempty"`
+		Transport string   `json:"transport,omitempty"`
+		Hub       string   `json:"hub,omitempty"`
+		Flights   int      `json:"flights,omitempty"`
+		In        int64    `json:"in"`
+		Out       int64    `json:"out"`
+		LastAt    string   `json:"last_at,omitempty"`
+		LastKind  string   `json:"last_kind,omitempty"`
+		Link      bool     `json:"link"`
 	}
 	c.mu.Lock()
 	rows := make([]row, 0, len(c.order))
@@ -198,7 +202,7 @@ func (c *Collector) nodesJSON(w http.ResponseWriter, r *http.Request) {
 		n := c.nodes[code]
 		n.mu.Lock()
 		rw := row{Code: n.Code, Name: n.Name, Kind: n.Kind, Format: n.Format,
-			Hub: n.Hub, Flights: n.Flights, In: n.in, Out: n.out,
+			Transport: n.Transport, Hub: n.Hub, Flights: n.Flights, In: n.in, Out: n.out,
 			LastKind: n.lastKind,
 			// The switch and GDS hold the sessions rather than appearing in
 			// the peer list, so they read as up by construction.
