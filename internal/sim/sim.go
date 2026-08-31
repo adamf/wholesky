@@ -263,15 +263,29 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 	}
 }
 
-// FlyDay walks the schedule against warped wall time, emitting departures and
-// arrivals as they come due.
+// FlyDay walks the schedule and emits departures and arrivals as they come
+// due, at warp sim-minutes per wall-minute.
+//
+// The day's position is anchored to wall-clock time, not to process start.
+// The deployed demo suspends when nobody is watching, and a suspended
+// process's monotonic clock freezes with it -- anchored to process start, the
+// world spent its life stuck before dawn, thawing for a few seconds at a time
+// and never reaching the first departure bank. Anchored to the wall clock,
+// a thaw jumps the day to where it should be; the catch-up is clamped so the
+// first tick replays the recent past rather than a whole frozen week.
 func (s *Sim) FlyDay(ctx context.Context, warp int) {
 	if warp < 1 {
 		warp = 1
 	}
+	const dayMin = 24 * 60
+	// The largest backlog one tick will replay after a pause.
+	const maxCatchUp = 120
+
+	pos := func(at time.Time) int {
+		return int(float64(at.Unix())/60*float64(warp)) % dayMin
+	}
 	day := time.Now().UTC().Truncate(24 * time.Hour)
-	start := time.Now()
-	prev := 0
+	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for {
@@ -280,9 +294,12 @@ func (s *Sim) FlyDay(ctx context.Context, warp int) {
 			return
 		case <-tick.C:
 		}
-		cur := int(time.Since(start).Minutes()*float64(warp)) % (24 * 60)
+		cur := pos(time.Now())
 		if cur < prev {
 			prev = 0 // the day wrapped; begin again
+		}
+		if cur-prev > maxCatchUp {
+			prev = cur - maxCatchUp
 		}
 		for code, t := range s.Tenants {
 			for _, f := range s.Flights[code] {
