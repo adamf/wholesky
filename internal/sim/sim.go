@@ -271,8 +271,12 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
+		switchAddr := sw.Addr("link-net")
+		if c.Transport == "matip" {
+			switchAddr = sw.Addr("link-" + strings.ToLower(c.Designator))
+		}
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
-			SwitchAddr:            sw.Addr("link-" + strings.ToLower(c.Designator)),
+			SwitchAddr:            switchAddr,
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
@@ -303,7 +307,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			dsn = opts.GDSDSN
 		}
 		if err := s.buildGDSNode(ctx, m, g,
-			sw.Addr("link-"+strings.ToLower(g.Designator)), dsn, i == 0, log); err != nil {
+			sw.Addr("link-net"), dsn, i == 0, log); err != nil {
 			s.Stop()
 			return nil, err
 		}
@@ -530,15 +534,16 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	cfg.Ingress = nil
 	cfg.Peers = nil
 
-	add := func(name, designator, tty, format, transport string) {
-		ingressType := "tcp"
-		if transport == "matip" {
-			ingressType = "matip"
-		}
-		cfg.Ingress = append(cfg.Ingress, config.Ingress{
-			Name: name, Type: ingressType, Addr: "127.0.0.1:0",
-			Identify: config.Identify{Peer: designator},
-		})
+	// One network access point serves every plain-TCP subscriber: each
+	// connection names itself in its hello frame, the way v0.1.16's
+	// by_hello identification allows. MATIP circuits keep a listener per
+	// carrier -- a MATIP session is a host-to-host circuit, and its own
+	// session-open is the identification.
+	cfg.Ingress = append(cfg.Ingress, config.Ingress{
+		Name: "link-net", Type: "tcp", Addr: "127.0.0.1:0",
+		Identify: config.Identify{ByHello: true},
+	})
+	addPeer := func(designator, tty, format string) {
 		cfg.Peers = append(cfg.Peers, config.Peer{
 			Name: designator, Carrier: designator, TTYAddress: tty,
 			Format: format,
@@ -546,10 +551,16 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 		})
 	}
 	for _, c := range m.Carriers {
-		add("link-"+strings.ToLower(c.Designator), c.Designator, c.TTYAddress, c.Format, c.Transport)
+		if c.Transport == "matip" {
+			cfg.Ingress = append(cfg.Ingress, config.Ingress{
+				Name: "link-" + strings.ToLower(c.Designator), Type: "matip",
+				Addr: "127.0.0.1:0", Identify: config.Identify{Peer: c.Designator},
+			})
+		}
+		addPeer(c.Designator, c.TTYAddress, c.Format)
 	}
 	for _, slot := range gdsSlots {
-		add("link-"+strings.ToLower(slot.Designator), slot.Designator, gdsAddress(slot), "typeb", "tcp")
+		addPeer(slot.Designator, gdsAddress(slot), "typeb")
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -599,7 +610,8 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 
 	client := &transport.Client{
 		Addr: switchAddr, Framer: transport.DefaultFramer(),
-		Log: log, SkipHello: true,
+		Hello: transport.Hello{Peer: g.Designator, Role: "gds", Format: "typeb"},
+		Log:   log,
 	}
 	gw.Sender = client
 	client.OnMessage = func(ctx context.Context, peer string, raw []byte) error {

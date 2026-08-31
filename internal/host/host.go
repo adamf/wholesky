@@ -146,10 +146,10 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		}
 	} else {
 		client = &transport.Client{
-			Addr:      opts.SwitchAddr,
-			Framer:    transport.DefaultFramer(),
-			Log:       log.With("carrier", c.Designator),
-			SkipHello: true,
+			Addr:   opts.SwitchAddr,
+			Framer: transport.DefaultFramer(),
+			Hello:  transport.Hello{Peer: c.Designator, Role: "carrier", Format: c.Format},
+			Log:    log.With("carrier", c.Designator),
 			OnMessage: func(ctx context.Context, peer string, raw []byte) error {
 				return onMessage(ctx, raw)
 			},
