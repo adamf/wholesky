@@ -11,6 +11,29 @@ continuously on one machine.
 
 ![The globe: thousands of aircraft, the continents drawn by traffic alone](docs/the-globe.jpg)
 
+The globe has a second mode: **net**, the topology the sky runs on — 518
+carrier spokes around one switch, ordered by hub longitude so the ring echoes
+the geography, every edge weighted by its live message rate, pulses riding
+the spokes, and every node one click from its own console.
+
+![The net: the star the network actually is](docs/the-net.jpg)
+
+**Every node has a real console.** Each of the 519 embedded Jetway systems —
+the GDS and all 518 carriers — serves the full Jetway console at
+`/node/{code}/`, wearing its own identity: open `/node/FR/` and you are
+inside Ryanair's reservation system, its own message tape, records and
+queues.
+
+![Ryanair's own console, one of 519](docs/the-tenant-console.jpg)
+
+And `/stats` is the cluster's instrument panel: ten minutes of time series at
+two-second resolution — message rates by wire format and traffic class,
+bookings, airborne count, queue depths, and undeliverable-per-second, the
+number that should be zero. The sixty-second AVS rebroadcast cycle is
+plainly visible as a heartbeat in the charts.
+
+![The instrument panel](docs/the-stats.jpg)
+
 Behind the globe sits **the fleet** at `/fleet`: every Jetway system in the
 world as a live row — the switch, the GDS, and all 518 carrier tenants with
 their hubs, dialects, link state and message counters, fed by tapping each

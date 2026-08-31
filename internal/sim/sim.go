@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/adamf/jetway/pkg/api"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/config"
 	"github.com/adamf/jetway/pkg/gateway"
@@ -31,6 +32,7 @@ import (
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -97,6 +99,15 @@ type Sim struct {
 	Eye *eye.Eye
 	// Fleet is the cluster dashboard: every node's live ledger.
 	Fleet *fleet.Collector
+	// Stats is the instrument panel: the cluster as time series.
+	Stats *stats.Collector
+
+	// consoles holds one full Jetway console per embedded node, mounted at
+	// /node/{code}/. The switch's own console stays at the root; these give
+	// every tenant and the GDS the same face -- because each of them IS a
+	// Jetway, and a system you cannot look inside is a diagram, not a system.
+	consoles   map[string]http.Handler
+	consolesMu sync.Mutex
 
 	airports map[string]world.Airport
 
@@ -136,6 +147,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		warp: warp, Eye: eye.New(m, warp),
 		closed:   map[string]bool{},
 		airports: map[string]world.Airport{},
+		consoles: map[string]http.Handler{},
 		log:      log, cancel: cancel,
 	}
 	for _, a := range m.Airports {
@@ -143,10 +155,13 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	s.Eye.Chaos = s.chaos
 	s.Fleet = fleet.New()
+	s.Stats = stats.New()
 
 	sw, err := buildSwitch(ctx, m, opts, func(mux *http.ServeMux) {
 		s.Eye.Routes(mux)
 		s.Fleet.Routes(mux)
+		s.Stats.Routes(mux)
+		mux.HandleFunc("/node/", s.serveNodeConsole)
 	}, log)
 	if err != nil {
 		cancel()
@@ -163,6 +178,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		if ev.Type == gateway.EvMessage {
 			if p, ok := ev.Data.(map[string]any); ok {
 				s.Eye.OnMessage(p)
+				s.Stats.OnMessage(p)
 			}
 		}
 	})
@@ -200,15 +216,23 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
 			c.Format, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
+		s.mountConsole(c.Designator, &api.Server{
+			Gateway: t.Gateway, Store: t.Store, Bus: tenantBus,
+			Log: log.With("console", c.Designator), Console: true,
+		})
 	}
 
-	gds, gdsStore, err := s.buildGDS(ctx, m, sw.Addr("link-gds"), log)
+	gds, gdsStore, gdsBus, err := s.buildGDS(ctx, m, sw.Addr("link-gds"), log)
 	if err != nil {
 		s.Stop()
 		return nil, err
 	}
 	s.GDS, s.GDSStore = gds, gdsStore
 	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", 0, gdsStore, nil)
+	s.mountConsole(GDSDesignator, &api.Server{
+		Gateway: gds, Store: gdsStore, Bus: gdsBus,
+		Log: log.With("console", GDSDesignator), Console: true,
+	})
 
 	wait := opts.LinkWait
 	if wait <= 0 {
@@ -218,6 +242,21 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Stop()
 		return nil, err
 	}
+
+	s.Stats.Airborne = s.Eye.Airborne
+	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
+	s.Stats.QueueDepths = func() map[string]int {
+		out := map[string]int{}
+		items, err := s.GDSStore.ListQueue(context.Background(), store.QueueFilter{})
+		if err != nil {
+			return out
+		}
+		for _, it := range items {
+			out[it.Queue]++
+		}
+		return out
+	}
+	go s.Stats.Run(ctx.Done())
 	return s, nil
 }
 
@@ -427,7 +466,7 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 // buildGDS assembles the distribution side: one gateway, one link to the
 // switch, and a peer entry per carrier in that carrier's own dialect --
 // AIRIMP over Type B or PADIS over EDIFACT, routed either way by the switch.
-func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string, log *slog.Logger) (*gateway.Gateway, store.Store, error) {
+func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string, log *slog.Logger) (*gateway.Gateway, store.Store, *gateway.Bus, error) {
 	st := store.NewMem()
 	st.MaxMessages, st.MaxRecords = s.maxMessages, s.maxRecords
 	bus := gateway.NewBus(256)
@@ -473,11 +512,13 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 			}
 		case gateway.EvMovement:
 			s.Movements.Add(1)
+			s.Stats.OnMovement()
 			if p, ok := ev.Data.(map[string]any); ok {
 				s.Eye.OnMovement(p)
 			}
 		case gateway.EvPNR:
 			s.Eye.OnBooking()
+			s.Stats.OnBooking()
 		case gateway.EvQueue:
 			if qi, ok := ev.Data.(*store.QueueItem); ok {
 				s.Eye.OnQueue(string(qi.Queue), qi.Reason)
@@ -489,7 +530,7 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 			log.Error("gds link ended", "err", err)
 		}
 	}()
-	return gw, st, nil
+	return gw, st, bus, nil
 }
 
 // chaos is the Eye's control surface: close an airport and the world reacts
@@ -640,6 +681,36 @@ func (s *Sim) cancelFlightsTouching(iata string) {
 		}
 	}
 	s.log.Info("chaos: cascade complete", "airport", iata, "flights_cancelled", n)
+}
+
+// mountConsole registers one node's console handler.
+func (s *Sim) mountConsole(code string, srv *api.Server) {
+	h := srv.Handler()
+	s.consolesMu.Lock()
+	s.consoles[strings.ToUpper(code)] = h
+	s.consolesMu.Unlock()
+}
+
+// serveNodeConsole dispatches /node/{code}/... to that node's own console,
+// stripping the prefix so the console's relative paths resolve beneath it.
+func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/node/")
+	code, sub, ok := strings.Cut(rest, "/")
+	if !ok {
+		// /node/FR -> /node/FR/ so the page's relative fetches resolve.
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+		return
+	}
+	s.consolesMu.Lock()
+	h := s.consoles[strings.ToUpper(code)]
+	s.consolesMu.Unlock()
+	if h == nil {
+		http.Error(w, "no such node", http.StatusNotFound)
+		return
+	}
+	r2 := r.Clone(r.Context())
+	r2.URL.Path = "/" + sub
+	h.ServeHTTP(w, r2)
 }
 
 // tapBus runs fn for every event on a bus until the context ends.

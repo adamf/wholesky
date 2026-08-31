@@ -42,11 +42,13 @@ const pageHTML = `<!doctype html>
 </style>
 <div id="bar">
   <b>WHOLESKY</b>
+  <span id="modes" style="pointer-events:auto"><a id="m-sky" style="color:#e8eef4">sky</a> · <a id="m-net">net</a></span>
   <span>airborne <i id="air">0</i></span>
   <span>movements <i id="mvt">0</i></span>
   <span>bookings <i id="bkg">0</i></span>
   <span>messages <i id="msg">0</i></span>
   <a href="/fleet" style="pointer-events:auto">fleet →</a>
+  <a href="/stats" style="pointer-events:auto">stats →</a>
   <a href="/">switch console →</a>
 </div>
 <div id="panel"></div>
@@ -61,7 +63,8 @@ function size(){ DPR=devicePixelRatio||1; W=innerWidth; H=innerHeight;
   cv.width=W*DPR; cv.height=H*DPR; cx.setTransform(DPR,0,0,DPR,0,0); }
 addEventListener("resize",size); size();
 
-let world=null, globe=false, anchor=null;
+let world=null, globe=false, anchor=null, mode="sky";
+const rates=new Map(); let netPos=null;
 const planes=new Map(), pulses=[], blips=[];
 const closed=new Map(); // iata -> halo count
 const D=Math.PI/180;
@@ -119,6 +122,7 @@ function connect(){
     else if(d.t==="reopen"){ closed.delete(d.airport); renderClosed(); }
     else if(d.t==="stats"){ air.textContent=d.airborne; mvt.textContent=d.movements;
       bkg.textContent=d.bookings; msg.textContent=d.messages;
+      if(d.rates){ rates.clear(); for(const [p,n] of Object.entries(d.rates)) rates.set(p,n/2); }
       if(d.closed){ closed.clear(); for(const [a,n] of Object.entries(d.closed)) closed.set(a,n); renderClosed(); } }
   };
   es.onerror=()=>{ es.close(); setTimeout(connect,2000); };
@@ -136,6 +140,29 @@ const hubPos=code=>{
   const c=(world.carriers||[]).find(c=>c.code===code);
   return c?[c.lat,c.lon]:null;
 };
+
+document.getElementById("m-sky").onclick=()=>setMode("sky");
+document.getElementById("m-net").onclick=()=>setMode("net");
+function setMode(m){ mode=m; panel.style.display="none";
+  document.getElementById("m-sky").style.color=m==="sky"?"#e8eef4":"#3d4c5c";
+  document.getElementById("m-net").style.color=m==="net"?"#e8eef4":"#3d4c5c"; }
+
+/* net layout: the star the network actually is. Carriers on a ring ordered by
+   hub longitude (the globe's geography, flattened), the switch at the centre,
+   the GDS on its own short spoke. */
+function layoutNet(){
+  if(!world) return null;
+  const cxp=W/2, cyp=(H+30)/2, R=Math.min(W,H-60)*0.40;
+  const cs=[...(world.carriers||[])].sort((a,b)=>a.lon-b.lon);
+  const pos=new Map();
+  cs.forEach((c,i)=>{
+    const a=-Math.PI/2 + i/cs.length*2*Math.PI;
+    pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
+  });
+  pos.set("1X",[cxp,cyp]);
+  pos.set("1G",[cxp,cyp+R*0.45]);
+  return pos;
+}
 
 /* interaction: drag to rotate the globe (pan does nothing flat), wheel zooms, click selects */
 let drag=null;
@@ -159,6 +186,7 @@ cv.addEventListener("wheel",e=>{ e.preventDefault(); auto=false;
 
 function pick(x,y){
   if(!world) return;
+  if(mode==="net"){ pickNode(x,y); return; }
   let best=null,bd=12*12;
   for(const a of world.airports){
     const p=proj(a.lat,a.lon); if(!p[2]) continue;
@@ -173,6 +201,23 @@ function pick(x,y){
     (isClosed?"REOPEN "+best.iata:"CLOSE "+best.iata)+"</button>";
   panel.style.display="block";
 }
+function pickNode(x,y){
+  if(!netPos) return;
+  let best=null,bd=14*14;
+  for(const [code,p] of netPos){
+    const d=(p[0]-x)**2+(p[1]-y)**2;
+    if(d<bd){ bd=d; best=code; }
+  }
+  if(!best){ panel.style.display="none"; return; }
+  const c=(world.carriers||[]).find(c=>c.code===best);
+  const name=best==="1X"?"the switch":best==="1G"?"the gds":best;
+  const rate=(rates.get(best)||0).toFixed(1);
+  const consoleHref=best==="1X"?"/":"/node/"+best+"/";
+  panel.innerHTML="<b>"+name+"</b><div class='sub'>"+rate+" msg/s on this link</div>"+
+    "<a href='"+consoleHref+"' target='_blank' style='color:#5fd38d;pointer-events:auto'>open console →</a> · "+
+    "<a href='/fleet' target='_blank' style='color:#3d4c5c;pointer-events:auto'>fleet</a>";
+  panel.style.display="block";
+}
 window.chaos=(action,iata)=>{
   fetch("/eye/chaos",{method:"POST",headers:{"content-type":"application/json"},
     body:JSON.stringify({action,airport:iata})}).then(()=>{ panel.style.display="none"; });
@@ -183,6 +228,7 @@ function draw(){
   if(!world) return;
   cx.clearRect(0,0,W,H);
   const t=now();
+  if(mode==="net"){ drawNet(t); return; }
   if(globe&&auto) rot.lam+=0.00035;
 
   /* sphere edge + graticule */
@@ -266,6 +312,53 @@ function draw(){
     cx.moveTo(4,0); cx.lineTo(-3,2.4); cx.lineTo(-1.4,0); cx.lineTo(-3,-2.4); cx.closePath(); cx.fill();
     cx.restore();
   }
+}
+function drawNet(t){
+  netPos=layoutNet(); if(!netPos) return;
+  const centre=netPos.get("1X"), gds=netPos.get("1G");
+
+  /* edges: one per link, weighted by the true rate; the pulses riding them
+     are sampled, the brightness is not */
+  for(const [code,p] of netPos){
+    if(code==="1X") continue;
+    const r=rates.get(code)||0;
+    const w=Math.min(3,0.3+Math.log1p(r)*0.7);
+    const al=Math.min(.55,.05+Math.log1p(r)*.12);
+    cx.strokeStyle="rgba(95,150,190,"+al+")"; cx.lineWidth=w;
+    cx.beginPath(); cx.moveTo(p[0],p[1]); cx.lineTo(centre[0],centre[1]); cx.stroke();
+  }
+
+  /* pulses along the spokes */
+  for(let i=pulses.length-1;i>=0;i--){
+    const q=pulses[i], f=(t-q.t)/700;
+    if(f>=1){ pulses.splice(i,1); continue; }
+    const h=netPos.get(q.peer); if(!h) continue;
+    const from=q.dir==="in"?h:centre, to=q.dir==="in"?centre:h;
+    const x=from[0]+(to[0]-from[0])*f, y=from[1]+(to[1]-from[1])*f;
+    cx.fillStyle=q.kind==="MVT"?"rgba(224,185,60,.9)":
+      (q.kind==="ASM"||q.kind==="SSM")?"rgba(224,90,90,.95)":
+      q.kind==="AVS"?"rgba(95,150,190,.8)":"rgba(95,211,141,.9)";
+    cx.beginPath(); cx.arc(x,y,1.8,0,7); cx.fill();
+  }
+
+  /* nodes: carriers sized by rate, labels for the loud ones */
+  for(const [code,p] of netPos){
+    if(code==="1X"||code==="1G") continue;
+    const r=rates.get(code)||0;
+    const rad=1.5+Math.min(5,Math.log1p(r)*1.6);
+    cx.fillStyle="#3a4d63"; cx.beginPath(); cx.arc(p[0],p[1],rad,0,7); cx.fill();
+    if(r>2){ cx.fillStyle="#7d93aa"; cx.font="10px ui-monospace";
+      const out=p[0]<W/2?-24:6;
+      cx.fillText(code,p[0]+out,p[1]+3); }
+  }
+  /* infra */
+  cx.fillStyle="#e8eef4"; cx.beginPath(); cx.arc(centre[0],centre[1],7,0,7); cx.fill();
+  cx.strokeStyle="#5fd38d"; cx.lineWidth=1.4;
+  cx.beginPath(); cx.arc(centre[0],centre[1],11+2*Math.sin(t/400),0,7); cx.stroke();
+  cx.fillStyle="#9fb4c8"; cx.font="11px ui-monospace";
+  cx.fillText("1X · switch",centre[0]+16,centre[1]+4);
+  cx.fillStyle="#5fd38d"; cx.beginPath(); cx.arc(gds[0],gds[1],5.5,0,7); cx.fill();
+  cx.fillStyle="#9fb4c8"; cx.fillText("1G · gds",gds[0]+12,gds[1]+4);
 }
 draw();
 </script>

@@ -131,6 +131,38 @@ func TestBootBookAndFly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &w); err != nil || len(w["airports"].([]any)) == 0 {
 		t.Fatalf("world.json is not a map anyone could draw: err=%v", err)
 	}
+
+	// Every embedded node serves its own full console under /node/{code}/,
+	// with the prefix stripped so the page's relative paths resolve.
+	nmux := http.NewServeMux()
+	nmux.HandleFunc("/node/", s.serveNodeConsole)
+	first := m.Carriers[0].Designator
+	for _, path := range []string{"/node/" + first + "/", "/node/1G/"} {
+		rec := httptest.NewRecorder()
+		nmux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Jetway") {
+			t.Fatalf("%s did not serve a console: %d", path, rec.Code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	nmux.ServeHTTP(rec, httptest.NewRequest("GET", "/node/"+first+"/api/status", nil))
+	var st map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("a tenant console's api/status did not answer: %v", err)
+	}
+	if id, _ := st["identity"].(map[string]any); id == nil || id["designator"] != first {
+		t.Fatalf("the console at /node/%s/ answers as %v; each node must wear its own identity", first, st["identity"])
+	}
+
+	// And the instrument panel serves series a chart could draw.
+	smux := http.NewServeMux()
+	s.Stats.Routes(smux)
+	rec = httptest.NewRecorder()
+	smux.ServeHTTP(rec, httptest.NewRequest("GET", "/stats/data.json", nil))
+	var sd map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sd); err != nil || sd["series"] == nil {
+		t.Fatalf("stats/data.json unusable: %v", err)
+	}
 }
 
 // The compiler is deterministic: same data, same seed, same world.

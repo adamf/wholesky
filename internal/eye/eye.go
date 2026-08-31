@@ -61,6 +61,10 @@ type Eye struct {
 	// every beat.
 	pulseBudget int
 	pulseReset  time.Time
+	// peerWindow counts messages per peer in the current stats window, so the
+	// topology view can weight an edge by its true rate even though the
+	// pulses riding it are sampled.
+	peerWindow map[string]int64
 
 	// counters for the stats line
 	messages  int64
@@ -75,12 +79,13 @@ func New(m *world.Manifest, warp int) *Eye {
 	}
 	e := &Eye{
 		manifest: m, warp: warp,
-		airports: map[string]*world.Airport{},
-		byFlight: map[string]world.Flight{},
-		planes:   map[string]*Plane{},
-		subs:     map[chan []byte]struct{}{},
-		closed:   map[string]bool{},
-		halos:    map[string]int64{},
+		airports:   map[string]*world.Airport{},
+		byFlight:   map[string]world.Flight{},
+		planes:     map[string]*Plane{},
+		subs:       map[chan []byte]struct{}{},
+		closed:     map[string]bool{},
+		halos:      map[string]int64{},
+		peerWindow: map[string]int64{},
 	}
 	for i := range m.Airports {
 		e.airports[m.Airports[i].IATA] = &m.Airports[i]
@@ -99,6 +104,9 @@ func New(m *world.Manifest, warp int) *Eye {
 func (e *Eye) OnMessage(payload map[string]any) {
 	e.mu.Lock()
 	e.messages++
+	if peer, ok := payload["peer"].(string); ok {
+		e.peerWindow[peer]++
+	}
 	now := time.Now()
 	if now.After(e.pulseReset) {
 		e.pulseBudget, e.pulseReset = 120, now.Add(time.Second)
@@ -151,6 +159,13 @@ func (e *Eye) OnQueue(queue, reason string) {
 	if hit != "" {
 		e.broadcast(map[string]any{"t": "halo", "airport": hit, "count": n})
 	}
+}
+
+// Airborne reports how many aircraft the Eye currently believes are flying.
+func (e *Eye) Airborne() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.planes)
 }
 
 // Airport reports whether the world holds an airport, for chaos validation.
@@ -435,9 +450,12 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 			for a := range e.closed {
 				closed[a] = e.halos[a]
 			}
+			rates := e.peerWindow
+			e.peerWindow = map[string]int64{}
 			b, _ := json.Marshal(map[string]any{
 				"t": "stats", "messages": e.messages, "movements": e.movements,
 				"bookings": e.bookings, "airborne": len(e.planes), "closed": closed,
+				"rates": rates,
 			})
 			e.mu.Unlock()
 			fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck

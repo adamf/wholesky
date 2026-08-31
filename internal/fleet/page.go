@@ -66,7 +66,7 @@ const pageHTML = `<!doctype html>
   <span>links up <i id="nlinks">0</i></span>
   <span>messages <i id="nmsgs">0</i></span>
   <span>rate <i id="nrate">0</i>/s</span>
-  <div class="nav"><a href="/eye">globe →</a><a href="/">switch console →</a></div>
+  <div class="nav"><a href="/eye">globe →</a><a href="/stats">stats →</a><a href="/">switch console →</a></div>
 </div>
 <div id="wrap">
   <div id="main">
@@ -108,6 +108,8 @@ function render(){
   const infra=nodes.filter(n=>n.kind!=="carrier");
   document.getElementById("cards").innerHTML=infra.map(n=>
     "<div class='card' onclick=\"openNode('"+n.code+"')\"><b>"+n.code+"</b> · "+n.name+
+    (n.kind==="switch"?" <a href='/' target='_blank' style='color:#5fd38d'>console →</a>"
+                      :" <a href='/node/"+n.code+"/' target='_blank' style='color:#5fd38d'>console →</a>")+
     "<div class='k'>in <span class='n'>"+n.in+"</span> · out <span class='n'>"+n.out+
     "</span> · last "+fmtAgo(n.last_at)+"</div></div>").join("");
   const f=q.value.trim().toUpperCase();
@@ -138,7 +140,8 @@ async function refreshDrawer(){
     fetch("/fleet/node/"+sel+"/detail.json").then(r=>r.json())]);
   const queues=Object.entries(detail.queues||{}).map(([k,v])=>k+" <span style='color:#5fd38d'>"+v+"</span>").join(" · ")||"—";
   document.getElementById("dinner").innerHTML=
-    "<div style='display:flex;justify-content:space-between'><h2>"+n.code+"</h2>"+
+    "<div style='display:flex;justify-content:space-between'><h2>"+n.code+
+    " <a href='/node/"+n.code+"/' target='_blank' style='font-size:12px;color:#5fd38d'>open console →</a></h2>"+
     "<a onclick=\"closeDrawer()\" style='cursor:pointer'>✕</a></div>"+
     "<div class='sub'>"+esc(n.name)+(n.hub?" · hub "+n.hub:"")+(n.format?" · "+n.format:"")+"</div>"+
     "<div class='sub'>records <span style='color:#5fd38d'>"+detail.records+"</span> · queues: "+queues+"</div>"+
