@@ -1,0 +1,6 @@
+/bin/
+/dist/
+*.log
+.DS_Store
+/world.json
+/*.json
