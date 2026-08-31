@@ -63,7 +63,8 @@ function size(){ DPR=devicePixelRatio||1; W=innerWidth; H=innerHeight;
   cv.width=W*DPR; cv.height=H*DPR; cx.setTransform(DPR,0,0,DPR,0,0); }
 addEventListener("resize",size); size();
 
-let world=null, globe=false, anchor=null, mode="sky";
+let world=null, globe=false, anchor=null, mode="sky", land=null;
+fetch("/eye/land.json").then(r=>r.json()).then(l=>{ land=l; });
 const rates=new Map(); let netPos=null;
 const planes=new Map(), pulses=[], blips=[];
 const closed=new Map(); // iata -> halo count
@@ -231,11 +232,25 @@ function draw(){
   if(mode==="net"){ drawNet(t); return; }
   if(globe&&auto) rot.lam+=0.00035;
 
-  /* sphere edge + graticule */
+  /* the ocean disc, then the shore */
   if(globe){
     const R=Math.min(W,H-40)*0.46*zoom;
-    cx.strokeStyle="#16202c"; cx.lineWidth=1.2;
+    const g=cx.createRadialGradient(W/2-R*0.3,H/2-R*0.3,R*0.1,W/2,H/2+20,R);
+    g.addColorStop(0,"#0a1220"); g.addColorStop(1,"#060b12");
+    cx.fillStyle=g; cx.beginPath(); cx.arc(W/2,H/2+20,R,0,7); cx.fill();
+    cx.strokeStyle="#1a2634"; cx.lineWidth=1.2;
     cx.beginPath(); cx.arc(W/2,H/2+20,R,0,7); cx.stroke();
+  }
+  if(land){
+    cx.strokeStyle=globe?"#2c3f52":"#22323f"; cx.lineWidth=1;
+    for(const line of land){
+      cx.beginPath(); let pen=false;
+      for(const [lon,lat] of line){
+        const p=proj(lat,lon);
+        if(p[2]){ pen?cx.lineTo(p[0],p[1]):cx.moveTo(p[0],p[1]); pen=true; } else pen=false;
+      }
+      cx.stroke();
+    }
   }
   cx.strokeStyle="#101820"; cx.lineWidth=1;
   for(let lon=-180;lon<180;lon+=15){

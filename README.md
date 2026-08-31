@@ -9,14 +9,14 @@ sockets.
 whole sky: 518 carriers, 2,883 airports, 57,513 flights a day, running
 continuously on one machine.
 
-![The globe: thousands of aircraft, the continents drawn by traffic alone](docs/the-globe.jpg)
+![The globe: thousands of aircraft over the Earth, and Heathrow closing](docs/the-globe.gif)
 
 The globe has a second mode: **net**, the topology the sky runs on — 518
 carrier spokes around one switch, ordered by hub longitude so the ring echoes
 the geography, every edge weighted by its live message rate, pulses riding
 the spokes, and every node one click from its own console.
 
-![The net: the star the network actually is](docs/the-net.jpg)
+![The net: the star the network actually is, pulses riding the spokes](docs/the-net.gif)
 
 **Every node has a real console.** Each of the 519 embedded Jetway systems —
 the GDS and all 518 carriers — serves the full Jetway console at
@@ -40,13 +40,12 @@ their hubs, dialects, link state and message counters, fed by tapping each
 node's own event bus. Click a carrier for its records, queues and message
 log; click a message for the bytes as they crossed the wire.
 
-![The fleet: 520 Jetway nodes, live](docs/the-fleet.jpg)
+![The fleet in action: 520 nodes, into Ryanair, down to the raw telex](docs/the-fleet.gif)
 
-![Two clicks to the wire: a Ryanair MVT as raw telex](docs/the-telex.jpg)
-
-There is no coastline data on that globe. The continents are drawn entirely
-by airports and aircraft -- traffic density is the map. Drag to spin, scroll
-to zoom, and click any airport for the one control the sky answers to:
+The coastlines are [Natural Earth](https://www.naturalearthdata.com)
+1:110m, public domain, vendored at 76KB and embedded in the binary -- the
+traffic still draws the cities. Drag to spin, scroll to zoom, and click any
+airport for the one control the sky answers to:
 **close it**. Every operating carrier then transmits a real ASM cancellation
 for each affected flight, the GDS ingests them through the same
 schedule-change path production traffic uses, and the red halo that grows
@@ -82,6 +81,56 @@ topology here mirrors the real one:
   carrier. A booking's sell crosses two links and comes back confirmed.
 - **OTAs are not nodes.** They are demand: load generators speaking NDC and
   booking APIs. (Phase two.)
+
+## How it is put together
+
+One OS process; 520 Jetway instances as library assemblies; everything
+between them crosses real TCP. The only full `jetwayd` is the switch -- the
+same assembly the standalone binary runs, console included. The GDS and every
+carrier are embedded gateways: own identity, own store, own console, one
+socket each.
+
+```mermaid
+flowchart TB
+  subgraph skyd [skyd — one process, one Fly machine]
+    direction TB
+    subgraph sw [the switch — a full jetwayd, Relay mode]
+      SWG[gateway + store + 519 TCP listeners]
+      UI[console at / · /eye · /fleet · /stats · /node/*]
+    end
+    subgraph gds [the GDS — embedded gateway]
+      G[gateway + store + queues + avail cache]
+    end
+    subgraph host [carrier host — 518 tenants]
+      T1[FR gateway + store + inventory]
+      T2[BA gateway + store + inventory]
+      TN[... 516 more]
+    end
+    OBS[Eye · Fleet · Stats\nbus taps only]
+    DRV[demand · flight day · chaos]
+  end
+  V((viewer))
+
+  G <-- "1 TCP link — AIRIMP + PADIS" --> SWG
+  T1 <-- "1 TCP link each" --> SWG
+  T2 <---> SWG
+  TN <---> SWG
+  SWG -. bus events .-> OBS
+  G -. bus events .-> OBS
+  DRV --> G
+  DRV --> T1
+  V --> UI
+```
+
+What is real: the wire (519 sockets, real framing, real Type B and EDIFACT
+bytes, relay by address line and UNB recipient) and the state separation
+(nothing moves between nodes except a message). What is not: process
+isolation -- one panic takes the sky down, and all 520 share a scheduler.
+That trade is deliberate: the topology mirrors the real industry, where most
+carriers are tenants of a handful of hosted systems and everyone hangs off
+one message network, and the whole planet idles here at ~1.1GB. The seams
+for scaling out already exist -- a tenant host pointed at a switch across a
+real network works unchanged.
 
 ## Building it
 

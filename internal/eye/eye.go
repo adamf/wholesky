@@ -10,6 +10,8 @@
 package eye
 
 import (
+	_ "embed"
+
 	"encoding/json"
 	"fmt"
 	"math"
@@ -318,9 +320,22 @@ func (e *Eye) lookup(flight string) (world.Flight, bool) {
 	return f, ok
 }
 
+// coastlineJSON is the Natural Earth 1:110m coastline (public domain),
+// vendored the same way the OpenFlights data is: polylines of rounded
+// lon/lat pairs, 76KB of planet. The traffic draws the cities; this draws
+// the shore they sit on.
+//
+//go:embed coastline.json
+var coastlineJSON []byte
+
 // Routes mounts the Eye on a mux.
 func (e *Eye) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /eye", e.page)
+	mux.HandleFunc("GET /eye/land.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Write(coastlineJSON) //nolint:errcheck
+	})
 	mux.HandleFunc("GET /eye/world.json", e.world)
 	mux.HandleFunc("GET /eye/planes.json", e.planesNow)
 	mux.HandleFunc("GET /eye/stream", e.stream)
