@@ -220,6 +220,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.airports[a.IATA] = a
 	}
 	s.Eye.Chaos = s.chaos
+	s.Eye.FlightPNRs = s.flightRecords
 	s.Fleet = fleet.New()
 	s.Stats = stats.New()
 
@@ -356,6 +357,35 @@ func (s *Sim) Stop() {
 	if s.Switch != nil {
 		s.Switch.Close()
 	}
+}
+
+// flightRecords is the globe's drill-through: every booking any channel
+// holds on a flight, straight from the stores. A plane on the map becomes
+// the people on it in one click, which is the whole point of drawing it.
+func (s *Sim) flightRecords(flight string) []eye.FlightRecord {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var out []eye.FlightRecord
+	for _, g := range s.GDSes {
+		recs, err := g.Store.FindPNRsByFlight(ctx, flight, "", 100)
+		if err != nil {
+			continue
+		}
+		for _, r := range recs {
+			fr := eye.FlightRecord{
+				Locator: r.RecordLocator, Party: len(r.Passengers),
+				Status: string(r.Status), GDS: g.Designator,
+			}
+			if len(r.Passengers) > 0 {
+				fr.Surname = r.Passengers[0].Surname
+			}
+			out = append(out, fr)
+			if len(out) >= 200 {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 // settledIn reports whether a record in st has no segment still awaiting an

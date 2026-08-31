@@ -208,9 +208,39 @@ addEventListener("mouseup",e=>{
 cv.addEventListener("wheel",e=>{ e.preventDefault(); auto=false;
   zoom=Math.max(.6,Math.min(6,zoom*(e.deltaY<0?1.12:0.9))); },{passive:false});
 
+function planeAt(x,y){
+  const nowMs=Date.now();
+  let best=null,bd=11*11;
+  for(const p of planes.values()){
+    const dep=Date.parse(p.departed), arr=Date.parse(p.arriving);
+    let f=(nowMs-dep)/Math.max(1,arr-dep); f=Math.max(0,Math.min(1,f));
+    const lat=p.from_lat+(p.to_lat-p.from_lat)*f, lon=p.from_lon+(p.to_lon-p.from_lon)*f;
+    const q=proj(lat,lon); if(!q[2]) continue;
+    const d=(q[0]-x)**2+(q[1]-y)**2;
+    if(d<bd){ bd=d; best=p; }
+  }
+  return best;
+}
+async function showFlight(p){
+  panel.innerHTML="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
+    (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
+    "<div class='sub'>fetching the souls on board…</div>";
+  panel.style.display="block";
+  let recs=[];
+  try{ recs=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); }catch(e){}
+  const rows=recs.slice(0,14).map(r=>
+    "<div class='sub'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
+    "</a> "+r.surname+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+"</div>").join("");
+  panel.innerHTML="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
+    (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
+    (recs.length? "<div class='sub' style='margin-top:4px'>"+recs.length+" records on board</div>"+rows
+                : "<div class='sub'>no records on this flight</div>");
+}
 function pick(x,y){
   if(!world) return;
   if(mode==="net"){ pickNode(x,y); return; }
+  const pl=planeAt(x,y);
+  if(pl){ showFlight(pl); return; }
   let best=null,bd=12*12;
   for(const a of world.airports){
     const p=proj(a.lat,a.lon); if(!p[2]) continue;

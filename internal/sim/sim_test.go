@@ -661,3 +661,45 @@ func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
 		t.Error("no BPM reached the watcher")
 	}
 }
+
+// The globe's drill-through: an aircraft resolves to the bookings riding on
+// it, straight from whichever channel sold them.
+func TestFlightDrillThroughFindsTheBookings(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 2, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	res, err := s.GDSes[1].GW.Book(ctx, &gateway.BookingRequest{
+		Passengers: []gateway.BookingPassenger{{Surname: "DRILLTHRU", Given: "ANN", Title: "MS"}},
+		Segments: []gateway.BookingSegment{{
+			Carrier: f.Carrier, FlightNum: f.Number, Class: "Y",
+			Date:  strings.ToUpper(s.BookingDate.Format("02Jan")),
+			Board: f.From, Off: f.To, Seats: 1}},
+		Agent: "test", Channel: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recs := s.flightRecords(f.Carrier + f.Number)
+	found := false
+	for _, r := range recs {
+		if r.Locator == res.PNR.RecordLocator {
+			found = true
+			if r.Surname != "DRILLTHRU" || r.GDS != s.GDSes[1].Designator {
+				t.Errorf("record listed wrong: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the drill-through never found %s among %d records",
+			res.PNR.RecordLocator, len(recs))
+	}
+}

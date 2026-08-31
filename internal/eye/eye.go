@@ -26,6 +26,15 @@ import (
 )
 
 // Plane is one aircraft the Eye believes is in the air.
+// FlightRecord is one booking as the drill-through lists it.
+type FlightRecord struct {
+	Locator string `json:"locator"`
+	Surname string `json:"surname"`
+	Party   int    `json:"party"`
+	Status  string `json:"status"`
+	GDS     string `json:"gds"`
+}
+
 type Plane struct {
 	Flight   string    `json:"flight"` // e.g. "U2123"
 	Reg      string    `json:"reg"`
@@ -48,6 +57,11 @@ type Eye struct {
 	// byFlight resolves "U2"+"0123" to its scheduled leg.
 	byFlight map[string]world.Flight
 	warp     int
+
+	// FlightPNRs, when set, answers the drill-through from an aircraft to
+	// the bookings riding on it: what the distribution world holds on a
+	// flight, straight from the stores.
+	FlightPNRs func(flight string) []FlightRecord
 
 	// Chaos, when set, receives the map's control actions -- ("close","LHR"),
 	// ("reopen","LHR"). The Eye owns the page and the halos; what closing an
@@ -408,6 +422,21 @@ func (e *Eye) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /eye/planes.json", e.planesNow)
 	mux.HandleFunc("GET /eye/stream", e.stream)
 	mux.HandleFunc("POST /eye/chaos", e.chaos)
+	mux.HandleFunc("GET /eye/flight/{flight}", e.flightRecords)
+}
+
+// flightRecords answers the aircraft drill-through.
+func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
+	if e.FlightPNRs == nil {
+		http.Error(w, "this world has no record hook", http.StatusNotImplemented)
+		return
+	}
+	recs := e.FlightPNRs(strings.ToUpper(strings.TrimSpace(r.PathValue("flight"))))
+	if recs == nil {
+		recs = []FlightRecord{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(recs) //nolint:errcheck
 }
 
 // chaos is the map's one control: close or reopen an airport.
