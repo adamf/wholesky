@@ -11,6 +11,7 @@ package stats
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -72,11 +73,123 @@ type Collector struct {
 
 	latestQueues map[string]int
 	started      time.Time
+	snapshotPath string
 }
 
 // New builds a collector and starts its snapshot loop.
 func New() *Collector {
 	return &Collector{started: time.Now(), latestQueues: map[string]int{}}
+}
+
+// snapshot is the persisted shape: the rings and the running totals. Ten
+// minutes of two-second samples is a few kilobytes of JSON.
+type snapshot struct {
+	Series map[string][]float64 `json:"series"`
+	Totals map[string]int64     `json:"totals"`
+}
+
+// SetSnapshotPath, called before Run, persists the rings there every thirty
+// seconds and restores them now -- so a deploy or a suspended machine
+// thawing does not open on ten minutes of blank charts.
+func (c *Collector) SetSnapshotPath(path string) {
+	if path == "" {
+		return
+	}
+	c.mu.Lock()
+	c.snapshotPath = path
+	c.mu.Unlock()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return // first boot, or nothing survived; both are fine
+	}
+	var snap snapshot
+	if json.Unmarshal(b, &snap) != nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for name, vals := range snap.Series {
+		if r := c.ringByName(name); r != nil {
+			for _, v := range vals {
+				r.push(v)
+			}
+		}
+	}
+	c.tTotal = snap.Totals["messages"]
+	c.tBookings = snap.Totals["bookings"]
+	c.tMovements = snap.Totals["movements"]
+	c.tUndeliv = snap.Totals["undeliverable"]
+}
+
+// ringNames is every series in the panel, which is also the persisted set.
+var ringNames = []string{"total", "typeb", "edifact", "avs", "mvt", "res",
+	"asm", "pnl", "bag", "other", "undeliverable", "bookings", "movements",
+	"airborne", "queued"}
+
+func (c *Collector) ringByName(name string) *ring {
+	switch name {
+	case "total":
+		return &c.sTotal
+	case "typeb":
+		return &c.sTypeb
+	case "edifact":
+		return &c.sEdifact
+	case "avs":
+		return &c.sAVS
+	case "mvt":
+		return &c.sMVT
+	case "res":
+		return &c.sRES
+	case "asm":
+		return &c.sASM
+	case "pnl":
+		return &c.sPNL
+	case "bag":
+		return &c.sBag
+	case "other":
+		return &c.sOther
+	case "undeliverable":
+		return &c.sUndeliv
+	case "bookings":
+		return &c.sBookings
+	case "movements":
+		return &c.sMovements
+	case "airborne":
+		return &c.sAirborne
+	case "queued":
+		return &c.sQueued
+	}
+	return nil
+}
+
+// persist writes the snapshot atomically.
+func (c *Collector) persist() {
+	c.mu.Lock()
+	path := c.snapshotPath
+	if path == "" {
+		c.mu.Unlock()
+		return
+	}
+	snap := snapshot{
+		Series: map[string][]float64{},
+		Totals: map[string]int64{
+			"messages": c.tTotal, "bookings": c.tBookings,
+			"movements": c.tMovements, "undeliverable": c.tUndeliv,
+		},
+	}
+	for _, name := range ringNames {
+		snap.Series[name] = c.ringByName(name).slice()
+	}
+	c.mu.Unlock()
+	b, err := json.Marshal(snap)
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) != nil {
+		return
+	}
+	os.Rename(tmp, path) //nolint:errcheck
 }
 
 // Run snapshots the windows into the rings until the context ends. Two
@@ -122,6 +235,9 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		}
 		c.sQueued.push(float64(q))
 		c.mu.Unlock()
+		if n%15 == 0 {
+			c.persist()
+		}
 	}
 }
 

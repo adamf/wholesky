@@ -102,6 +102,10 @@ type Options struct {
 	// instead of memory: the durable store jetway ships, exercised by the
 	// world instead of only by its own tests.
 	GDSDSN string
+	// StatsSnapshot, when set, persists the stats rings to this path every
+	// thirty seconds and restores them on boot, so a redeploy or a thawed
+	// machine does not open on blank charts.
+	StatsSnapshot string
 	// LinkWait bounds how long Boot waits for the fabric.
 	LinkWait time.Duration
 	Log      *slog.Logger
@@ -223,6 +227,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	s.Eye.FlightPNRs = s.flightRecords
 	s.Fleet = fleet.New()
 	s.Stats = stats.New()
+	s.Stats.SetSnapshotPath(opts.StatsSnapshot)
 
 	sw, err := buildSwitch(ctx, m, opts, func(mux *http.ServeMux) {
 		s.Eye.Routes(mux)

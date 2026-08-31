@@ -49,6 +49,7 @@ func run() error {
 		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
 		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
 		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
+		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
 		verbose   = flag.Bool("v", false, "debug logging")
 	)
 	flag.Parse()
@@ -75,6 +76,7 @@ func run() error {
 	s, err := sim.Boot(ctx, &m, sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
+		StatsSnapshot: *statsSnap,
 	})
 	if err != nil {
 		return err
