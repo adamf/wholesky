@@ -2,7 +2,7 @@ module github.com/adamf/wholesky
 
 go 1.27.0
 
-require github.com/adamf/jetway v0.0.0
+require github.com/adamf/jetway v0.1.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -23,8 +23,3 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// The simulator tracks jetway head during the building phase; both repos live
-// side by side and jetway's app layer is moving fast under this project's
-// demands. Swap for a tagged version when jetway cuts one.
-replace github.com/adamf/jetway => ../jetway

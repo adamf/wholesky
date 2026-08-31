@@ -2,7 +2,15 @@
 
 One Earth-day of passenger aviation, simulated on
 [Jetway](https://github.com/adamf/jetway): every scheduled flight, every
-booking, and every Type B message that makes it go, over real sockets.
+booking, and every Type B and EDIFACT message that makes it go, over real
+sockets.
+
+**Live demo:** https://wholesky-demo.fly.dev — a twenty-carrier European sky
+running continuously: seeded demand booking through the switch in both wire
+dialects, and the flight day playing out as real MVT movement messages. The
+console is the switch's own; open any message and read it field by field.
+The machine suspends when nobody is watching and thaws mid-flight on the
+next visit.
 
 Design: "The Whole Sky" (design note, 2026-08-31). The short version — the
 sky is loud but it is not big. The world's reservation fabric peaks at a few
@@ -23,16 +31,16 @@ topology here mirrors the real one:
 
 ## Building it
 
-wholesky tracks [Jetway](https://github.com/adamf/jetway) at head through a
-`replace` directive, so clone them side by side:
+wholesky pins [Jetway](https://github.com/adamf/jetway) by tag, so it builds
+like any Go module:
 
 ```sh
-git clone https://github.com/adamf/jetway
 git clone https://github.com/adamf/wholesky
 cd wholesky && go test ./...
 ```
 
-The directive comes out when Jetway cuts a tag.
+To develop against an unreleased Jetway, add a `replace` directive pointing
+at a side-by-side checkout and drop it before pushing.
 
 ## Running it
 

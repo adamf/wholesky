@@ -41,6 +41,12 @@ type Options struct {
 	Console string
 	// Capacity is seats per class per flight at every tenant.
 	Capacity int
+	// MaxMessages and MaxRecords bound every node's in-memory store. Zero is
+	// unbounded, which is right for a test that lives seconds and wrong for a
+	// deployment that lives weeks: an unbounded store under continuous demand
+	// and a looping flight day is a slow out-of-memory with extra steps.
+	MaxMessages int
+	MaxRecords  int
 	// LinkWait bounds how long Boot waits for the fabric.
 	LinkWait time.Duration
 	Log      *slog.Logger
@@ -66,6 +72,8 @@ type Sim struct {
 	// sender, never retried. The first live run's two "free sale" bookings
 	// were actually this.
 	gdsUp atomic.Bool
+
+	maxMessages, maxRecords int
 
 	log    *slog.Logger
 	cancel context.CancelFunc
@@ -95,10 +103,11 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	s := &Sim{
 		Manifest: m, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		BookingDate: time.Now().UTC().AddDate(0, 0, 30),
-		log:         log, cancel: cancel,
+		maxMessages: opts.MaxMessages, maxRecords: opts.MaxRecords,
+		log: log, cancel: cancel,
 	}
 
-	sw, err := buildSwitch(ctx, m, opts.Console, log)
+	sw, err := buildSwitch(ctx, m, opts, log)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -126,6 +135,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			WatchAddress: GDSAddress,
 			Capacity:     capacity,
 			BookingDate:  s.BookingDate,
+			MaxMessages:  opts.MaxMessages,
+			MaxRecords:   opts.MaxRecords,
 			Log:          log,
 		})
 		if err != nil {
@@ -292,14 +303,17 @@ func (s *Sim) FlyDay(ctx context.Context, warp int) {
 	}
 }
 
-func buildSwitch(ctx context.Context, m *world.Manifest, console string, log *slog.Logger) (*node.Node, error) {
+func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, log *slog.Logger) (*node.Node, error) {
+	console := opts.Console
 	cfg := config.Default()
 	cfg.Identity = config.Identity{Designator: "1X", TTYAddress: "XCHDD1X", Name: "wholesky switch"}
 	cfg.HTTP.Addr = console
 	if console == "" {
 		cfg.HTTP.Addr = "127.0.0.1:0"
 	}
-	cfg.Store = config.Store{Backend: "mem"}
+	// The switch sees every message in the world, so it hits any cap first.
+	cfg.Store = config.Store{Backend: "mem",
+		MaxMessages: opts.MaxMessages, MaxRecords: opts.MaxRecords}
 	cfg.Spool.Enabled = false
 	cfg.Demo.Carriers = false
 	cfg.Routing.Relay = true
@@ -336,6 +350,7 @@ func buildSwitch(ctx context.Context, m *world.Manifest, console string, log *sl
 // AIRIMP over Type B or PADIS over EDIFACT, routed either way by the switch.
 func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string, log *slog.Logger) (*gateway.Gateway, store.Store, error) {
 	st := store.NewMem()
+	st.MaxMessages, st.MaxRecords = s.maxMessages, s.maxRecords
 	bus := gateway.NewBus(256)
 	gw := gateway.New(gateway.Identity{
 		Designator: GDSDesignator, TTYAddress: GDSAddress, Name: "wholesky gds",

@@ -51,6 +51,9 @@ type Options struct {
 	Capacity int
 	// BookingDate is the date the world sells, for availability broadcasts.
 	BookingDate time.Time
+	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
+	MaxMessages int
+	MaxRecords  int
 	Log         *slog.Logger
 	Bus         *gateway.Bus
 }
@@ -70,6 +73,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	}
 
 	st := store.NewMem()
+	st.MaxMessages, st.MaxRecords = opts.MaxMessages, opts.MaxRecords
 	gw := gateway.New(gateway.Identity{
 		Designator: c.Designator,
 		TTYAddress: c.TTYAddress,

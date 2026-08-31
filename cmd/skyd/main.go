@@ -46,6 +46,8 @@ func run() error {
 		demand    = flag.Int("demand", 30, "bookings per minute; 0 disables demand")
 		seed      = flag.Int64("seed", 1, "demand seed")
 		console   = flag.String("console", "127.0.0.1:8090", "switch console address")
+		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
+		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
 		verbose   = flag.Bool("v", false, "debug logging")
 	)
 	flag.Parse()
@@ -71,6 +73,7 @@ func run() error {
 
 	s, err := sim.Boot(ctx, &m, sim.Options{
 		Carriers: *carriers, Console: *console, Log: log,
+		MaxMessages: *maxMsgs, MaxRecords: *maxRecs,
 	})
 	if err != nil {
 		return err

@@ -1,0 +1,39 @@
+# Fly.io deployment for the public demo: a European sky, running continuously.
+#
+# Only the switch console is published. The carriers, the GDS and the switch
+# all live in this one container, talking over loopback TCP -- which is the
+# same reason the jetway demo fits a container and would not fit a function
+# platform.
+
+app = "wholesky-demo"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Zero when idle. The world pauses when nobody is watching and resumes on
+  # the first visit; a fresh boot recompiles nothing, because the manifest is
+  # baked into the image.
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 60
+    hard_limit = 120
+
+  # The console holds an event-stream open; /healthz answers immediately.
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
