@@ -21,6 +21,19 @@ topology here mirrors the real one:
 - **OTAs are not nodes.** They are demand: load generators speaking NDC and
   booking APIs. (Phase two.)
 
+## Building it
+
+wholesky tracks [Jetway](https://github.com/adamf/jetway) at head through a
+`replace` directive, so clone them side by side:
+
+```sh
+git clone https://github.com/adamf/jetway
+git clone https://github.com/adamf/wholesky
+cd wholesky && go test ./...
+```
+
+The directive comes out when Jetway cuts a tag.
+
 ## Running it
 
 ```sh
