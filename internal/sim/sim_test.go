@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,3 +230,98 @@ func TestChaosCloseAirportCascades(t *testing.T) {
 		t.Error("the airport is still closed after reopening")
 	}
 }
+
+// A closed airport turns away what is already flying toward it: the operating
+// carrier sends a real DIV naming the alternate, the watcher reroutes the
+// aircraft when the message arrives, and nothing lands where nothing can.
+func TestChaosDivertsAirborneAircraft(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	// Put an aircraft in the air toward a destination we will close.
+	var code string
+	for c := range s.Tenants {
+		if len(s.Flights[c]) > 0 {
+			code = c
+			break
+		}
+	}
+	f := s.Flights[code][0]
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	if err := s.Tenants[code].Depart(ctx, f, day, "SKY777", 0); err != nil {
+		t.Fatalf("depart: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(s.Eye.PlanesTo(f.To)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the departure never became an airborne aircraft")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if err := s.chaos("close", f.To); err != nil {
+		t.Fatalf("close %s: %v", f.To, err)
+	}
+
+	// The aircraft must leave the closed destination for a real alternate,
+	// marked diverted -- and only because the DIV crossed the wire.
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		var diverted *Planeish
+		for _, p := range planesOf(s) {
+			if p.Flight == f.Carrier+trimZeros(f.Number) && p.Diverted {
+				diverted = &p
+			}
+		}
+		if diverted != nil {
+			if diverted.To == f.To {
+				t.Fatalf("the aircraft is marked diverted but still bound for the closed %s", f.To)
+			}
+			if _, ok := s.airports[diverted.To]; !ok {
+				t.Fatalf("diverted to %q, which is not an airport in this world", diverted.To)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the aircraft bound for %s was never diverted", f.To)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// And the wire carries the evidence: a DIV at the watcher.
+	msgs, err := s.GDSStore.ListMessages(ctx, store.MessageFilter{Limit: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mm := range msgs {
+		if strings.HasPrefix(mm.Kind, "DIV/") {
+			return
+		}
+	}
+	t.Fatal("the aircraft turned but no DIV message reached the watcher; the Eye must not know things the wire did not carry")
+}
+
+// Planeish and helpers keep the test readable without exporting Eye internals.
+type Planeish = struct {
+	Flight   string
+	To       string
+	Diverted bool
+}
+
+func planesOf(s *Sim) []Planeish {
+	var out []Planeish
+	for _, apt := range s.Manifest.Airports {
+		for _, p := range s.Eye.PlanesTo(apt.IATA) {
+			out = append(out, Planeish{Flight: p.Flight, To: p.To, Diverted: p.Diverted})
+		}
+	}
+	return out
+}
+
+func trimZeros(n string) string { return strings.TrimLeft(n, "0") }

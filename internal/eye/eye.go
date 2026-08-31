@@ -12,6 +12,7 @@ package eye
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,6 +34,8 @@ type Plane struct {
 	ToLon    float64   `json:"to_lon"`
 	Departed time.Time `json:"departed"`
 	Arriving time.Time `json:"arriving"`
+	// Diverted marks an aircraft sent somewhere it was not scheduled to go.
+	Diverted bool `json:"diverted,omitempty"`
 }
 
 // Eye is the observer.
@@ -176,6 +179,13 @@ func (e *Eye) OnMovement(payload map[string]any) {
 	flight, _ := payload["flight"].(string)
 	station, _ := payload["station"].(string)
 	reg, _ := payload["registration"].(string)
+	kind, _ := payload["kind"].(string)
+
+	if kind == "DIV" {
+		ea, _ := payload["ea_airport"].(string)
+		e.divert(flight, ea)
+		return
+	}
 
 	f, ok := e.lookup(flight)
 	if !ok {
@@ -208,6 +218,64 @@ func (e *Eye) OnMovement(payload map[string]any) {
 	default:
 		e.mu.Unlock()
 	}
+}
+
+// divert reroutes an airborne aircraft to the airport its DIV names.
+//
+// The aircraft continues from wherever it is now: its origin becomes its
+// present position, its destination the diversion airport, and its new
+// arrival falls out of the remaining great-circle distance at the same
+// warped groundspeed everything else flies.
+func (e *Eye) divert(flight, toApt string) {
+	e.mu.Lock()
+	p := e.planes[flight]
+	div, ok := e.airports[toApt]
+	if p == nil || !ok {
+		e.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	frac := float64(now.Sub(p.Departed)) / float64(p.Arriving.Sub(p.Departed))
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 1 {
+		frac = 1
+	}
+	curLat := p.FromLat + (p.ToLat-p.FromLat)*frac
+	curLon := p.FromLon + (p.ToLon-p.FromLon)*frac
+	km := haversineKM(curLat, curLon, div.Lat, div.Lon)
+	p.FromLat, p.FromLon = curLat, curLon
+	p.To, p.ToLat, p.ToLon = toApt, div.Lat, div.Lon
+	p.Departed = now
+	p.Arriving = now.Add(time.Duration(km/820*60) * time.Minute / time.Duration(e.warp))
+	p.Diverted = true
+	cp := *p
+	e.mu.Unlock()
+	e.broadcast(map[string]any{"t": "dep", "plane": &cp})
+}
+
+// PlanesTo lists the aircraft currently flying toward an airport, for the
+// simulation to divert when it closes.
+func (e *Eye) PlanesTo(iata string) []Plane {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []Plane
+	for _, p := range e.planes {
+		if p.To == iata {
+			out = append(out, *p)
+		}
+	}
+	return out
+}
+
+func haversineKM(lat1, lon1, lat2, lon2 float64) float64 {
+	const r = 6371.0
+	p1, p2 := lat1*math.Pi/180, lat2*math.Pi/180
+	dp := (lat2 - lat1) * math.Pi / 180
+	dl := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dp/2)*math.Sin(dp/2) + math.Cos(p1)*math.Cos(p2)*math.Sin(dl/2)*math.Sin(dl/2)
+	return 2 * r * math.Asin(math.Sqrt(a))
 }
 
 // OnBooking counts a settled or created booking for the stats line.
@@ -358,6 +426,11 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		case <-stats.C:
 			e.mu.Lock()
+			for k, p := range e.planes {
+				if time.Since(p.Arriving) > 2*time.Minute {
+					delete(e.planes, k)
+				}
+			}
 			closed := make(map[string]int64, len(e.closed))
 			for a := range e.closed {
 				closed[a] = e.halos[a]

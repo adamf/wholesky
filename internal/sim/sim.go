@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -25,7 +26,10 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 
+	"github.com/adamf/jetway/pkg/mvt"
+
 	"github.com/adamf/wholesky/internal/eye"
+	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -91,6 +95,10 @@ type Sim struct {
 
 	// Eye is the world's observer and map, mounted on the switch console.
 	Eye *eye.Eye
+	// Fleet is the cluster dashboard: every node's live ledger.
+	Fleet *fleet.Collector
+
+	airports map[string]world.Airport
 
 	log    *slog.Logger
 	cancel context.CancelFunc
@@ -126,12 +134,20 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		BookingDate: time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages: opts.MaxMessages, maxRecords: opts.MaxRecords,
 		warp: warp, Eye: eye.New(m, warp),
-		closed: map[string]bool{},
-		log:    log, cancel: cancel,
+		closed:   map[string]bool{},
+		airports: map[string]world.Airport{},
+		log:      log, cancel: cancel,
+	}
+	for _, a := range m.Airports {
+		s.airports[a.IATA] = a
 	}
 	s.Eye.Chaos = s.chaos
+	s.Fleet = fleet.New()
 
-	sw, err := buildSwitch(ctx, m, opts, s.Eye.Routes, log)
+	sw, err := buildSwitch(ctx, m, opts, func(mux *http.ServeMux) {
+		s.Eye.Routes(mux)
+		s.Fleet.Routes(mux)
+	}, log)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -150,6 +166,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			}
 		}
 	})
+	s.Fleet.Add(ctx, "1X", "the switch", fleet.KindSwitch, "typeb", "", 0, sw.Store, sw.Bus)
+	s.Fleet.LivePeers = sw.LivePeers
 	if opts.Console != "" {
 		go func() {
 			if err := sw.Serve(ctx, 10*time.Second); err != nil && ctx.Err() == nil {
@@ -163,6 +181,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		capacity = 100000
 	}
 	for _, c := range m.Carriers {
+		tenantBus := gateway.NewBus(64)
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
 			SwitchAddr:   sw.Addr("link-" + strings.ToLower(c.Designator)),
 			WatchAddress: GDSAddress,
@@ -171,6 +190,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxMessages:  opts.MaxMessages,
 			MaxRecords:   opts.MaxRecords,
 			AVSInterval:  opts.AVSInterval,
+			Bus:          tenantBus,
 			Log:          log,
 		})
 		if err != nil {
@@ -178,6 +198,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			return nil, fmt.Errorf("start carrier %s: %w", c.Designator, err)
 		}
 		s.Tenants[c.Designator] = t
+		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
+			c.Format, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
 	}
 
 	gds, gdsStore, err := s.buildGDS(ctx, m, sw.Addr("link-gds"), log)
@@ -186,6 +208,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		return nil, err
 	}
 	s.GDS, s.GDSStore = gds, gdsStore
+	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", 0, gdsStore, nil)
 
 	wait := opts.LinkWait
 	if wait <= 0 {
@@ -442,6 +465,12 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 
 	go s.tapBus(ctx, bus, func(ev gateway.Event) {
 		switch ev.Type {
+		case gateway.EvMessage:
+			// The GDS row was registered without a bus, because the bus is
+			// born here; feed it by hand.
+			if p, ok := ev.Data.(map[string]any); ok {
+				s.Fleet.Count(GDSDesignator, p)
+			}
 		case gateway.EvMovement:
 			s.Movements.Add(1)
 			if p, ok := ev.Data.(map[string]any); ok {
@@ -487,6 +516,7 @@ func (s *Sim) chaos(action, iata string) error {
 			return nil
 		}
 		s.log.Info("chaos: airport closed", "airport", iata)
+		go s.divertAirborneTo(iata)
 		go s.cancelFlightsTouching(iata)
 		return nil
 	case "reopen":
@@ -504,6 +534,80 @@ func (s *Sim) isClosed(a, b string) bool {
 	s.closedMu.Lock()
 	defer s.closedMu.Unlock()
 	return s.closed[a] || s.closed[b]
+}
+
+// divertAirborneTo turns the aircraft already in the air toward a closed
+// airport away from it, each with a real DIV message from its operating
+// carrier: the originally intended airport on the identification line, the
+// alternate and new estimate in the EA element, and the AHM reason code for
+// a closed field. The Eye reroutes each aircraft when the message reaches
+// the watcher -- through the wire, like everything else it knows.
+func (s *Sim) divertAirborneTo(iata string) {
+	planes := s.Eye.PlanesTo(iata)
+	if len(planes) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for _, p := range planes {
+		code := p.Flight[:2]
+		t := s.Tenants[code]
+		if t == nil {
+			continue
+		}
+		alt := s.nearestOpenAirport(iata)
+		if alt == "" {
+			continue
+		}
+		num := p.Flight[2:]
+		m := &mvt.Message{
+			Kind:         mvt.KindDIV,
+			Flight:       p.Flight,
+			Day:          fmt.Sprintf("%02d", now.Day()),
+			Registration: p.Reg,
+			Station:      iata,
+			EA:           &mvt.ETA{Time: now.Add(30 * time.Minute).Format("1504"), Airport: alt},
+			// 71 is the diversion reason the published examples use for a
+			// field below limits; close enough for a closed one.
+			DR: "71",
+		}
+		if err := t.SendOps(context.Background(), m); err != nil {
+			s.log.Debug("diversion not sent", "flight", p.Flight, "err", err)
+		}
+		_ = num
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.log.Info("chaos: airborne diverted", "airport", iata, "aircraft", len(planes))
+}
+
+// nearestOpenAirport picks the alternate: closest open field to the closed
+// one, by great circle.
+func (s *Sim) nearestOpenAirport(iata string) string {
+	from, ok := s.airports[iata]
+	if !ok {
+		return ""
+	}
+	best, bestKM := "", 1e18
+	s.closedMu.Lock()
+	defer s.closedMu.Unlock()
+	for code, a := range s.airports {
+		if code == iata || s.closed[code] {
+			continue
+		}
+		km := haversine(from.Lat, from.Lon, a.Lat, a.Lon)
+		if km < bestKM {
+			best, bestKM = code, km
+		}
+	}
+	return best
+}
+
+func haversine(lat1, lon1, lat2, lon2 float64) float64 {
+	const r = 6371.0
+	p1, p2 := lat1*math.Pi/180, lat2*math.Pi/180
+	dp := (lat2 - lat1) * math.Pi / 180
+	dl := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dp/2)*math.Sin(dp/2) + math.Cos(p1)*math.Cos(p2)*math.Sin(dl/2)*math.Sin(dl/2)
+	return 2 * r * math.Asin(math.Sqrt(a))
 }
 
 // cancelFlightsTouching sends one ASM CNL per affected flight, paced so the

@@ -11,6 +11,16 @@ continuously on one machine.
 
 ![The globe: thousands of aircraft, the continents drawn by traffic alone](docs/the-globe.jpg)
 
+Behind the globe sits **the fleet** at `/fleet`: every Jetway system in the
+world as a live row — the switch, the GDS, and all 518 carrier tenants with
+their hubs, dialects, link state and message counters, fed by tapping each
+node's own event bus. Click a carrier for its records, queues and message
+log; click a message for the bytes as they crossed the wire.
+
+![The fleet: 520 Jetway nodes, live](docs/the-fleet.jpg)
+
+![Two clicks to the wire: a Ryanair MVT as raw telex](docs/the-telex.jpg)
+
 There is no coastline data on that globe. The continents are drawn entirely
 by airports and aircraft -- traffic density is the map. Drag to spin, scroll
 to zoom, and click any airport for the one control the sky answers to:
@@ -19,7 +29,11 @@ for each affected flight, the GDS ingests them through the same
 schedule-change path production traffic uses, and the red halo that grows
 over the airport is a count of actual queue items -- bookings a person now
 has to deal with. Closing Heathrow cancels ~680 flights in about seven
-seconds of message traffic. Reopening it stops the cascade mid-flight.
+seconds of message traffic. Reopening it stops the cascade
+mid-flight. And aircraft already airborne toward a closed airport do not
+vanish: their operating carriers transmit real **DIV** messages naming the
+nearest open alternate, the Eye reroutes each aircraft when the message
+reaches the watcher, and the diverted planes turn amber as they turn away.
 
 Every aircraft on that map is flying because a real MVT message crossed the
 switch; the Eye subscribes to the buses the world already publishes on and
@@ -89,8 +103,8 @@ region; aircraft from movements; pulses from the message stream; chaos
 halos from queue placements. The full 518-carrier world idles at ~1.1GB and
 a fraction of a core, breathing to ~2 cores during the global morning
 banks. Not yet: the real demand model (booking curve, channels, parties),
-PNL/ADL and baggage, diversions for airborne flights when their
-destination closes, the virtual clock.
+PNL/ADL and baggage, the virtual clock, weather systems
+that close regions rather than airports.
 
 ## Licence
 

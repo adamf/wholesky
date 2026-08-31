@@ -24,7 +24,8 @@ const pageHTML = `<!doctype html>
     padding:10px 16px; background:linear-gradient(#06090df2,#06090d00); z-index:2; pointer-events:none; }
   #bar b { color:var(--plane); font-weight:600; letter-spacing:.08em; }
   #bar span i { font-style:normal; color:var(--hot); }
-  #bar a { color:var(--dim); text-decoration:none; margin-left:auto; pointer-events:auto; }
+  #bar a { color:var(--dim); text-decoration:none; pointer-events:auto; }
+  #bar a:first-of-type { margin-left:auto; }
   #bar a:hover { color:var(--ink); }
   canvas { display:block; width:100vw; height:100vh; cursor:grab; }
   canvas.drag { cursor:grabbing; }
@@ -45,6 +46,7 @@ const pageHTML = `<!doctype html>
   <span>movements <i id="mvt">0</i></span>
   <span>bookings <i id="bkg">0</i></span>
   <span>messages <i id="msg">0</i></span>
+  <a href="/fleet" style="pointer-events:auto">fleet →</a>
   <a href="/">switch console →</a>
 </div>
 <div id="panel"></div>
@@ -260,7 +262,7 @@ function draw(){
     if(back[2]){ cx.strokeStyle="rgba(232,238,244,.12)";
       cx.beginPath(); cx.moveTo(back[0],back[1]); cx.lineTo(q[0],q[1]); cx.stroke(); }
     cx.save(); cx.translate(q[0],q[1]); cx.rotate(ang);
-    cx.fillStyle="#e8eef4"; cx.beginPath();
+    cx.fillStyle=p.diverted?"#e0b93c":"#e8eef4"; cx.beginPath();
     cx.moveTo(4,0); cx.lineTo(-3,2.4); cx.lineTo(-1.4,0); cx.lineTo(-3,-2.4); cx.closePath(); cx.fill();
     cx.restore();
   }

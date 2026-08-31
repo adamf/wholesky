@@ -256,6 +256,16 @@ func (t *Tenant) Arrive(ctx context.Context, f world.Flight, day time.Time, reg 
 	return t.sendTypeB(ctx, text, "MVT")
 }
 
+// SendOps transmits an operational message this tenant authored -- a
+// diversion, a delay revision -- built by the caller.
+func (t *Tenant) SendOps(ctx context.Context, m *mvt.Message) error {
+	text, err := m.Build()
+	if err != nil {
+		return err
+	}
+	return t.sendTypeB(ctx, text, string(m.Kind))
+}
+
 // SendSchedule transmits a schedule message -- an ASM cancellation, a
 // retiming -- to the network, the way this carrier's schedule bureau would.
 func (t *Tenant) SendSchedule(ctx context.Context, text string) error {
