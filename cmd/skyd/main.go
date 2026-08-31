@@ -48,6 +48,7 @@ func run() error {
 		console   = flag.String("console", "127.0.0.1:8090", "switch console address")
 		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
 		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
+		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
 		verbose   = flag.Bool("v", false, "debug logging")
 	)
 	flag.Parse()
@@ -73,7 +74,7 @@ func run() error {
 
 	s, err := sim.Boot(ctx, &m, sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
-		MaxMessages: *maxMsgs, MaxRecords: *maxRecs,
+		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 	})
 	if err != nil {
 		return err

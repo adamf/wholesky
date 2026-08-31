@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/adamf/jetway/pkg/config"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/node"
+	"github.com/adamf/jetway/pkg/queue"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 
@@ -43,6 +45,9 @@ type Options struct {
 	Console string
 	// Capacity is seats per class per flight at every tenant.
 	Capacity int
+	// AVSInterval is how often tenants rebroadcast availability; zero uses
+	// the host default.
+	AVSInterval time.Duration
 	// MaxMessages and MaxRecords bound every node's in-memory store. Zero is
 	// unbounded, which is right for a test that lives seconds and wrong for a
 	// deployment that lives weeks: an unbounded store under continuous demand
@@ -81,6 +86,9 @@ type Sim struct {
 	maxMessages, maxRecords int
 	warp                    int
 
+	closedMu sync.Mutex
+	closed   map[string]bool
+
 	// Eye is the world's observer and map, mounted on the switch console.
 	Eye *eye.Eye
 
@@ -118,8 +126,10 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		BookingDate: time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages: opts.MaxMessages, maxRecords: opts.MaxRecords,
 		warp: warp, Eye: eye.New(m, warp),
-		log: log, cancel: cancel,
+		closed: map[string]bool{},
+		log:    log, cancel: cancel,
 	}
+	s.Eye.Chaos = s.chaos
 
 	sw, err := buildSwitch(ctx, m, opts, s.Eye.Routes, log)
 	if err != nil {
@@ -160,6 +170,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			BookingDate:  s.BookingDate,
 			MaxMessages:  opts.MaxMessages,
 			MaxRecords:   opts.MaxRecords,
+			AVSInterval:  opts.AVSInterval,
 			Log:          log,
 		})
 		if err != nil {
@@ -271,6 +282,9 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 			code := carriers[rng.Intn(len(carriers))]
 			fs := s.Flights[code]
 			f := fs[rng.Intn(len(fs))]
+			if s.isClosed(f.From, f.To) {
+				continue // nobody sells a cancelled flight
+			}
 			class := classes[rng.Intn(len(classes))]
 			day := rng.Intn(3) - 1
 			go func(i int) {
@@ -324,6 +338,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		}
 		for code, t := range s.Tenants {
 			for _, f := range s.Flights[code] {
+				if s.isClosed(f.From, f.To) {
+					continue
+				}
 				reg := fmt.Sprintf("SKY%03d", regHash(f)%1000)
 				if f.DepMin > prev && f.DepMin <= cur {
 					if err := t.Depart(ctx, f, day, reg, 0); err != nil {
@@ -395,6 +412,11 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 		Designator: GDSDesignator, TTYAddress: GDSAddress, Name: "wholesky gds",
 	}, st, bus, log.With("node", "gds"), []byte("wholesky-gds"))
 	gw.Avail = avail.NewCache()
+	// Without a queue manager a schedule change has nowhere to put the
+	// bookings it touches -- applySchedule quietly does nothing. The halos on
+	// the map are these placements.
+	gw.Queues = &queue.Manager{Store: st, Log: log.With("node", "gds"),
+		Notify: func(item *store.QueueItem) { bus.Publish(gateway.EvQueue, item) }}
 
 	client := &transport.Client{
 		Addr: switchAddr, Framer: transport.DefaultFramer(),
@@ -427,6 +449,10 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 			}
 		case gateway.EvPNR:
 			s.Eye.OnBooking()
+		case gateway.EvQueue:
+			if qi, ok := ev.Data.(*store.QueueItem); ok {
+				s.Eye.OnQueue(string(qi.Queue), qi.Reason)
+			}
 		}
 	})
 	go func() {
@@ -435,6 +461,81 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 		}
 	}()
 	return gw, st, nil
+}
+
+// chaos is the Eye's control surface: close an airport and the world reacts
+// through its own machinery, or reopen it and the day resumes.
+//
+// Closing does two things. The flight day stops departing and arriving
+// anything that touches the airport. And every operating carrier sends a real
+// ASM cancellation for each affected flight -- one message per flight, paced,
+// exactly as a schedule bureau would -- which the GDS ingests through the
+// same applySchedule path production traffic uses, placing a queue item for
+// every booking it holds on those flights. The halos on the map are those
+// queue items arriving; nothing is drawn that did not happen.
+func (s *Sim) chaos(action, iata string) error {
+	if _, ok := s.Eye.Airport(iata); !ok {
+		return fmt.Errorf("no airport %s in this world", iata)
+	}
+	switch action {
+	case "close":
+		s.closedMu.Lock()
+		already := s.closed[iata]
+		s.closed[iata] = true
+		s.closedMu.Unlock()
+		if already {
+			return nil
+		}
+		s.log.Info("chaos: airport closed", "airport", iata)
+		go s.cancelFlightsTouching(iata)
+		return nil
+	case "reopen":
+		s.closedMu.Lock()
+		delete(s.closed, iata)
+		s.closedMu.Unlock()
+		s.log.Info("chaos: airport reopened", "airport", iata)
+		s.Eye.ClearHalo(iata)
+		return nil
+	}
+	return fmt.Errorf("unknown chaos action %q", action)
+}
+
+func (s *Sim) isClosed(a, b string) bool {
+	s.closedMu.Lock()
+	defer s.closedMu.Unlock()
+	return s.closed[a] || s.closed[b]
+}
+
+// cancelFlightsTouching sends one ASM CNL per affected flight, paced so the
+// cascade is a stream rather than a detonation.
+func (s *Sim) cancelFlightsTouching(iata string) {
+	date := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	n := 0
+	for code, fs := range s.Flights {
+		t := s.Tenants[code]
+		if t == nil {
+			continue
+		}
+		for _, f := range fs {
+			if f.From != iata && f.To != iata {
+				continue
+			}
+			text := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
+				f.Carrier, f.Number, date, f.From, f.To)
+			if err := t.SendSchedule(context.Background(), text); err != nil {
+				s.log.Debug("cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+			}
+			n++
+			time.Sleep(8 * time.Millisecond)
+			s.closedMu.Lock()
+			still := s.closed[iata]
+			s.closedMu.Unlock()
+			if !still {
+				return // reopened mid-cascade; stop cancelling
+			}
+		}
+	}
+	s.log.Info("chaos: cascade complete", "airport", iata, "flights_cancelled", n)
 }
 
 // tapBus runs fn for every event on a bus until the context ends.

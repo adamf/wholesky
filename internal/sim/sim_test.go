@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/store"
+
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -154,5 +156,76 @@ func TestCompileIsDeterministic(t *testing.T) {
 		if a.Flights[i] != b.Flights[i] {
 			t.Fatalf("flight %d differs: %+v vs %+v", i, a.Flights[i], b.Flights[i])
 		}
+	}
+}
+
+// The chaos path, end to end: closing an airport makes the operating carriers
+// send real ASM cancellations, the GDS ingests them through applySchedule,
+// and every booking it holds on an affected flight lands on the
+// schedule-change queue -- which is what the map's halo counts.
+func TestChaosCloseAirportCascades(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	// A booking to be disrupted, settled first so the record is live.
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	res, err := s.Book(ctx, f, "Y", 0, "CHAOS1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if ok, _ := s.Settled(ctx, res.PNR.RecordLocator); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the booking never settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if err := s.chaos("close", f.From); err != nil {
+		t.Fatalf("close %s: %v", f.From, err)
+	}
+
+	// The cascade must reach the queue: at least the booking above.
+	deadline = time.Now().Add(20 * time.Second)
+	for {
+		items, err := s.GDSStore.ListQueue(ctx, store.QueueFilter{Queue: store.QueueScheduleChange})
+		if err != nil {
+			t.Fatalf("ListQueue: %v", err)
+		}
+		found := false
+		for _, it := range items {
+			if it.Locator == res.PNR.RecordLocator {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("closing %s cancelled its flights but the booking on %s%s never "+
+				"reached the schedule-change queue (%d items)", f.From, f.Carrier, f.Number, len(items))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// And the demand and flight day must refuse the closed airport.
+	if !s.isClosed(f.From, "XXX") {
+		t.Error("the airport does not read as closed")
+	}
+	if err := s.chaos("reopen", f.From); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if s.isClosed(f.From, "XXX") {
+		t.Error("the airport is still closed after reopening")
 	}
 }

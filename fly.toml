@@ -34,6 +34,8 @@ primary_region = "lhr"
     timeout = "5s"
     path = "/healthz"
 
+# The whole sky idles around 1.1GB and spends CPU on the morning banks; two
+# shared cores and 2GB carry it at warp 60.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "shared-cpu-2x"
+  memory = "2048mb"

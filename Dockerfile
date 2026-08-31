@@ -13,17 +13,16 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skyd   ./cmd/skyd \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worldc ./cmd/worldc
-RUN /out/worldc -data data \
-      -countries "United Kingdom,France,Germany,Netherlands,Spain,Italy" \
-      -o /out/europe.json
+RUN /out/worldc -data data -o /out/whole.json
 
 FROM alpine:3.20
 RUN addgroup -S sky && adduser -S sky -G sky
 COPY --from=build /out/skyd /usr/local/bin/skyd
-COPY --from=build /out/europe.json /etc/wholesky/europe.json
+COPY --from=build /out/whole.json /etc/wholesky/whole.json
 USER sky
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/skyd"]
-CMD ["-world", "/etc/wholesky/europe.json", \
-     "-carriers", "20", "-demand", "20", "-warp", "120", \
+CMD ["-world", "/etc/wholesky/whole.json", \
+     "-carriers", "0", "-demand", "60", "-warp", "60", \
+     "-avs-interval", "60s", "-max-messages", "2000", "-max-records", "4000", \
      "-console", "0.0.0.0:8080"]

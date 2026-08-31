@@ -54,6 +54,9 @@ type Options struct {
 	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
 	MaxMessages int
 	MaxRecords  int
+	// AVSInterval is how often availability is rebroadcast. Zero uses the
+	// default; a planet-sized deployment breathes slower than a demo.
+	AVSInterval time.Duration
 	Log         *slog.Logger
 	Bus         *gateway.Bus
 }
@@ -122,7 +125,11 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 			log.Error("carrier link ended", "carrier", c.Designator, "err", err)
 		}
 	}()
-	go t.broadcastAvailability(ctx, opts.BookingDate, log)
+	interval := opts.AVSInterval
+	if interval <= 0 {
+		interval = availabilityInterval
+	}
+	go t.broadcastAvailability(ctx, opts.BookingDate, interval, log)
 	return t, nil
 }
 
@@ -134,24 +141,57 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 // cycle.
 const availabilityInterval = 30 * time.Second
 
-func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, log *slog.Logger) {
+func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, interval time.Duration, log *slog.Logger) {
+	// A Type B message holds sixty lines and four kilobytes, and a carrier
+	// with a thousand flights holds neither. Availability goes out in chunks
+	// of flight-dates, each chunk one legal message -- which is also how the
+	// real network carries it: nobody broadcasts an airline in one telex.
+	const flightDatesPerMessage = 24
+
 	send := func() {
-		var keys []avail.Key
+		var groups [][]avail.Key
 		for d := -1; d <= 1; d++ {
 			day := date.AddDate(0, 0, d)
 			for _, f := range t.flights {
+				var g []avail.Key
 				for _, cls := range []string{"F", "J", "Y", "M"} {
-					keys = append(keys, avail.NewKey(f.Carrier, f.Number, day, f.From, f.To, cls))
+					g = append(g, avail.NewKey(f.Carrier, f.Number, day, f.From, f.To, cls))
 				}
+				groups = append(groups, g)
 			}
 		}
-		if len(keys) == 0 {
+		if len(groups) == 0 {
 			return
 		}
-		entries := t.Inventory.Availability(keys, time.Now().UTC())
-		text := avs.Build(entries)
-		if err := t.sendTypeB(ctx, text, "AVS"); err != nil {
-			log.Debug("availability broadcast not delivered", "carrier", t.Carrier.Designator, "err", err)
+		sent, failed := 0, 0
+		for i := 0; i < len(groups); i += flightDatesPerMessage {
+			end := i + flightDatesPerMessage
+			if end > len(groups) {
+				end = len(groups)
+			}
+			var keys []avail.Key
+			for _, g := range groups[i:end] {
+				keys = append(keys, g...)
+			}
+			entries := t.Inventory.Availability(keys, time.Now().UTC())
+			if len(entries) == 0 {
+				continue
+			}
+			if err := t.sendTypeB(ctx, avs.Build(entries), "AVS"); err != nil {
+				failed++
+			} else {
+				sent++
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		if failed > 0 {
+			// Loud, not debug: an undelivered broadcast is a carrier the
+			// network has stopped hearing from, and it hid at debug level
+			// once already.
+			log.Warn("availability broadcast partly undelivered",
+				"carrier", t.Carrier.Designator, "sent", sent, "failed", failed)
 		}
 	}
 	select {
@@ -160,7 +200,7 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, log 
 	case <-time.After(2 * time.Second):
 		send()
 	}
-	tick := time.NewTicker(availabilityInterval)
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
 		select {
@@ -214,6 +254,12 @@ func (t *Tenant) Arrive(ctx context.Context, f world.Flight, day time.Time, reg 
 		return err
 	}
 	return t.sendTypeB(ctx, text, "MVT")
+}
+
+// SendSchedule transmits a schedule message -- an ASM cancellation, a
+// retiming -- to the network, the way this carrier's schedule bureau would.
+func (t *Tenant) SendSchedule(ctx context.Context, text string) error {
+	return t.sendTypeB(ctx, text, "ASM")
 }
 
 func (t *Tenant) sendTypeB(ctx context.Context, text, kind string) error {

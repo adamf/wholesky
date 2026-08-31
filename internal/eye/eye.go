@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,9 +43,21 @@ type Eye struct {
 	byFlight map[string]world.Flight
 	warp     int
 
+	// Chaos, when set, receives the map's control actions -- ("close","LHR"),
+	// ("reopen","LHR"). The Eye owns the page and the halos; what closing an
+	// airport means is the simulation's business, not the observer's.
+	Chaos func(action, iata string) error
+
 	mu     sync.Mutex
 	planes map[string]*Plane
 	subs   map[chan []byte]struct{}
+	closed map[string]bool
+	halos  map[string]int64
+	// pulseBudget rate-limits pulse events to the browser: the world's fabric
+	// runs hundreds of messages a second, and a view needs the rhythm, not
+	// every beat.
+	pulseBudget int
+	pulseReset  time.Time
 
 	// counters for the stats line
 	messages  int64
@@ -63,6 +76,8 @@ func New(m *world.Manifest, warp int) *Eye {
 		byFlight: map[string]world.Flight{},
 		planes:   map[string]*Plane{},
 		subs:     map[chan []byte]struct{}{},
+		closed:   map[string]bool{},
+		halos:    map[string]int64{},
 	}
 	for i := range m.Airports {
 		e.airports[m.Airports[i].IATA] = &m.Airports[i]
@@ -81,6 +96,15 @@ func New(m *world.Manifest, warp int) *Eye {
 func (e *Eye) OnMessage(payload map[string]any) {
 	e.mu.Lock()
 	e.messages++
+	now := time.Now()
+	if now.After(e.pulseReset) {
+		e.pulseBudget, e.pulseReset = 120, now.Add(time.Second)
+	}
+	if e.pulseBudget <= 0 {
+		e.mu.Unlock()
+		return
+	}
+	e.pulseBudget--
 	e.mu.Unlock()
 	kind, _ := payload["kind"].(string)
 	e.broadcast(map[string]any{
@@ -88,6 +112,57 @@ func (e *Eye) OnMessage(payload map[string]any) {
 		"peer": payload["peer"], "dir": payload["direction"],
 		"kind": strings.SplitN(kind, "/", 2)[0], "fmt": payload["format"],
 	})
+}
+
+// OnQueue folds a queue placement into the halos.
+//
+// A schedule-change item names its flight in the reason; the manifest turns
+// that into airports, and a closed airport among them gets the credit. The
+// halo is therefore a count of real queue items -- bookings a person now has
+// to deal with -- not an animation invented for effect.
+func (e *Eye) OnQueue(queue, reason string) {
+	if queue != "schedule-change" {
+		return
+	}
+	m := flightRe.FindStringSubmatch(reason)
+	if m == nil {
+		return
+	}
+	f, ok := e.lookup(m[1])
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	var hit string
+	for _, apt := range []string{f.From, f.To} {
+		if e.closed[apt] {
+			hit = apt
+			e.halos[apt]++
+		}
+	}
+	var n int64
+	if hit != "" {
+		n = e.halos[hit]
+	}
+	e.mu.Unlock()
+	if hit != "" {
+		e.broadcast(map[string]any{"t": "halo", "airport": hit, "count": n})
+	}
+}
+
+// Airport reports whether the world holds an airport, for chaos validation.
+func (e *Eye) Airport(iata string) (*world.Airport, bool) {
+	a, ok := e.airports[iata]
+	return a, ok
+}
+
+// ClearHalo forgets a reopened airport's halo.
+func (e *Eye) ClearHalo(iata string) {
+	e.mu.Lock()
+	delete(e.closed, iata)
+	delete(e.halos, iata)
+	e.mu.Unlock()
+	e.broadcast(map[string]any{"t": "reopen", "airport": iata})
 }
 
 // OnMovement folds a movement event into the aircraft picture.
@@ -142,6 +217,10 @@ func (e *Eye) OnBooking() {
 	e.mu.Unlock()
 }
 
+// flightRe pulls the flight designator out of a queue reason, which leads
+// with the segment description: "U2123 Y LGW-AMS ...".
+var flightRe = regexp.MustCompile(`\b([A-Z][A-Z0-9]\d{1,4})\b`)
+
 // lookup resolves a wire flight designator ("U2123") to its scheduled leg.
 // The wire drops leading zeros; the manifest pads to four.
 func (e *Eye) lookup(flight string) (world.Flight, bool) {
@@ -162,6 +241,42 @@ func (e *Eye) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /eye/world.json", e.world)
 	mux.HandleFunc("GET /eye/planes.json", e.planesNow)
 	mux.HandleFunc("GET /eye/stream", e.stream)
+	mux.HandleFunc("POST /eye/chaos", e.chaos)
+}
+
+// chaos is the map's one control: close or reopen an airport.
+func (e *Eye) chaos(w http.ResponseWriter, r *http.Request) {
+	if e.Chaos == nil {
+		http.Error(w, "this world has no chaos hook", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Action  string `json:"action"`
+		Airport string `json:"airport"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil {
+		http.Error(w, "malformed request", http.StatusBadRequest)
+		return
+	}
+	req.Airport = strings.ToUpper(strings.TrimSpace(req.Airport))
+	if err := e.Chaos(req.Action, req.Airport); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	e.mu.Lock()
+	if req.Action == "close" {
+		e.closed[req.Airport] = true
+	}
+	closed := make([]string, 0, len(e.closed))
+	for a := range e.closed {
+		closed = append(closed, a)
+	}
+	e.mu.Unlock()
+	if req.Action == "close" {
+		e.broadcast(map[string]any{"t": "close", "airport": req.Airport})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"closed": closed}) //nolint:errcheck
 }
 
 // world serves the static geography: what the map is drawn from.
@@ -243,9 +358,13 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		case <-stats.C:
 			e.mu.Lock()
+			closed := make(map[string]int64, len(e.closed))
+			for a := range e.closed {
+				closed[a] = e.halos[a]
+			}
 			b, _ := json.Marshal(map[string]any{
 				"t": "stats", "messages": e.messages, "movements": e.movements,
-				"bookings": e.bookings, "airborne": len(e.planes),
+				"bookings": e.bookings, "airborne": len(e.planes), "closed": closed,
 			})
 			e.mu.Unlock()
 			fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck

@@ -5,10 +5,21 @@ One Earth-day of passenger aviation, simulated on
 booking, and every Type B and EDIFACT message that makes it go, over real
 sockets.
 
-**Live demo:** https://wholesky-demo.fly.dev/eye — the Eye, watching a
-twenty-carrier European sky run continuously.
+**Live demo:** https://wholesky-demo.fly.dev/eye — the Eye, watching the
+whole sky: 518 carriers, 2,883 airports, 57,513 flights a day, running
+continuously on one machine.
 
-![The Eye: aircraft over Europe, flown by movement messages](docs/the-eye.jpg)
+![The globe: thousands of aircraft, the continents drawn by traffic alone](docs/the-globe.jpg)
+
+There is no coastline data on that globe. The continents are drawn entirely
+by airports and aircraft -- traffic density is the map. Drag to spin, scroll
+to zoom, and click any airport for the one control the sky answers to:
+**close it**. Every operating carrier then transmits a real ASM cancellation
+for each affected flight, the GDS ingests them through the same
+schedule-change path production traffic uses, and the red halo that grows
+over the airport is a count of actual queue items -- bookings a person now
+has to deal with. Closing Heathrow cancels ~680 flights in about seven
+seconds of message traffic. Reopening it stops the cascade mid-flight.
 
 Every aircraft on that map is flying because a real MVT message crossed the
 switch; the Eye subscribes to the buses the world already publishes on and
@@ -71,12 +82,15 @@ seed; the switch/tenant/GDS topology over real sockets; bookings settled in
 address line and UNB recipient respectively; continuous seeded demand (a
 20-carrier European run: 299 bookings, 0 failures, both formats crossing the
 switch); and the flight day as real MVT traffic (1,286 movements through the
-fabric in the first simulated morning). The Eye serves the map at `/eye`,
-drawn entirely from bus events: aircraft from movements, pulses from the
-message stream, all on one dependency-free canvas. Not yet: the real demand
-model (booking curve, channels, parties), PNL/ADL and baggage, chaos
-controls (close an airport, watch the queues bloom), the globe proper, the
-virtual clock.
+fabric in the first simulated morning). The Eye serves the globe at `/eye`,
+drawn entirely from bus events on one dependency-free canvas: an
+orthographic projection when the manifest spans the world, flat for a
+region; aircraft from movements; pulses from the message stream; chaos
+halos from queue placements. The full 518-carrier world idles at ~1.1GB and
+a fraction of a core, breathing to ~2 cores during the global morning
+banks. Not yet: the real demand model (booking curve, channels, parties),
+PNL/ADL and baggage, diversions for airborne flights when their
+destination closes, the virtual clock.
 
 ## Licence
 
