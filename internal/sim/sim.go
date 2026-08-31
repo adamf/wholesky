@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"math/rand"
 	"net/http"
 	"sort"
 	"strings"
@@ -96,6 +95,17 @@ type Sim struct {
 	closedMu sync.Mutex
 	closed   map[string]bool
 
+	flightsByOrigin map[string][]world.Flight
+
+	demMu sync.Mutex
+	// DemCancelledLocs lists the locators demand cancelled, so a test can
+	// hold the counter to account against the store.
+	DemCancelledLocs []string
+
+	// Demand's ledger, for the log line and the tests.
+	DemBooked, DemFailed, DemInterline          atomic.Int64
+	DemTicketed, DemCancelled, DemSplit, DemNDC atomic.Int64
+
 	// Eye is the world's observer and map, mounted on the switch console.
 	Eye *eye.Eye
 	// Fleet is the cluster dashboard: every node's live ledger.
@@ -130,9 +140,11 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		kept[c.Designator] = true
 	}
 	flights := map[string][]world.Flight{}
+	byOrigin := map[string][]world.Flight{}
 	for _, f := range m.Flights {
 		if kept[f.Carrier] {
 			flights[f.Carrier] = append(flights[f.Carrier], f)
+			byOrigin[f.From] = append(byOrigin[f.From], f)
 		}
 	}
 
@@ -143,8 +155,9 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	s := &Sim{
 		Manifest: m, Tenants: map[string]*host.Tenant{}, Flights: flights,
-		BookingDate: time.Now().UTC().AddDate(0, 0, 30),
-		maxMessages: opts.MaxMessages, maxRecords: opts.MaxRecords,
+		flightsByOrigin: byOrigin,
+		BookingDate:     time.Now().UTC().AddDate(0, 0, 30),
+		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
 		warp: warp, Eye: eye.New(m, warp),
 		closed:   map[string]bool{},
 		airports: map[string]world.Airport{},
@@ -232,6 +245,15 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	s.GDS, s.GDSStore = gds, gdsStore
 	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", 0, gdsStore, nil)
+	// The sweeper is what notices silence -- a request nobody answered, a
+	// ticketing deadline that passed. The GDS ran without one until the
+	// demand model started ticketing, which is when its absence would have
+	// become a silent hole rather than a dormant one.
+	sweeper := &queue.Sweeper{
+		Records: gdsStore, Queues: gds.Queues, Log: log.With("node", "gds"),
+		Cancel: gds,
+	}
+	go sweeper.Run(ctx, 30*time.Second)
 	s.mountConsole(GDSDesignator, &api.Server{
 		Gateway: gds, Store: gdsStore, Bus: gdsBus,
 		Log: log.With("console", GDSDesignator), Console: true,
@@ -297,72 +319,6 @@ func (s *Sim) Settled(ctx context.Context, locator string) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-// Demand generates bookings continuously at roughly perMinute, spread across
-// carriers, cabins and a window of departure dates.
-//
-// This is a placeholder for the real demand model -- no booking curve, no
-// channels, no parties larger than one -- but it is a load, not a smoke test:
-// it runs until stopped and reports what settled. Randomness is seeded, so a
-// run is as repeatable as its timing allows.
-func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
-	if perMinute <= 0 {
-		return
-	}
-	rng := rand.New(rand.NewSource(seed))
-	classes := []string{"Y", "Y", "Y", "M", "M", "J", "F"} // a rough cabin mix
-	var carriers []string
-	for code := range s.Flights {
-		if len(s.Flights[code]) > 0 {
-			carriers = append(carriers, code)
-		}
-	}
-	if len(carriers) == 0 {
-		return
-	}
-	// Deterministic carrier order for the seeded draws.
-	for i := 1; i < len(carriers); i++ {
-		for j := i; j > 0 && carriers[j] < carriers[j-1]; j-- {
-			carriers[j], carriers[j-1] = carriers[j-1], carriers[j]
-		}
-	}
-
-	var booked, failed atomic.Int64
-	interval := time.Minute / time.Duration(perMinute)
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
-	report := time.NewTicker(30 * time.Second)
-	defer report.Stop()
-	n := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-report.C:
-			s.log.Info("demand", "booked", booked.Load(), "failed", failed.Load(),
-				"movements", s.Movements.Load())
-		case <-tick.C:
-			n++
-			code := carriers[rng.Intn(len(carriers))]
-			fs := s.Flights[code]
-			f := fs[rng.Intn(len(fs))]
-			if s.isClosed(f.From, f.To) {
-				continue // nobody sells a cancelled flight
-			}
-			class := classes[rng.Intn(len(classes))]
-			day := rng.Intn(3) - 1
-			go func(i int) {
-				_, err := s.Book(ctx, f, class, day, fmt.Sprintf("DEMAND%06d", i))
-				if err != nil {
-					failed.Add(1)
-					s.log.Debug("booking refused", "flight", f.Carrier+f.Number, "class", class, "err", err)
-					return
-				}
-				booked.Add(1)
-			}(n)
-		}
-	}
 }
 
 // FlyDay walks the schedule and emits departures and arrivals as they come
