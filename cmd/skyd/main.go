@@ -72,7 +72,7 @@ func run() error {
 	defer stop()
 
 	s, err := sim.Boot(ctx, &m, sim.Options{
-		Carriers: *carriers, Console: *console, Log: log,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs,
 	})
 	if err != nil {
@@ -84,9 +84,10 @@ func run() error {
 		total += len(fs)
 	}
 	log.Info("fabric up", "links", len(s.Switch.LivePeers()),
-		"flights_per_day", total, "console", "http://"+*console)
+		"flights_per_day", total,
+		"console", "http://"+*console, "eye", "http://"+*console+"/eye")
 
-	go s.FlyDay(ctx, *warp)
+	go s.FlyDay(ctx)
 	go s.Demand(ctx, *demand, *seed)
 
 	tick := time.NewTicker(30 * time.Second)

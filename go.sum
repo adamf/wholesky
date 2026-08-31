@@ -1,5 +1,7 @@
 github.com/adamf/jetway v0.1.0 h1:XRif4A6qKDk4HpBpL1dGhecSfIVMf1KT8YnfxAPuNL0=
 github.com/adamf/jetway v0.1.0/go.mod h1:wRit6U+8NdjvtYASnXurzu7tZSLyH09I+ALAbN4NfQc=
+github.com/adamf/jetway v0.1.1 h1:r92uLTX1M+r5bFTxfZrm1y8xqj0u6YbJHU43Y/Wv7rE=
+github.com/adamf/jetway v0.1.1/go.mod h1:wRit6U+8NdjvtYASnXurzu7tZSLyH09I+ALAbN4NfQc=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

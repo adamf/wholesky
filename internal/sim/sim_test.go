@@ -2,9 +2,12 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -98,6 +101,32 @@ func TestBootBookAndFly(t *testing.T) {
 			t.Fatalf("a departure was emitted and no movement event arrived at the watcher")
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+
+	// And the Eye saw it: the movement message became an aircraft on the map.
+	mux := http.NewServeMux()
+	s.Eye.Routes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/eye/planes.json", nil))
+	var planes []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &planes); err != nil {
+		t.Fatalf("planes.json: %v", err)
+	}
+	found := false
+	for _, p := range planes {
+		if p["from"] == f.From && p["to"] == f.To {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the departure of %s%s never became a plane; the Eye holds %v",
+			f.Carrier, f.Number, planes)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/eye/world.json", nil))
+	var w map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &w); err != nil || len(w["airports"].([]any)) == 0 {
+		t.Fatalf("world.json is not a map anyone could draw: err=%v", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 
+	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -47,6 +49,9 @@ type Options struct {
 	// and a looping flight day is a slow out-of-memory with extra steps.
 	MaxMessages int
 	MaxRecords  int
+	// Warp is sim minutes per wall minute, used by the flight day and by the
+	// Eye's aircraft animation. Zero means 1.
+	Warp int
 	// LinkWait bounds how long Boot waits for the fabric.
 	LinkWait time.Duration
 	Log      *slog.Logger
@@ -74,6 +79,10 @@ type Sim struct {
 	gdsUp atomic.Bool
 
 	maxMessages, maxRecords int
+	warp                    int
+
+	// Eye is the world's observer and map, mounted on the switch console.
+	Eye *eye.Eye
 
 	log    *slog.Logger
 	cancel context.CancelFunc
@@ -100,14 +109,19 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
+	warp := opts.Warp
+	if warp < 1 {
+		warp = 1
+	}
 	s := &Sim{
 		Manifest: m, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		BookingDate: time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages: opts.MaxMessages, maxRecords: opts.MaxRecords,
+		warp: warp, Eye: eye.New(m, warp),
 		log: log, cancel: cancel,
 	}
 
-	sw, err := buildSwitch(ctx, m, opts, log)
+	sw, err := buildSwitch(ctx, m, opts, s.Eye.Routes, log)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -117,6 +131,15 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Stop()
 		return nil, err
 	}
+	// The Eye watches the switch's message stream: every message in the world
+	// crosses it, so its bus is the fabric firehose.
+	go s.tapBus(ctx, sw.Bus, func(ev gateway.Event) {
+		if ev.Type == gateway.EvMessage {
+			if p, ok := ev.Data.(map[string]any); ok {
+				s.Eye.OnMessage(p)
+			}
+		}
+	})
 	if opts.Console != "" {
 		go func() {
 			if err := sw.Serve(ctx, 10*time.Second); err != nil && ctx.Err() == nil {
@@ -273,10 +296,8 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 // and never reaching the first departure bank. Anchored to the wall clock,
 // a thaw jumps the day to where it should be; the catch-up is clamped so the
 // first tick replays the recent past rather than a whole frozen week.
-func (s *Sim) FlyDay(ctx context.Context, warp int) {
-	if warp < 1 {
-		warp = 1
-	}
+func (s *Sim) FlyDay(ctx context.Context) {
+	warp := s.warp
 	const dayMin = 24 * 60
 	// The largest backlog one tick will replay after a pause.
 	const maxCatchUp = 120
@@ -320,7 +341,7 @@ func (s *Sim) FlyDay(ctx context.Context, warp int) {
 	}
 }
 
-func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, log *slog.Logger) (*node.Node, error) {
+func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend func(*http.ServeMux), log *slog.Logger) (*node.Node, error) {
 	console := opts.Console
 	cfg := config.Default()
 	cfg.Identity = config.Identity{Designator: "1X", TTYAddress: "XCHDD1X", Name: "wholesky switch"}
@@ -359,6 +380,7 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, log *slog
 	return node.Build(ctx, cfg, log.With("node", "switch"), node.Options{
 		LocatorSecret: []byte("wholesky-switch"),
 		SkipConsole:   console == "",
+		ExtendAPI:     extend,
 	})
 }
 
@@ -396,26 +418,37 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 		})
 	}
 
-	sub, unsub := bus.Subscribe()
-	go func() {
-		defer unsub()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev := <-sub:
-				if ev.Type == gateway.EvMovement {
-					s.Movements.Add(1)
-				}
+	go s.tapBus(ctx, bus, func(ev gateway.Event) {
+		switch ev.Type {
+		case gateway.EvMovement:
+			s.Movements.Add(1)
+			if p, ok := ev.Data.(map[string]any); ok {
+				s.Eye.OnMovement(p)
 			}
+		case gateway.EvPNR:
+			s.Eye.OnBooking()
 		}
-	}()
+	})
 	go func() {
 		if err := client.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("gds link ended", "err", err)
 		}
 	}()
 	return gw, st, nil
+}
+
+// tapBus runs fn for every event on a bus until the context ends.
+func (s *Sim) tapBus(ctx context.Context, bus *gateway.Bus, fn func(gateway.Event)) {
+	sub, unsub := bus.Subscribe()
+	defer unsub()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-sub:
+			fn(ev)
+		}
+	}
 }
 
 func (s *Sim) waitForLinks(ctx context.Context, want int, within time.Duration) error {

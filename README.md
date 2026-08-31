@@ -5,12 +5,18 @@ One Earth-day of passenger aviation, simulated on
 booking, and every Type B and EDIFACT message that makes it go, over real
 sockets.
 
-**Live demo:** https://wholesky-demo.fly.dev — a twenty-carrier European sky
-running continuously: seeded demand booking through the switch in both wire
-dialects, and the flight day playing out as real MVT movement messages. The
-console is the switch's own; open any message and read it field by field.
-The machine suspends when nobody is watching and thaws mid-flight on the
-next visit.
+**Live demo:** https://wholesky-demo.fly.dev/eye — the Eye, watching a
+twenty-carrier European sky run continuously.
+
+![The Eye: aircraft over Europe, flown by movement messages](docs/the-eye.jpg)
+
+Every aircraft on that map is flying because a real MVT message crossed the
+switch; the Eye subscribes to the buses the world already publishes on and
+knows nothing the network cannot see. The stats line counts messages,
+movements and bookings as the seeded demand books through the switch in both
+wire dialects. The switch's own console lives at the root — open any message
+and read it field by field. The machine suspends when nobody is watching and
+thaws mid-flight, replaying the last two sim-hours as a burst.
 
 Design: "The Whole Sky" (design note, 2026-08-31). The short version — the
 sky is loud but it is not big. The world's reservation fabric peaks at a few
@@ -65,9 +71,12 @@ seed; the switch/tenant/GDS topology over real sockets; bookings settled in
 address line and UNB recipient respectively; continuous seeded demand (a
 20-carrier European run: 299 bookings, 0 failures, both formats crossing the
 switch); and the flight day as real MVT traffic (1,286 movements through the
-fabric in the first simulated morning). Not yet: the real demand model
-(booking curve, channels, parties), PNL/ADL and baggage, the Eye and the
-globe, the virtual clock.
+fabric in the first simulated morning). The Eye serves the map at `/eye`,
+drawn entirely from bus events: aircraft from movements, pulses from the
+message stream, all on one dependency-free canvas. Not yet: the real demand
+model (booking curve, channels, parties), PNL/ADL and baggage, chaos
+controls (close an airport, watch the queues bloom), the globe proper, the
+virtual clock.
 
 ## Licence
 
