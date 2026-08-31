@@ -43,6 +43,7 @@ const pageHTML = `<!doctype html>
 <div id="bar">
   <b>WHOLESKY</b>
   <span id="modes" style="pointer-events:auto"><a id="m-sky" style="color:#e8eef4">sky</a> · <a id="m-net">net</a></span>
+  <span id="netmodes" style="pointer-events:auto;display:none"><a id="l-web" style="color:#e8eef4">web</a> · <a id="l-ring">ring</a></span>
   <span>airborne <i id="air">0</i></span>
   <span>movements <i id="mvt">0</i></span>
   <span>bookings <i id="bkg">0</i></span>
@@ -66,6 +67,11 @@ addEventListener("resize",size); size();
 let world=null, globe=false, anchor=null, mode="sky", land=null;
 fetch("/eye/land.json").then(r=>r.json()).then(l=>{ land=l; });
 const rates=new Map(); let netPos=null;
+let netLayout="web";
+const edgesE=new Map();   // "SRC>DST" -> {w} smoothed conversation weight
+const flows=[];           // sampled conversations in flight
+const phys=new Map();     // code -> {x,y,vx,vy} for the web layout
+let physSeeded=false;
 const planes=new Map(), pulses=[], blips=[];
 const closed=new Map(); // iata -> halo count
 const D=Math.PI/180;
@@ -118,12 +124,23 @@ function connect(){
       if(p){ const q=proj(p.to_lat,p.to_lon); if(q[2]) blips.push({x:q[0],y:q[1],t:now()}); }
       planes.delete(d.flight); }
     else if(d.t==="pulse"){ if(pulses.length<500) pulses.push({peer:d.peer,dir:d.dir,kind:d.kind,t:now()}); }
+    else if(d.t==="flow"){ if(flows.length<300) flows.push({src:d.src,dst:d.dst,kind:d.kind,t:now()}); }
     else if(d.t==="close"){ closed.set(d.airport, closed.get(d.airport)||0); renderClosed(); }
     else if(d.t==="halo"){ closed.set(d.airport, d.count); renderClosed(); }
     else if(d.t==="reopen"){ closed.delete(d.airport); renderClosed(); }
     else if(d.t==="stats"){ air.textContent=d.airborne; mvt.textContent=d.movements;
       bkg.textContent=d.bookings; msg.textContent=d.messages;
       if(d.rates){ rates.clear(); for(const [p,n] of Object.entries(d.rates)) rates.set(p,n/2); }
+      if(d.edges){
+        /* Conversations pulse -- an AVS cycle every minute, bookings in
+           bursts -- so the web remembers minutes, not seconds: a slow decay
+           with fresh counts folded on top. */
+        for(const v of edgesE.values()) v.w*=0.96;
+        for(const [k,n] of Object.entries(d.edges)){
+          const e=edgesE.get(k)||{w:0}; e.w=Math.min(60,Math.max(e.w,n)); edgesE.set(k,e);
+        }
+        for(const [k,v] of edgesE) if(v.w<0.08) edgesE.delete(k);
+      }
       if(d.closed){ closed.clear(); for(const [a,n] of Object.entries(d.closed)) closed.set(a,n); renderClosed(); } }
   };
   es.onerror=()=>{ es.close(); setTimeout(connect,2000); };
@@ -144,9 +161,15 @@ const hubPos=code=>{
 
 document.getElementById("m-sky").onclick=()=>setMode("sky");
 document.getElementById("m-net").onclick=()=>setMode("net");
+document.getElementById("l-web").onclick=()=>setNetLayout("web");
+document.getElementById("l-ring").onclick=()=>setNetLayout("ring");
 function setMode(m){ mode=m; panel.style.display="none";
   document.getElementById("m-sky").style.color=m==="sky"?"#e8eef4":"#3d4c5c";
-  document.getElementById("m-net").style.color=m==="net"?"#e8eef4":"#3d4c5c"; }
+  document.getElementById("m-net").style.color=m==="net"?"#e8eef4":"#3d4c5c";
+  document.getElementById("netmodes").style.display=m==="net"?"":"none"; }
+function setNetLayout(l){ netLayout=l;
+  document.getElementById("l-web").style.color=l==="web"?"#e8eef4":"#3d4c5c";
+  document.getElementById("l-ring").style.color=l==="ring"?"#e8eef4":"#3d4c5c"; }
 
 /* net layout: the star the network actually is. Carriers on a ring ordered by
    hub longitude (the globe's geography, flattened), the switch at the centre,
@@ -224,12 +247,13 @@ window.chaos=(action,iata)=>{
     body:JSON.stringify({action,airport:iata})}).then(()=>{ panel.style.display="none"; });
 };
 
+let drawNet=null;
 function draw(){
   requestAnimationFrame(draw);
   if(!world) return;
   cx.clearRect(0,0,W,H);
   const t=now();
-  if(mode==="net"){ drawNet(t); return; }
+  if(mode==="net"&&drawNet){ drawNet(t); return; }
   if(globe&&auto) rot.lam+=0.00035;
 
   /* the ocean disc, then the shore */
@@ -328,53 +352,171 @@ function draw(){
     cx.restore();
   }
 }
-function drawNet(t){
-  netPos=layoutNet(); if(!netPos) return;
-  const centre=netPos.get("1X"), gds=netPos.get("1G");
+/* --- the logical web ---------------------------------------------------
+   Nodes are systems that converse: the GDS and the carriers. The switch is
+   plumbing and never appears. Edge weight is the smoothed conversation rate;
+   the dots riding the edges are sampled real conversations. Two layouts of
+   the same graph: a force-directed sprawl, and a ring with chords. */
 
-  /* edges: one per link, weighted by the true rate; the pulses riding them
-     are sampled, the brightness is not */
-  for(const [code,p] of netPos){
-    if(code==="1X") continue;
-    const r=rates.get(code)||0;
-    const w=Math.min(3,0.3+Math.log1p(r)*0.7);
-    const al=Math.min(.55,.05+Math.log1p(r)*.12);
-    cx.strokeStyle="rgba(95,150,190,"+al+")"; cx.lineWidth=w;
-    cx.beginPath(); cx.moveTo(p[0],p[1]); cx.lineTo(centre[0],centre[1]); cx.stroke();
-  }
-
-  /* pulses along the spokes */
-  for(let i=pulses.length-1;i>=0;i--){
-    const q=pulses[i], f=(t-q.t)/700;
-    if(f>=1){ pulses.splice(i,1); continue; }
-    const h=netPos.get(q.peer); if(!h) continue;
-    const from=q.dir==="in"?h:centre, to=q.dir==="in"?centre:h;
-    const x=from[0]+(to[0]-from[0])*f, y=from[1]+(to[1]-from[1])*f;
-    cx.fillStyle=q.kind==="MVT"?"rgba(224,185,60,.9)":
-      (q.kind==="ASM"||q.kind==="SSM")?"rgba(224,90,90,.95)":
-      q.kind==="AVS"?"rgba(95,150,190,.8)":"rgba(95,211,141,.9)";
-    cx.beginPath(); cx.arc(x,y,1.8,0,7); cx.fill();
-  }
-
-  /* nodes: carriers sized by rate, labels for the loud ones */
-  for(const [code,p] of netPos){
-    if(code==="1X"||code==="1G") continue;
-    const r=rates.get(code)||0;
-    const rad=1.5+Math.min(5,Math.log1p(r)*1.6);
-    cx.fillStyle="#3a4d63"; cx.beginPath(); cx.arc(p[0],p[1],rad,0,7); cx.fill();
-    if(r>2){ cx.fillStyle="#7d93aa"; cx.font="10px ui-monospace";
-      const out=p[0]<W/2?-24:6;
-      cx.fillText(code,p[0]+out,p[1]+3); }
-  }
-  /* infra */
-  cx.fillStyle="#e8eef4"; cx.beginPath(); cx.arc(centre[0],centre[1],7,0,7); cx.fill();
-  cx.strokeStyle="#5fd38d"; cx.lineWidth=1.4;
-  cx.beginPath(); cx.arc(centre[0],centre[1],11+2*Math.sin(t/400),0,7); cx.stroke();
-  cx.fillStyle="#9fb4c8"; cx.font="11px ui-monospace";
-  cx.fillText("1X · switch",centre[0]+16,centre[1]+4);
-  cx.fillStyle="#5fd38d"; cx.beginPath(); cx.arc(gds[0],gds[1],5.5,0,7); cx.fill();
-  cx.fillStyle="#9fb4c8"; cx.fillText("1G · gds",gds[0]+12,gds[1]+4);
+function ringPositions(){
+  const cxp=W/2, cyp=(H+30)/2, R=Math.min(W,H-60)*0.40;
+  const cs=[...(world.carriers||[])].sort((a,b)=>a.lon-b.lon);
+  const pos=new Map();
+  cs.forEach((c,i)=>{
+    const a=-Math.PI/2 + i/cs.length*2*Math.PI;
+    pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
+  });
+  pos.set("1G",[cxp,cyp]);
+  return pos;
 }
+
+function seedPhys(){
+  const ring=ringPositions();
+  for(const [code,p] of ring){
+    if(!phys.has(code)) phys.set(code,{x:p[0]+(Math.random()-.5)*40,y:p[1]+(Math.random()-.5)*40,vx:0,vy:0});
+  }
+  physSeeded=true;
+}
+
+function degreeOf(code){
+  let d=0;
+  for(const k of edgesE.keys()){ const [a,b]=k.split(">"); if(a===code||b===code) d++; }
+  return d;
+}
+
+/* a few physics steps per frame keeps the sprawl alive without burning cpu */
+function stepPhys(){
+  if(!physSeeded) seedPhys();
+  const cxp=W/2, cyp=(H+30)/2;
+  // Only the connected web takes part in the physics. A node with no
+  // current conversations has no springs, and repulsion alone just pins it
+  // to a wall; the quiet ones park on a dim outer ring instead.
+  const inWeb=new Set(["1G"]);
+  for(const k of edgesE.keys()){ const [a,b]=k.split(">"); inWeb.add(a); inWeb.add(b); }
+  const active=[...phys.entries()].filter(([c])=>inWeb.has(c));
+  const K=2100;
+  for(let it=0;it<2;it++){
+    // repulsion
+    for(let i=0;i<active.length;i++){
+      const [ci,a]=active[i];
+      for(let j=i+1;j<active.length;j++){
+        const [cj,b]=active[j];
+        let dx=a.x-b.x, dy=a.y-b.y;
+        let d2=dx*dx+dy*dy; if(d2<25) d2=25;
+        const f=K/d2, d=Math.sqrt(d2);
+        dx/=d; dy/=d;
+        a.vx+=dx*f; a.vy+=dy*f; b.vx-=dx*f; b.vy-=dy*f;
+      }
+    }
+    // springs along conversations, stronger for louder ones
+    for(const [k,e] of edgesE){
+      const [s1,s2]=k.split(">");
+      const a=phys.get(s1), b=phys.get(s2);
+      if(!a||!b) continue;
+      const dx=b.x-a.x, dy=b.y-a.y, d=Math.max(1,Math.hypot(dx,dy));
+      const rest=(s1==="1G"||s2==="1G")?170:80-Math.min(40,Math.log1p(e.w)*12);
+      // The GDS holds a spring to nearly every carrier; unnormalised, five
+      // hundred springs crush the web into a star. Hub springs are softened
+      // so the carrier-to-carrier springs get to shape the clusters.
+      let f=(d-rest)*0.004*Math.min(3,0.5+Math.log1p(e.w));
+      if(s1==="1G"||s2==="1G") f*=0.18;
+      a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f;
+    }
+    // gravity, heavier for the GDS so the web hangs off it
+    for(const [code,a] of active){
+      const g=code==="1G"?0.05:0.02;
+      a.vx+=(cxp-a.x)*g; a.vy+=(cyp-a.y)*g;
+      a.vx*=0.66; a.vy*=0.66;
+      a.x+=a.vx; a.y+=a.vy;
+    }
+  }
+  const pos=new Map();
+  for(const [code,a] of phys){ if(inWeb.has(code)) pos.set(code,[a.x,a.y]); }
+  // the parked: quiet carriers on the boundary ring, still clickable
+  const all=(world.carriers||[]).filter(c=>!inWeb.has(c.code)).sort((a,b)=>a.lon-b.lon);
+  const R=Math.min(W,H-60)*0.47;
+  all.forEach((c,i)=>{
+    const a=-Math.PI/2 + i/Math.max(1,all.length)*2*Math.PI;
+    pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
+  });
+  return pos;
+}
+
+function edgePoint(p1,p2,f,curved){
+  if(!curved){ return [p1[0]+(p2[0]-p1[0])*f, p1[1]+(p2[1]-p1[1])*f]; }
+  const cxp=W/2, cyp=(H+30)/2;
+  const mx=(p1[0]+p2[0])/2, my=(p1[1]+p2[1])/2;
+  const qx=mx+(cxp-mx)*0.5, qy=my+(cyp-my)*0.5; // pull chords toward centre
+  const u=1-f;
+  return [u*u*p1[0]+2*u*f*qx+f*f*p2[0], u*u*p1[1]+2*u*f*qy+f*f*p2[1]];
+}
+
+const kindColor=k=> k==="MVT"||k==="MVA"||k==="DIV" ? "rgba(224,185,60," :
+  k==="ASM"||k==="SSM" ? "rgba(224,90,90," :
+  k==="AVS" ? "rgba(95,150,190," : "rgba(95,211,141,";
+
+drawNet=function(t){
+  const curved = netLayout==="ring";
+  netPos = curved ? ringPositions() : stepPhys();
+
+  /* edges: the conversations. Everyone talks to the GDS -- that is the known
+     truth, drawn as faint wallpaper; the ink goes to the carrier-to-carrier
+     web, which is the part worth reading. */
+  for(const [k,e] of edgesE){
+    const [s1,s2]=k.split(">");
+    const p1=netPos.get(s1), p2=netPos.get(s2);
+    if(!p1||!p2) continue;
+    const hub=(s1==="1G"||s2==="1G");
+    let al=Math.min(.5,.04+Math.log1p(e.w)*.09);
+    let wd=Math.min(3,.3+Math.log1p(e.w)*.55);
+    if(hub){ al*=0.22; wd=Math.min(wd,0.8); }
+    else { al=Math.min(.8,al*1.9); }
+    cx.strokeStyle=hub?"rgba(95,120,150,"+al+")":"rgba(130,175,215,"+al+")";
+    cx.lineWidth=wd;
+    cx.beginPath();
+    if(curved){
+      const cxp=W/2, cyp=(H+30)/2;
+      const mx=(p1[0]+p2[0])/2, my=(p1[1]+p2[1])/2;
+      cx.moveTo(p1[0],p1[1]);
+      cx.quadraticCurveTo(mx+(cxp-mx)*0.5, my+(cyp-my)*0.5, p2[0],p2[1]);
+    } else {
+      cx.moveTo(p1[0],p1[1]); cx.lineTo(p2[0],p2[1]);
+    }
+    cx.stroke();
+  }
+
+  /* sampled conversations riding their edges */
+  for(let i=flows.length-1;i>=0;i--){
+    const q=flows[i], f=(t-q.t)/800;
+    if(f>=1){ flows.splice(i,1); continue; }
+    const p1=netPos.get(q.src), p2=netPos.get(q.dst);
+    if(!p1||!p2) continue;
+    const p=edgePoint(p1,p2,f,curved);
+    cx.fillStyle=kindColor(q.kind)+".9)";
+    cx.beginPath(); cx.arc(p[0],p[1],1.9,0,7); cx.fill();
+  }
+
+  /* nodes: sized by how many conversations they hold */
+  for(const [code,p] of netPos){
+    if(code==="1G") continue;
+    const deg=degreeOf(code), r=1.4+Math.min(6,Math.log1p(deg)*1.7);
+    const rate=rates.get(code)||0;
+    cx.fillStyle=rate>0.5?"#5b7a95":"#3a4d63";
+    cx.beginPath(); cx.arc(p[0],p[1],r,0,7); cx.fill();
+    if(deg>2||rate>3){
+      cx.fillStyle="#7d93aa"; cx.font="10px ui-monospace";
+      cx.fillText(code,p[0]+r+3,p[1]+3);
+    }
+  }
+  const g=netPos.get("1G");
+  if(g){
+    cx.fillStyle="#5fd38d"; cx.beginPath(); cx.arc(g[0],g[1],8,0,7); cx.fill();
+    cx.strokeStyle="rgba(95,211,141,.5)"; cx.lineWidth=1.4;
+    cx.beginPath(); cx.arc(g[0],g[1],12+2*Math.sin(t/400),0,7); cx.stroke();
+    cx.fillStyle="#9fb4c8"; cx.font="11px ui-monospace";
+    cx.fillText("1G · gds",g[0]+16,g[1]+4);
+  }
+};
 draw();
 </script>
 `

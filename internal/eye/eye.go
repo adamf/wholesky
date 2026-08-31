@@ -11,6 +11,7 @@ package eye
 
 import (
 	_ "embed"
+	"sort"
 
 	"encoding/json"
 	"fmt"
@@ -68,6 +69,16 @@ type Eye struct {
 	// pulses riding it are sampled.
 	peerWindow map[string]int64
 
+	// The logical web. The switch is transparent plumbing; the graph worth
+	// drawing is who converses with whom, end to end. Every relayed message
+	// carries the id of the inbound message it forwards, so remembering
+	// recent inbound origins lets an outbound relay be resolved to a
+	// src->dst edge -- the conversation, with the switch removed.
+	inboundSrc  map[string]inMeta
+	inboundFIFO []string
+	edgeWindow  map[string]int64 // "SRC>DST" -> count this window
+	flowBudget  int
+
 	// counters for the stats line
 	messages  int64
 	movements int64
@@ -88,6 +99,8 @@ func New(m *world.Manifest, warp int) *Eye {
 		closed:     map[string]bool{},
 		halos:      map[string]int64{},
 		peerWindow: map[string]int64{},
+		inboundSrc: map[string]inMeta{},
+		edgeWindow: map[string]int64{},
 	}
 	for i := range m.Airports {
 		e.airports[m.Airports[i].IATA] = &m.Airports[i]
@@ -98,33 +111,88 @@ func New(m *world.Manifest, warp int) *Eye {
 	return e
 }
 
+type inMeta struct {
+	peer string
+	kind string
+}
+
+// rememberCap bounds the inbound-origin memory. Relays happen within
+// milliseconds of the inbound they forward, so a few thousand entries is
+// hours of margin.
+const rememberCap = 4096
+
 // OnMessage folds one switch-bus message event into the traffic picture.
 //
 // The payload is the gateway's own message view; only the envelope matters
 // here. Pulses are emitted raw and the browser thins them -- at demo rates
 // that is fine, and at world rates the Eye aggregates before this point.
 func (e *Eye) OnMessage(payload map[string]any) {
+	id, _ := payload["id"].(string)
+	peer, _ := payload["peer"].(string)
+	dir, _ := payload["direction"].(string)
+	kind, _ := payload["kind"].(string)
+	corr, _ := payload["correlation_id"].(string)
+
 	e.mu.Lock()
 	e.messages++
-	if peer, ok := payload["peer"].(string); ok {
+	if peer != "" {
 		e.peerWindow[peer]++
+	}
+	var flowSrc, flowDst, flowKind string
+	switch dir {
+	case "in":
+		if id != "" {
+			e.inboundSrc[id] = inMeta{peer: peer, kind: strings.SplitN(kind, "/", 2)[0]}
+			e.inboundFIFO = append(e.inboundFIFO, id)
+			if len(e.inboundFIFO) > rememberCap {
+				delete(e.inboundSrc, e.inboundFIFO[0])
+				e.inboundFIFO = e.inboundFIFO[1:]
+			}
+		}
+	case "out":
+		if corr != "" {
+			if src, ok := e.inboundSrc[corr]; ok && src.peer != peer {
+				e.edgeWindow[src.peer+">"+peer]++
+				flowSrc, flowDst, flowKind = src.peer, peer, src.kind
+			}
+		}
 	}
 	now := time.Now()
 	if now.After(e.pulseReset) {
-		e.pulseBudget, e.pulseReset = 120, now.Add(time.Second)
+		e.pulseBudget, e.flowBudget, e.pulseReset = 120, 80, now.Add(time.Second)
 	}
 	if e.pulseBudget <= 0 {
 		e.mu.Unlock()
 		return
 	}
 	e.pulseBudget--
+	// The flow budget rides the pulse budget: sampled conversations for the
+	// web, full counts for the weights.
+	sendFlow := flowSrc != "" && e.flowBudget > 0
+	if sendFlow {
+		e.flowBudget--
+	}
 	e.mu.Unlock()
-	kind, _ := payload["kind"].(string)
 	e.broadcast(map[string]any{
 		"t":    "pulse",
 		"peer": payload["peer"], "dir": payload["direction"],
 		"kind": strings.SplitN(kind, "/", 2)[0], "fmt": payload["format"],
 	})
+	if sendFlow {
+		e.broadcast(map[string]any{"t": "flow", "src": flowSrc, "dst": flowDst, "kind": flowKind})
+	}
+}
+
+// LogicalEdges snapshots the current window's conversation counts, for the
+// tests: the web must be derivable, not decorative.
+func (e *Eye) LogicalEdges() map[string]int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]int64, len(e.edgeWindow))
+	for k, v := range e.edgeWindow {
+		out[k] = v
+	}
+	return out
 }
 
 // OnQueue folds a queue placement into the halos.
@@ -467,10 +535,31 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			rates := e.peerWindow
 			e.peerWindow = map[string]int64{}
+			edges := e.edgeWindow
+			e.edgeWindow = map[string]int64{}
+			if len(edges) > 3000 {
+				// A safety valve, not a curator: the whole world's logical
+				// graph is ~2,600 edges and the client wants all of it --
+				// culling here made the carrier web flicker, because hub and
+				// partner relay counts tie and the cut fell arbitrarily.
+				type kv struct {
+					k string
+					v int64
+				}
+				all := make([]kv, 0, len(edges))
+				for k, v := range edges {
+					all = append(all, kv{k, v})
+				}
+				sort.Slice(all, func(i, j int) bool { return all[i].v > all[j].v })
+				edges = map[string]int64{}
+				for _, e2 := range all[:3000] {
+					edges[e2.k] = e2.v
+				}
+			}
 			b, _ := json.Marshal(map[string]any{
 				"t": "stats", "messages": e.messages, "movements": e.movements,
 				"bookings": e.bookings, "airborne": len(e.planes), "closed": closed,
-				"rates": rates,
+				"rates": rates, "edges": edges,
 			})
 			e.mu.Unlock()
 			fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck

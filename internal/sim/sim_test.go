@@ -154,6 +154,38 @@ func TestBootBookAndFly(t *testing.T) {
 		t.Fatalf("the console at /node/%s/ answers as %v; each node must wear its own identity", first, st["identity"])
 	}
 
+	// The logical web must be derivable from the wire: within an AVS cycle
+	// the Eye should hold carrier-to-GDS conversations and -- because
+	// availability goes to interline partners too -- at least one
+	// carrier-to-carrier edge. The switch never appears: it is plumbing.
+	deadline = time.Now().Add(20 * time.Second)
+	for {
+		edges := s.Eye.LogicalEdges()
+		toGDS, c2c, hasSwitch := false, false, false
+		for k := range edges {
+			src, dst, _ := strings.Cut(k, ">")
+			if src == "1X" || dst == "1X" {
+				hasSwitch = true
+			}
+			if dst == "1G" && src != "1X" {
+				toGDS = true
+			}
+			if src != "1G" && dst != "1G" && src != "1X" && dst != "1X" {
+				c2c = true
+			}
+		}
+		if hasSwitch {
+			t.Fatalf("the logical web contains the switch; it must show conversations, not plumbing: %v", edges)
+		}
+		if toGDS && c2c {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the logical web never formed (toGDS=%v carrier-to-carrier=%v): %v", toGDS, c2c, edges)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	// And the instrument panel serves series a chart could draw.
 	smux := http.NewServeMux()
 	s.Stats.Routes(smux)

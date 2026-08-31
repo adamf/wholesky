@@ -34,9 +34,10 @@ type Tenant struct {
 	Store     store.Store
 	Inventory *gateway.Inventory
 
-	flights []world.Flight
-	client  *transport.Client
-	watch   string // teletype address operational messages are copied to
+	flights  []world.Flight
+	client   *transport.Client
+	watch    string // teletype address operational messages are copied to
+	partners []string
 }
 
 // Options configure a tenant.
@@ -46,6 +47,11 @@ type Options struct {
 	// WatchAddress receives this tenant's operational traffic -- availability
 	// and movements -- the way a network's ops centre address does.
 	WatchAddress string
+	// PartnerAddresses are the teletype addresses of this carrier's interline
+	// partners. Availability is broadcast to them as well as to the watch:
+	// free sale between partners is the whole point of AVS, and a partner who
+	// never hears your availability is not a partner.
+	PartnerAddresses []string
 	// Capacity is seats per class per flight. The load-suite lesson applies:
 	// a demonstration wants single digits, a simulation wants headroom.
 	Capacity int
@@ -119,6 +125,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t := &Tenant{
 		Carrier: c, Gateway: gw, Store: st, Inventory: inv,
 		flights: flights, client: client, watch: opts.WatchAddress,
+		partners: opts.PartnerAddresses,
 	}
 	go func() {
 		if err := client.Run(ctx); err != nil && ctx.Err() == nil {
@@ -177,7 +184,7 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 			if len(entries) == 0 {
 				continue
 			}
-			if err := t.sendTypeB(ctx, avs.Build(entries), "AVS"); err != nil {
+			if err := t.sendTypeBTo(ctx, append([]string{t.watch}, t.partners...), avs.Build(entries), "AVS"); err != nil {
 				failed++
 			} else {
 				sent++
@@ -273,9 +280,20 @@ func (t *Tenant) SendSchedule(ctx context.Context, text string) error {
 }
 
 func (t *Tenant) sendTypeB(ctx context.Context, text, kind string) error {
-	dest, err := typeb.ParseAddress(t.watch)
-	if err != nil {
-		return fmt.Errorf("host: watch address: %w", err)
+	return t.sendTypeBTo(ctx, []string{t.watch}, text, kind)
+}
+
+// sendTypeBTo transmits one message to several addressees. One message: the
+// address block carries them all, and the switch fans it out, which is what
+// the address block is for.
+func (t *Tenant) sendTypeBTo(ctx context.Context, addrs []string, text, kind string) error {
+	dests := make([]typeb.Address, 0, len(addrs))
+	for _, a := range addrs {
+		d, err := typeb.ParseAddress(a)
+		if err != nil {
+			return fmt.Errorf("host: address %q: %w", a, err)
+		}
+		dests = append(dests, d)
 	}
 	origin, err := typeb.ParseAddress(t.Carrier.TTYAddress)
 	if err != nil {
@@ -284,7 +302,7 @@ func (t *Tenant) sendTypeB(ctx context.Context, text, kind string) error {
 	now := time.Now().UTC()
 	out := &typeb.Message{
 		Priority:     "QU",
-		Destinations: []typeb.Address{dest},
+		Destinations: dests,
 		Origin:       origin,
 		OriginTime:   typeb.OriginTime{Present: true, Day: now.Day(), Hour: now.Hour(), Minute: now.Minute()},
 		Text:         text,

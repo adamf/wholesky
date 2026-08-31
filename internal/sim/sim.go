@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -196,18 +197,20 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	if capacity <= 0 {
 		capacity = 100000
 	}
+	partners := partnerAddresses(m.Carriers, flights)
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
-			SwitchAddr:   sw.Addr("link-" + strings.ToLower(c.Designator)),
-			WatchAddress: GDSAddress,
-			Capacity:     capacity,
-			BookingDate:  s.BookingDate,
-			MaxMessages:  opts.MaxMessages,
-			MaxRecords:   opts.MaxRecords,
-			AVSInterval:  opts.AVSInterval,
-			Bus:          tenantBus,
-			Log:          log,
+			SwitchAddr:       sw.Addr("link-" + strings.ToLower(c.Designator)),
+			WatchAddress:     GDSAddress,
+			PartnerAddresses: partners[c.Designator],
+			Capacity:         capacity,
+			BookingDate:      s.BookingDate,
+			MaxMessages:      opts.MaxMessages,
+			MaxRecords:       opts.MaxRecords,
+			AVSInterval:      opts.AVSInterval,
+			Bus:              tenantBus,
+			Log:              log,
 		})
 		if err != nil {
 			s.Stop()
@@ -711,6 +714,58 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/" + sub
 	h.ServeHTTP(w, r2)
+}
+
+// partnerAddresses derives each carrier's interline partners: the carriers
+// it shares the most airports with, capped small the way a real partner list
+// is. Deterministic -- same manifest, same partners -- because the web the
+// map draws should be a property of the world, not of a map iteration.
+func partnerAddresses(carriers []world.Carrier, flights map[string][]world.Flight) map[string][]string {
+	const maxPartners = 4
+	touch := map[string]map[string]bool{}
+	for code, fs := range flights {
+		t := map[string]bool{}
+		for _, f := range fs {
+			t[f.From], t[f.To] = true, true
+		}
+		touch[code] = t
+	}
+	tty := map[string]string{}
+	for _, c := range carriers {
+		tty[c.Designator] = c.TTYAddress
+	}
+	out := map[string][]string{}
+	for _, c := range carriers {
+		type cand struct {
+			code  string
+			score int
+		}
+		var cs []cand
+		for _, o := range carriers {
+			if o.Designator == c.Designator {
+				continue
+			}
+			n := 0
+			for apt := range touch[c.Designator] {
+				if touch[o.Designator][apt] {
+					n++
+				}
+			}
+			if n >= 2 {
+				cs = append(cs, cand{o.Designator, n})
+			}
+		}
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i].score != cs[j].score {
+				return cs[i].score > cs[j].score
+			}
+			return cs[i].code < cs[j].code
+		})
+		for i := 0; i < len(cs) && i < maxPartners; i++ {
+			out[c.Designator] = append(out[c.Designator], tty[cs[i].code])
+		}
+	}
+	return out
 }
 
 // tapBus runs fn for every event on a bus until the context ends.

@@ -11,12 +11,19 @@ continuously on one machine.
 
 ![The globe: thousands of aircraft over the Earth, and Heathrow closing](docs/the-globe.gif)
 
-The globe has a second mode: **net**, the topology the sky runs on — 518
-carrier spokes around one switch, ordered by hub longitude so the ring echoes
-the geography, every edge weighted by its live message rate, pulses riding
-the spokes, and every node one click from its own console.
+The globe has a second mode: **net**, the logical web of who converses with
+whom. The switch never appears — it is plumbing. Every relayed message
+carries the id of the inbound it forwards, so the Eye resolves each relay to
+a true src→dst conversation: carriers to the GDS, and carriers to their
+interline partners, to whom availability is broadcast the way it really is.
+Two layouts of the same graph — a force-directed **web**, where regional
+communities pull themselves together by their own message springs (China
+upper-left, the Americas upper-right, Europe below, with no geography told
+to the layout), and a **ring** with the conversations as woven chords.
+Everyone-talks-to-the-GDS is drawn as faint wallpaper; the ink goes to the
+carrier-to-carrier web. Every node is one click from its own console.
 
-![The net: the star the network actually is, pulses riding the spokes](docs/the-net.gif)
+![The web: the world's interline conversations, laid out by their own springs](docs/the-web.gif)
 
 **Every node has a real console.** Each of the 519 embedded Jetway systems —
 the GDS and all 518 carriers — serves the full Jetway console at
