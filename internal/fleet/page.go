@@ -143,7 +143,11 @@ async function refreshDrawer(){
     "<div style='display:flex;justify-content:space-between'><h2>"+n.code+
     " <a href='/node/"+n.code+"/' target='_blank' style='font-size:12px;color:#5fd38d'>open console →</a></h2>"+
     "<a onclick=\"closeDrawer()\" style='cursor:pointer'>✕</a></div>"+
-    "<div class='sub'>"+esc(n.name)+(n.hub?" · hub "+n.hub:"")+(n.format?" · "+n.format:"")+"</div>"+
+    "<div class='sub'>"+esc(n.name)+(n.hub?" · hub "+n.hub:"")+(n.format?" · "+n.format:"")+
+    (n.kind==="carrier"?(n.link
+      ?" · <a onclick=\"linkCtl('"+n.code+"','sever')\" style='color:#e05a5a;cursor:pointer'>✂ sever link</a>"
+      :" · <a onclick=\"linkCtl('"+n.code+"','restore')\" style='color:#5fd38d;cursor:pointer'>⟳ restore link</a>"):"")+
+    "</div>"+
     "<div class='sub'>records <span style='color:#5fd38d'>"+detail.records+"</span> · queues: "+queues+"</div>"+
     "<table><thead><tr><th>at</th><th>dir</th><th>peer</th><th>kind</th><th class='r'>bytes</th><th>status</th></tr></thead><tbody>"+
     msgs.map(m=>"<tr class='row' onclick=\"openRaw('"+sel+"','"+m.id+"')\">"+
@@ -154,6 +158,11 @@ async function refreshDrawer(){
 }
 function closeDrawer(){ sel=null; clearInterval(msgTimer);
   document.getElementById("drawer").classList.remove("open"); }
+async function linkCtl(code,action){
+  await fetch("/fleet/node/"+code+"/link",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+  await poll(); await refreshDrawer();
+}
 async function openRaw(code,id){
   const t=await fetch("/fleet/node/"+code+"/message/"+id).then(r=>r.text());
   document.getElementById("rawpre").textContent=t;

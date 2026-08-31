@@ -389,3 +389,92 @@ func planesOf(s *Sim) []Planeish {
 }
 
 func trimZeros(n string) string { return strings.TrimLeft(n, "0") }
+
+// Chaos can cut one carrier's circuit and the world degrades exactly as a
+// real network does: the switch loses the session, sells routed at the dark
+// carrier go undeliverable instead of settling, and a restore brings the
+// same carrier back through its own reconnect path -- after which bookings
+// settle again. The dashboards' link dots and the undeliverable series are
+// fed by what this test asserts from the stores.
+func TestChaosSeverAndRestoreLink(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+
+	livePeer := func(code string) bool {
+		for _, p := range s.Switch.LivePeers() {
+			if p == code {
+				return true
+			}
+		}
+		return false
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if !livePeer(c.Designator) {
+		t.Fatalf("%s is not on the switch before the test starts", c.Designator)
+	}
+
+	if err := s.LinkControl(c.Designator, "sever"); err != nil {
+		t.Fatalf("sever: %v", err)
+	}
+	waitFor("the switch to lose the session", func() bool { return !livePeer(c.Designator) })
+	if !s.Tenants[c.Designator].Severed() {
+		t.Error("the tenant does not read as severed")
+	}
+
+	// A sell routed at the dark carrier must not settle; the switch's copy
+	// dies on the wire and says so.
+	res, err := s.Book(ctx, f, "Y", 0, "DARKLINK")
+	if err != nil {
+		t.Fatalf("Book during sever: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+	if ok, _ := s.Settled(ctx, res.PNR.RecordLocator); ok {
+		t.Error("a booking settled while the carrier's link was severed")
+	}
+	waitFor("an undeliverable message at the switch", func() bool {
+		msgs, err := s.Switch.Store.ListMessages(ctx,
+			store.MessageFilter{Status: store.StatusUndeliverable, Limit: 5})
+		return err == nil && len(msgs) > 0
+	})
+
+	if err := s.LinkControl(c.Designator, "restore"); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	waitFor("the carrier to dial back in", func() bool { return livePeer(c.Designator) })
+
+	// After the repair the same carrier answers again.
+	res2, err := s.Book(ctx, f, "Y", 1, "REPAIRED")
+	if err != nil {
+		t.Fatalf("Book after restore: %v", err)
+	}
+	waitFor("the post-restore booking to settle", func() bool {
+		ok, _ := s.Settled(ctx, res2.PNR.RecordLocator)
+		return ok
+	})
+
+	if err := s.LinkControl("ZZ", "sever"); err == nil {
+		t.Error("severing an unknown carrier did not error")
+	}
+	if err := s.LinkControl(c.Designator, "detonate"); err == nil {
+		t.Error("an unknown action did not error")
+	}
+}

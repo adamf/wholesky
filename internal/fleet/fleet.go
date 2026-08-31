@@ -57,6 +57,11 @@ type Collector struct {
 	// LivePeers reports which subscribers hold a session on the switch, so
 	// the dashboard can mark a dead link the moment it dies.
 	LivePeers func() []string
+
+	// LinkControl, when set, severs or restores a carrier's switch circuit.
+	// It is the fleet page's chaos hook; the world behind it decides what a
+	// cut link means.
+	LinkControl func(code, action string) error
 }
 
 // New builds an empty collector.
@@ -143,6 +148,28 @@ func (c *Collector) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /fleet/node/{code}/messages.json", c.messagesJSON)
 	mux.HandleFunc("GET /fleet/node/{code}/message/{id}", c.raw)
 	mux.HandleFunc("GET /fleet/node/{code}/detail.json", c.detailJSON)
+	mux.HandleFunc("POST /fleet/node/{code}/link", c.linkControl)
+}
+
+// linkControl severs or restores one carrier's circuit.
+func (c *Collector) linkControl(w http.ResponseWriter, r *http.Request) {
+	if c.LinkControl == nil {
+		http.Error(w, "this fleet has no link control", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil {
+		http.Error(w, "malformed request", http.StatusBadRequest)
+		return
+	}
+	if err := c.LinkControl(r.PathValue("code"), req.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
 }
 
 func (c *Collector) nodesJSON(w http.ResponseWriter, r *http.Request) {

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/avail"
@@ -38,6 +39,14 @@ type Tenant struct {
 	client   *transport.Client
 	watch    string // teletype address operational messages are copied to
 	partners []string
+	log      *slog.Logger
+
+	// The link runs under its own sub-context so chaos can cut it without
+	// touching the tenant. bootCtx is what a restored link derives from.
+	linkMu     sync.Mutex
+	bootCtx    context.Context
+	linkCancel context.CancelFunc
+	severed    bool
 }
 
 // Options configure a tenant.
@@ -125,19 +134,60 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t := &Tenant{
 		Carrier: c, Gateway: gw, Store: st, Inventory: inv,
 		flights: flights, client: client, watch: opts.WatchAddress,
-		partners: opts.PartnerAddresses,
+		partners: opts.PartnerAddresses, log: log, bootCtx: ctx,
 	}
-	go func() {
-		if err := client.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Error("carrier link ended", "carrier", c.Designator, "err", err)
-		}
-	}()
+	linkCtx, linkCancel := context.WithCancel(ctx)
+	t.linkCancel = linkCancel
+	go t.runLink(linkCtx)
 	interval := opts.AVSInterval
 	if interval <= 0 {
 		interval = availabilityInterval
 	}
 	go t.broadcastAvailability(ctx, opts.BookingDate, interval, log)
 	return t, nil
+}
+
+// runLink keeps the switch link up until its sub-context is cancelled.
+func (t *Tenant) runLink(ctx context.Context) {
+	if err := t.client.Run(ctx); err != nil && ctx.Err() == nil {
+		t.log.Error("carrier link ended", "carrier", t.Carrier.Designator, "err", err)
+	}
+}
+
+// Sever cuts the tenant's link to the switch and keeps it down until Restore.
+// The TCP connection really closes: the tenant's sends start failing, the
+// switch loses the session and marks its own sends undeliverable, and every
+// dashboard sees exactly what a cut circuit looks like -- because that is
+// what this is.
+func (t *Tenant) Sever() {
+	t.linkMu.Lock()
+	defer t.linkMu.Unlock()
+	if t.severed {
+		return
+	}
+	t.severed = true
+	t.linkCancel()
+}
+
+// Restore dials the switch again after a Sever. The reconnect goes through
+// the same client and the same backoff as a real circuit repair.
+func (t *Tenant) Restore() {
+	t.linkMu.Lock()
+	defer t.linkMu.Unlock()
+	if !t.severed {
+		return
+	}
+	t.severed = false
+	linkCtx, cancel := context.WithCancel(t.bootCtx)
+	t.linkCancel = cancel
+	go t.runLink(linkCtx)
+}
+
+// Severed reports whether the link is deliberately down.
+func (t *Tenant) Severed() bool {
+	t.linkMu.Lock()
+	defer t.linkMu.Unlock()
+	return t.severed
 }
 
 // availabilityInterval is how often a tenant re-broadcasts.

@@ -198,6 +198,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	})
 	s.Fleet.Add(ctx, "1X", "the switch", fleet.KindSwitch, "typeb", "", 0, sw.Store, sw.Bus)
 	s.Fleet.LivePeers = sw.LivePeers
+	s.Fleet.LinkControl = s.LinkControl
 	if opts.Console != "" {
 		go func() {
 			if err := sw.Serve(ctx, 10*time.Second); err != nil && ctx.Err() == nil {
@@ -528,6 +529,29 @@ func (s *Sim) chaos(action, iata string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown chaos action %q", action)
+}
+
+// LinkControl severs or restores a carrier's circuit to the switch: the
+// fleet page's per-node chaos. A severed carrier keeps flying and keeps
+// trying to talk -- its sends fail, the switch's copies to it go
+// undeliverable, and the gap is visible on every instrument. Restore dials
+// back in through the same reconnect path a real circuit repair uses.
+func (s *Sim) LinkControl(code, action string) error {
+	t := s.Tenants[strings.ToUpper(strings.TrimSpace(code))]
+	if t == nil {
+		return fmt.Errorf("no carrier %s in this world", code)
+	}
+	switch action {
+	case "sever":
+		s.log.Info("chaos: link severed", "carrier", t.Carrier.Designator)
+		t.Sever()
+		return nil
+	case "restore":
+		s.log.Info("chaos: link restored", "carrier", t.Carrier.Designator)
+		t.Restore()
+		return nil
+	}
+	return fmt.Errorf("unknown link action %q", action)
 }
 
 func (s *Sim) isClosed(a, b string) bool {
