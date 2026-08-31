@@ -50,3 +50,20 @@ func TestRotationsAreCoherent(t *testing.T) {
 	}
 	t.Logf("%d flights on %d tails, %d rotations of 2+ legs", len(m.Flights), len(byTail), multi)
 }
+
+// The full world flies about what the real one does: the commercial fleet
+// runs roughly a hundred thousand legs a day, and the frequency tiers are
+// calibrated to land there. Drift outside the band means somebody retuned
+// the tiers without meaning to.
+func TestFullWorldFliesARealDay(t *testing.T) {
+	m, err := Compile(CompileOptions{DataDir: "../../data", Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(m.Flights); n < 95000 || n > 115000 {
+		t.Errorf("the full world flies %d legs a day; the real one flies about 105000", n)
+	}
+	if len(m.Carriers) < 400 {
+		t.Errorf("only %d carriers survived compilation", len(m.Carriers))
+	}
+}

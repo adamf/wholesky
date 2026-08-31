@@ -176,8 +176,28 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 			eq, seats := equipmentFor(km)
 			block := blockMinutes(km)
 
+			// Frequency by how busy both ends are, capped by stage length:
+			// trunk routes between busy stations run several rotations a day,
+			// and nobody flies four daily long-hauls with one airframe. The
+			// tiers are calibrated so the full world flies about what the
+			// real one does in a day -- roughly a hundred thousand legs.
+			touchMin := a.touch[r.src]
+			if a.touch[r.dst] < touchMin {
+				touchMin = a.touch[r.dst]
+			}
 			freq := 1
-			if a.touch[r.src] >= 10 && a.touch[r.dst] >= 10 {
+			switch {
+			case touchMin >= 10:
+				freq = 4
+			case touchMin >= 3:
+				freq = 3
+			case touchMin >= 2:
+				freq = 2
+			}
+			switch {
+			case km > 3500:
+				freq = 1
+			case km > 1800 && freq > 2:
 				freq = 2
 			}
 			for i := 0; i < freq; i++ {
