@@ -77,6 +77,12 @@ type Flight struct {
 	// KM is the great-circle distance, kept because demand and delay models
 	// both want it.
 	KM int `json:"km"`
+	// Tail is the registration of the aircraft rotation this leg belongs to.
+	// The compiler chains each carrier's flights into rotations -- a tail
+	// departs where it last arrived, after a turnaround -- so the movement
+	// stream is coherent: the same registration works its way around the
+	// network instead of teleporting.
+	Tail string `json:"tail,omitempty"`
 }
 
 // Manifest is a compiled world.

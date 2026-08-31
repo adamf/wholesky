@@ -482,3 +482,57 @@ func TestChaosSeverAndRestoreLink(t *testing.T) {
 		t.Error("an unknown action did not error")
 	}
 }
+
+// The delay model is deterministic noise with the familiar shape of a
+// network's day: the same flight on the same day is always exactly as late,
+// most flights go out on time, and nothing exceeds the four-hour tail.
+func TestDelaysAreDeterministicAndShaped(t *testing.T) {
+	m := smallWorld(t)
+	day := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)
+	onTime, total, worst := 0, 0, 0
+	for _, f := range m.Flights {
+		d1, a1 := delayFor(f, day)
+		d2, a2 := delayFor(f, day)
+		if d1 != d2 || a1 != a2 {
+			t.Fatalf("%s%s delays twice differently: %d/%d then %d/%d",
+				f.Carrier, f.Number, d1, a1, d2, a2)
+		}
+		if a1 > d1 {
+			t.Errorf("%s%s arrives later than it departed late: dep+%d arr+%d",
+				f.Carrier, f.Number, d1, a1)
+		}
+		total++
+		if d1 == 0 {
+			onTime++
+		}
+		if d1 > worst {
+			worst = d1
+		}
+	}
+	if total == 0 {
+		t.Fatal("no flights")
+	}
+	if float64(onTime)/float64(total) < 0.45 {
+		t.Errorf("only %d of %d flights on time; the model is a strike, not a day", onTime, total)
+	}
+	if worst > 240 {
+		t.Errorf("worst delay is %d minutes; the tail is capped at four hours", worst)
+	}
+	if worst == 0 {
+		t.Error("nothing is ever late; the model is a fantasy, not a day")
+	}
+	// A different day rolls different dice.
+	changed := false
+	other := day.AddDate(0, 0, 1)
+	for _, f := range m.Flights {
+		d1, _ := delayFor(f, day)
+		d2, _ := delayFor(f, other)
+		if d1 != d2 {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Error("every flight is exactly as late tomorrow; the day is not in the dice")
+	}
+}

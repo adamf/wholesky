@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -200,6 +201,8 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 		}
 	}
 
+	assignTails(flights)
+
 	var apts []Airport
 	for code := range usedAirport {
 		apts = append(apts, *airports[code])
@@ -354,6 +357,61 @@ func sortAirports(as []Airport) {
 	for i := 1; i < len(as); i++ {
 		for j := i; j > 0 && as[j].IATA < as[j-1].IATA; j-- {
 			as[j], as[j-1] = as[j-1], as[j]
+		}
+	}
+}
+
+// assignTails chains each carrier's flights into aircraft rotations. Greedy
+// and deterministic: flights in departure order, each taken by a tail that
+// last arrived at its origin and has had its turnaround, or by a fresh tail
+// when none has. The result is what a real day of tails looks like from the
+// movement stream: registrations that work their way around the network.
+func assignTails(flights []Flight) {
+	const turnaroundMin = 35
+
+	byCarrier := map[string][]int{}
+	for i, f := range flights {
+		byCarrier[f.Carrier] = append(byCarrier[f.Carrier], i)
+	}
+	var codes []string
+	for code := range byCarrier {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+
+	for _, code := range codes {
+		idx := byCarrier[code]
+		sort.SliceStable(idx, func(a, b int) bool {
+			fa, fb := flights[idx[a]], flights[idx[b]]
+			if fa.DepMin != fb.DepMin {
+				return fa.DepMin < fb.DepMin
+			}
+			return fa.Number < fb.Number
+		})
+		type tail struct {
+			at      string
+			freeMin int
+		}
+		var tails []tail
+		for _, i := range idx {
+			f := &flights[i]
+			best := -1
+			for j, tl := range tails {
+				if tl.at != f.From || tl.freeMin+turnaroundMin > f.DepMin {
+					continue
+				}
+				// The tightest connection wins, which is how schedules are
+				// actually built: aircraft do not idle when they could fly.
+				if best == -1 || tl.freeMin > tails[best].freeMin {
+					best = j
+				}
+			}
+			if best == -1 {
+				tails = append(tails, tail{})
+				best = len(tails) - 1
+			}
+			f.Tail = fmt.Sprintf("W%s%03d", code, best+1)
+			tails[best] = tail{at: f.To, freeMin: f.ArrMin}
 		}
 	}
 }

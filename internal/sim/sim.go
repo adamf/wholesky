@@ -433,14 +433,18 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				if s.isClosed(f.From, f.To) {
 					continue
 				}
-				reg := fmt.Sprintf("SKY%03d", regHash(f)%1000)
-				if f.DepMin > prev && f.DepMin <= cur {
-					if err := t.Depart(ctx, f, day, reg, 0); err != nil {
+				reg := f.Tail
+				if reg == "" {
+					reg = fmt.Sprintf("SKY%03d", regHash(f)%1000)
+				}
+				depDelay, arrDelay := delayFor(f, day)
+				if d := f.DepMin + depDelay; d > prev && d <= cur {
+					if err := t.Depart(ctx, f, day, reg, depDelay); err != nil {
 						s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
 					}
 				}
-				if f.ArrMin > prev && f.ArrMin <= cur {
-					if err := t.Arrive(ctx, f, day, reg, 0); err != nil {
+				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
+					if err := t.Arrive(ctx, f, day, reg, arrDelay); err != nil {
 						s.log.Debug("arrival not sent", "flight", f.Carrier+f.Number, "err", err)
 					}
 				}
@@ -882,6 +886,44 @@ func (s *Sim) waitForLinks(ctx context.Context, want int, within time.Duration) 
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// delayFor is one day's operational noise for one flight: how late it goes
+// out and how much of that it makes back in the air. Deterministic in the
+// flight and the calendar day, so a replayed day delays the same flights the
+// same way and two observers of one world agree. The mix is the familiar
+// shape of a network's day: most flights on time, a fat middle of minor
+// delays, and a thin tail of the ones the arrivals board apologises for.
+func delayFor(f world.Flight, day time.Time) (depMin, arrMin int) {
+	h := 0
+	for _, r := range f.Carrier + f.Number + day.Format("20060102") {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	r := h % 100
+	spread := h / 100
+	switch {
+	case r < 62:
+		depMin = 0
+	case r < 82:
+		depMin = 1 + spread%15
+	case r < 94:
+		depMin = 16 + spread%30
+	case r < 99:
+		depMin = 46 + spread%75
+	default:
+		depMin = 121 + spread%120
+	}
+	// A late departure recovers a little en route; an on-time one lands on
+	// time, because inventing early arrivals would move a flight before its
+	// own schedule.
+	arrMin = depMin - spread%9
+	if arrMin < 0 {
+		arrMin = 0
+	}
+	return depMin, arrMin
 }
 
 func regHash(f world.Flight) int {
