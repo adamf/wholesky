@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -336,5 +338,108 @@ func TestInvariantCancelledFlightQueuesEveryBooking(t *testing.T) {
 				missing, len(locators), len(items))
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Capacity holds across distribution channels: three bookings through one
+// GDS and three through another still confirm at most the capacity, because
+// the carrier's inventory is the single authority every channel converges
+// on. This is the law that only exists when more than one GDS runs, and the
+// reason the world runs five.
+func TestInvariantNoOversellAcrossChannels(t *testing.T) {
+	s := bootWorld(t, Options{Capacity: 2, GDSCount: 2})
+	ctx := context.Background()
+
+	c := s.Manifest.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	date := strings.ToUpper(s.BookingDate.Format("02Jan"))
+
+	// Wait until both channels hold the carrier's broadcast for this flight,
+	// so the bookings race down the free-sale path -- each channel selling on
+	// the strength of the same assertion -- and convergence has to come from
+	// the carrier's answers, not from a cold cache asking first.
+	depart, err := pnr.ResolveDate(date, s.BookingDate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := avail.NewKey(f.Carrier, f.Number, depart, f.From, f.To, "Y")
+	warm := time.Now().Add(45 * time.Second)
+	for {
+		n := 0
+		for _, g := range s.GDSes {
+			if _, ok, fresh := g.GW.Avail.Lookup(key); ok && fresh {
+				n++
+			}
+		}
+		if n == len(s.GDSes) {
+			break
+		}
+		if time.Now().After(warm) {
+			t.Fatalf("only %d of %d channels ever heard availability for %s%s",
+				n, len(s.GDSes), f.Carrier, f.Number)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	type placed struct {
+		g   *GDSNode
+		loc string
+	}
+	var all []placed
+	for i := 0; i < 6; i++ {
+		g := s.GDSes[i%2]
+		res, err := g.GW.Book(ctx, &gateway.BookingRequest{
+			Passengers: []gateway.BookingPassenger{{
+				Surname: fmt.Sprintf("CHANNEL%d", i), Given: "INV", Title: "MR"}},
+			Segments: []gateway.BookingSegment{{
+				Carrier: f.Carrier, FlightNum: f.Number, Class: "Y", Date: date,
+				Board: f.From, Off: f.To, Seats: 1}},
+			Agent: "invariants", Channel: "test",
+		})
+		if err != nil {
+			t.Logf("inventory snapshot: %v", s.Tenants[c.Designator].Inventory.Snapshot())
+			msgs, _ := g.Store.ListMessages(ctx, store.MessageFilter{Limit: 10000})
+			for _, m := range msgs {
+				full, err2 := g.Store.GetMessage(ctx, m.ID)
+				if err2 != nil || !strings.Contains(string(full.Raw), "U20001/30SEP") {
+					continue
+				}
+				t.Logf("AVS at %s (dir=%s):\n%s", g.Designator, m.Direction, full.Raw)
+			}
+			if e, ok, fresh := g.GW.Avail.Lookup(key); ok {
+				t.Logf("cache at %s: status=%v seats=%d known=%v fresh=%v asof=%v",
+					g.Designator, e.Status, e.Seats, e.SeatsKnown, fresh, e.AsOf)
+			}
+			t.Fatalf("Book via %s: %v", g.Designator, err)
+		}
+		all = append(all, placed{g, res.PNR.RecordLocator})
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for _, p := range all {
+		for {
+			if ok, _ := settledIn(ctx, p.g.Store, p.loc); ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("booking %s via %s never settled", p.loc, p.g.Designator)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+
+	carrier := confirmedSeats(t, s.Tenants[c.Designator].Store, c.Designator, f.Number, "Y")
+	if carrier > 2 {
+		t.Errorf("the carrier confirms %d seats on %s%s Y against capacity 2, sold through two channels",
+			carrier, c.Designator, f.Number)
+	}
+	total := 0
+	for _, g := range s.GDSes {
+		total += confirmedSeats(t, g.Store, c.Designator, f.Number, "Y")
+	}
+	if total > 2 {
+		t.Errorf("the channels together believe %d seats are confirmed against capacity 2", total)
+	}
+	if total == 0 {
+		t.Error("no channel confirmed anything; the pressure test never sold a seat")
 	}
 }

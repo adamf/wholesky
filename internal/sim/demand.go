@@ -68,14 +68,16 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 			// Each traveller gets a private generator seeded from the draw,
 			// so the concurrent lifecycles do not contend for one rng.
 			sub := rand.New(rand.NewSource(seed<<16 ^ int64(n)))
-			go s.placeDemand(ctx, sub, carriers, n)
+			// Travellers spread across the distribution systems, the way real
+			// demand arrives through whichever channel the agent uses.
+			go s.placeDemand(ctx, s.GDSes[n%len(s.GDSes)], sub, carriers, n)
 		}
 	}
 }
 
 // placeDemand runs one traveller end to end: choose, book, settle, and live
 // with the consequences.
-func (s *Sim) placeDemand(ctx context.Context, rng *rand.Rand, carriers []string, n int) {
+func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carriers []string, n int) {
 	itin := s.chooseItinerary(rng, carriers)
 	if len(itin) == 0 {
 		return
@@ -90,7 +92,7 @@ func (s *Sim) placeDemand(ctx context.Context, rng *rand.Rand, carriers []string
 	// A slice of single-segment demand arrives as an NDC order on the GDS's
 	// HTTP endpoint -- the distribution channel, not just the message.
 	if len(itin) == 1 && rng.Intn(100) < 18 {
-		if err := s.bookNDC(itin[0].Carrier, itin[0].Number, itin[0].From, itin[0].To,
+		if err := s.bookNDC(g, itin[0].Carrier, itin[0].Number, itin[0].From, itin[0].To,
 			itin[0].DepMin, class, day, surname); err != nil {
 			s.DemFailed.Add(1)
 			return
@@ -114,7 +116,7 @@ func (s *Sim) placeDemand(ctx context.Context, rng *rand.Rand, carriers []string
 			Surname: surname, Given: fmt.Sprintf("PAX%d", p+1), Title: "MR",
 		})
 	}
-	res, err := s.GDS.Book(ctx, &gateway.BookingRequest{
+	res, err := g.GW.Book(ctx, &gateway.BookingRequest{
 		Passengers: pax, Segments: segs, Agent: "wholesky", Channel: "sim",
 	})
 	if err != nil {
@@ -125,15 +127,15 @@ func (s *Sim) placeDemand(ctx context.Context, rng *rand.Rand, carriers []string
 	if interline {
 		s.DemInterline.Add(1)
 	}
-	s.liveWith(ctx, rng, res.PNR.RecordLocator, party)
+	s.liveWith(ctx, g, rng, res.PNR.RecordLocator, party)
 }
 
 // liveWith is the rest of a booking's life: settle, then usually ticket,
 // sometimes cancel, occasionally divide.
-func (s *Sim) liveWith(ctx context.Context, rng *rand.Rand, locator string, party int) {
+func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator string, party int) {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		ok, err := s.Settled(ctx, locator)
+		ok, err := settledIn(ctx, g.Store, locator)
 		if err != nil || time.Now().After(deadline) {
 			return
 		}
@@ -150,7 +152,7 @@ func (s *Sim) liveWith(ctx context.Context, rng *rand.Rand, locator string, part
 	roll := rng.Intn(100)
 	switch {
 	case roll < 8:
-		if _, err := s.GDS.Cancel(ctx, locator, gateway.CancelOptions{
+		if _, err := g.GW.Cancel(ctx, locator, gateway.CancelOptions{
 			By: "demand", Reason: "traveller cancelled",
 		}); err == nil {
 			s.DemCancelled.Add(1)
@@ -160,12 +162,12 @@ func (s *Sim) liveWith(ctx context.Context, rng *rand.Rand, locator string, part
 		}
 		return
 	case roll < 63:
-		rec, err := s.GDSStore.GetPNR(ctx, locator)
+		rec, err := g.Store.GetPNR(ctx, locator)
 		if err != nil || len(rec.Segments) == 0 {
 			return
 		}
 		code := s.accountingCode(rec.Segments[0].Carrier)
-		if _, err := s.GDS.IssueTickets(ctx, locator, gateway.IssueOptions{
+		if _, err := g.GW.IssueTickets(ctx, locator, gateway.IssueOptions{
 			AirlineCode: code, IssuedBy: "demand",
 		}); err == nil {
 			s.DemTicketed.Add(1)
@@ -175,7 +177,7 @@ func (s *Sim) liveWith(ctx context.Context, rng *rand.Rand, locator string, part
 	// A party sometimes divides -- somebody's plans changed -- which is the
 	// operation whose advisories and divergences the map draws.
 	if party >= 2 && rng.Intn(100) < 12 {
-		if _, err := s.GDS.Split(ctx, gateway.SplitRequest{
+		if _, err := g.GW.Split(ctx, gateway.SplitRequest{
 			Locator: locator, Passengers: []int{party},
 			By: "demand", Reason: "traveller separated",
 		}); err == nil {
@@ -233,7 +235,7 @@ func (s *Sim) accountingCode(carrier string) string {
 
 // bookNDC places an order through the GDS's NDC endpoint: the same HTTP
 // surface an OTA would call, XML and all.
-func (s *Sim) bookNDC(carrier, number, from, to string, depMin int, class string, day int, surname string) error {
+func (s *Sim) bookNDC(g *GDSNode, carrier, number, from, to string, depMin int, class string, day int, surname string) error {
 	date := s.BookingDate.AddDate(0, 0, day).Format("2006-01-02")
 	dep := fmt.Sprintf("%02d:%02d", (depMin/60)%24, depMin%60)
 	body := fmt.Sprintf(`<OrderCreateRQ xmlns="http://www.iata.org/IATA/EDIST">
@@ -262,7 +264,7 @@ func (s *Sim) bookNDC(carrier, number, from, to string, depMin int, class string
 </OrderCreateRQ>`, surname, carrier, carrier, number, from, date, dep, to, carrier, number, class)
 
 	s.consolesMu.Lock()
-	h := s.consoles[GDSDesignator]
+	h := s.consoles[g.Designator]
 	s.consolesMu.Unlock()
 	if h == nil {
 		return fmt.Errorf("no gds console handler")

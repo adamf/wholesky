@@ -19,7 +19,7 @@ func TestDemandWalksEveryLifecyclePath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	m := smallWorld(t)
-	s, err := Boot(ctx, m, Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestDemandWalksEveryLifecyclePath(t *testing.T) {
 		}
 	}
 	for i := 0; i < 120; i++ {
-		s.placeDemand(ctx, rand.New(rand.NewSource(int64(i))), carriers, i)
+		s.placeDemand(ctx, s.GDSes[0], rand.New(rand.NewSource(int64(i))), carriers, i)
 		if s.DemInterline.Load() > 0 && s.DemTicketed.Load() > 0 &&
 			s.DemCancelled.Load() > 0 && s.DemSplit.Load() > 0 && s.DemNDC.Load() > 0 {
 			break

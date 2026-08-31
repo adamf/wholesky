@@ -43,11 +43,12 @@ type Tenant struct {
 	Store     store.Store
 	Inventory *gateway.Inventory
 
-	flights  []world.Flight
-	client   link
-	watch    string // teletype address operational messages are copied to
-	partners []string
-	log      *slog.Logger
+	flights      []world.Flight
+	client       link
+	watch        string // teletype address operational messages are copied to
+	distribution []string
+	partners     []string
+	log          *slog.Logger
 
 	// The link runs under its own sub-context so chaos can cut it without
 	// touching the tenant. bootCtx is what a restored link derives from.
@@ -61,6 +62,11 @@ type Tenant struct {
 type Options struct {
 	// SwitchAddr is the tenant's listener on the message switch.
 	SwitchAddr string
+	// DistributionAddresses are every distribution system's teletype
+	// addresses. Availability and schedule traffic goes to all of them --
+	// a seat count or a cancellation only one channel hears about is a
+	// divergence by construction. Empty falls back to WatchAddress alone.
+	DistributionAddresses []string
 	// WatchAddress receives this tenant's operational traffic -- availability
 	// and movements -- the way a network's ops centre address does.
 	WatchAddress string
@@ -157,7 +163,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t := &Tenant{
 		Carrier: c, Gateway: gw, Store: st, Inventory: inv,
 		flights: flights, client: client, watch: opts.WatchAddress,
-		partners: opts.PartnerAddresses, log: log, bootCtx: ctx,
+		distribution: opts.DistributionAddresses,
+		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
 	}
 	linkCtx, linkCancel := context.WithCancel(ctx)
 	t.linkCancel = linkCancel
@@ -257,7 +264,7 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 			if len(entries) == 0 {
 				continue
 			}
-			if err := t.sendTypeBTo(ctx, append([]string{t.watch}, t.partners...), avs.Build(entries), "AVS"); err != nil {
+			if err := t.sendTypeBTo(ctx, append(t.distributionList(), t.partners...), avs.Build(entries), "AVS"); err != nil {
 				failed++
 			} else {
 				sent++
@@ -349,7 +356,18 @@ func (t *Tenant) SendOps(ctx context.Context, m *mvt.Message) error {
 // SendSchedule transmits a schedule message -- an ASM cancellation, a
 // retiming -- to the network, the way this carrier's schedule bureau would.
 func (t *Tenant) SendSchedule(ctx context.Context, text string) error {
-	return t.sendTypeB(ctx, text, "ASM")
+	// A schedule change only some channels hear about strands the others'
+	// bookings; it goes to every distribution system.
+	return t.sendTypeBTo(ctx, t.distributionList(), text, "ASM")
+}
+
+// distributionList is every distribution address, or the watcher alone when
+// none were configured.
+func (t *Tenant) distributionList() []string {
+	if len(t.distribution) > 0 {
+		return append([]string(nil), t.distribution...)
+	}
+	return []string{t.watch}
 }
 
 func (t *Tenant) sendTypeB(ctx context.Context, text, kind string) error {

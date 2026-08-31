@@ -43,6 +43,35 @@ const (
 	GDSAddress    = "LONDD1G"
 )
 
+// gdsSlots are the distribution systems the world can run, in boot order.
+// The designators are the two-character codes the real distribution world
+// uses on records; the cities anchor each system's teletype address. The
+// first slot doubles as the movement watcher: operational traffic is copied
+// to its address, the way a single OCC display would subscribe once.
+var gdsSlots = []struct{ Designator, City, Name string }{
+	{"1G", "LON", "gds golf"},
+	{"1S", "DFW", "gds sierra"},
+	{"1A", "NCE", "gds alpha"},
+	{"1V", "DEN", "gds victor"},
+	{"1P", "ATL", "gds papa"},
+}
+
+func gdsAddress(slot struct{ Designator, City, Name string }) string {
+	return slot.City + "DD" + slot.Designator
+}
+
+// GDSNode is one running distribution system.
+type GDSNode struct {
+	Designator string
+	Address    string
+	Name       string
+	GW         *gateway.Gateway
+	Store      store.Store
+	Bus        *gateway.Bus
+
+	up atomic.Bool
+}
+
 // Options configure a boot.
 type Options struct {
 	// Carriers caps how many carriers run, largest first. Zero runs all.
@@ -63,6 +92,16 @@ type Options struct {
 	// Warp is sim minutes per wall minute, used by the flight day and by the
 	// Eye's aircraft animation. Zero means 1.
 	Warp int
+	// GDSCount is how many distribution systems run, in gdsSlots order.
+	// Zero runs all five; the design calls for five because the real world
+	// has several, and inter-GDS behaviour -- the same flight sold through
+	// two channels, a schedule change fanning out to every subscriber -- only
+	// exists when there is more than one.
+	GDSCount int
+	// GDSDSN, when set, backs the first distribution system with Postgres
+	// instead of memory: the durable store jetway ships, exercised by the
+	// world instead of only by its own tests.
+	GDSDSN string
 	// LinkWait bounds how long Boot waits for the fabric.
 	LinkWait time.Duration
 	Log      *slog.Logger
@@ -70,8 +109,11 @@ type Options struct {
 
 // Sim is a running world.
 type Sim struct {
-	Manifest    *world.Manifest
-	Switch      *node.Node
+	Manifest *world.Manifest
+	Switch   *node.Node
+	// GDSes are the running distribution systems; GDS and GDSStore alias the
+	// first, which is also the movement watcher.
+	GDSes       []*GDSNode
 	GDS         *gateway.Gateway
 	GDSStore    store.Store
 	Tenants     map[string]*host.Tenant
@@ -80,14 +122,13 @@ type Sim struct {
 	// Movements counts EvMovement events seen at the GDS: flights whose
 	// departures and arrivals crossed the switch and were recognised.
 	Movements atomic.Int64
-	// gdsUp flips when the GDS's own client link is established. The switch
-	// counting a session is not enough: there is a window where the listener
-	// has accepted the connection but the client has not yet marked its link
-	// usable, and a booking placed in that window sends into a link that is
-	// "not up" -- recorded, undeliverable, and with no router behind this
-	// sender, never retried. The first live run's two "free sale" bookings
-	// were actually this.
-	gdsUp atomic.Bool
+	// Each GDSNode's up flag flips when its client link is established. The
+	// switch counting a session is not enough: there is a window where the
+	// listener has accepted the connection but the client has not yet marked
+	// its link usable, and a booking placed in that window sends into a link
+	// that is "not up" -- recorded, undeliverable, and with no router behind
+	// this sender, never retried. The first live run's two "free sale"
+	// bookings were actually this.
 
 	maxMessages, maxRecords int
 	warp                    int
@@ -153,8 +194,19 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	if warp < 1 {
 		warp = 1
 	}
+	gdsCount := opts.GDSCount
+	if gdsCount <= 0 || gdsCount > len(gdsSlots) {
+		gdsCount = len(gdsSlots)
+	}
+	var gdses []*GDSNode
+	for _, slot := range gdsSlots[:gdsCount] {
+		gdses = append(gdses, &GDSNode{
+			Designator: slot.Designator, Address: gdsAddress(slot), Name: slot.Name,
+		})
+	}
+
 	s := &Sim{
-		Manifest: m, Tenants: map[string]*host.Tenant{}, Flights: flights,
+		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		flightsByOrigin: byOrigin,
 		BookingDate:     time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
@@ -212,19 +264,24 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		capacity = 100000
 	}
 	partners := partnerAddresses(m.Carriers, flights)
+	var distribution []string
+	for _, g := range gdses {
+		distribution = append(distribution, g.Address)
+	}
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
-			SwitchAddr:       sw.Addr("link-" + strings.ToLower(c.Designator)),
-			WatchAddress:     GDSAddress,
-			PartnerAddresses: partners[c.Designator],
-			Capacity:         capacity,
-			BookingDate:      s.BookingDate,
-			MaxMessages:      opts.MaxMessages,
-			MaxRecords:       opts.MaxRecords,
-			AVSInterval:      opts.AVSInterval,
-			Bus:              tenantBus,
-			Log:              log,
+			SwitchAddr:            sw.Addr("link-" + strings.ToLower(c.Designator)),
+			WatchAddress:          GDSAddress,
+			DistributionAddresses: distribution,
+			PartnerAddresses:      partners[c.Designator],
+			Capacity:              capacity,
+			BookingDate:           s.BookingDate,
+			MaxMessages:           opts.MaxMessages,
+			MaxRecords:            opts.MaxRecords,
+			AVSInterval:           opts.AVSInterval,
+			Bus:                   tenantBus,
+			Log:                   log,
 		})
 		if err != nil {
 			s.Stop()
@@ -239,32 +296,37 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		})
 	}
 
-	gds, gdsStore, gdsBus, err := s.buildGDS(ctx, m, sw.Addr("link-gds"), log)
-	if err != nil {
-		s.Stop()
-		return nil, err
+	for i, g := range s.GDSes {
+		dsn := ""
+		if i == 0 {
+			dsn = opts.GDSDSN
+		}
+		if err := s.buildGDSNode(ctx, m, g,
+			sw.Addr("link-"+strings.ToLower(g.Designator)), dsn, i == 0, log); err != nil {
+			s.Stop()
+			return nil, err
+		}
+		s.Fleet.Add(ctx, g.Designator, g.Name, fleet.KindGDS, "", "", "", 0, g.Store, nil)
+		// The sweeper is what notices silence -- a request nobody answered, a
+		// ticketing deadline that passed. Each distribution system runs its
+		// own, because each holds its own records.
+		sweeper := &queue.Sweeper{
+			Records: g.Store, Queues: g.GW.Queues,
+			Log: log.With("node", strings.ToLower(g.Designator)), Cancel: g.GW,
+		}
+		go sweeper.Run(ctx, 30*time.Second)
+		s.mountConsole(g.Designator, &api.Server{
+			Gateway: g.GW, Store: g.Store, Bus: g.Bus,
+			Log: log.With("console", g.Designator), Console: true,
+		})
 	}
-	s.GDS, s.GDSStore = gds, gdsStore
-	s.Fleet.Add(ctx, GDSDesignator, "the gds", fleet.KindGDS, "", "", "", 0, gdsStore, nil)
-	// The sweeper is what notices silence -- a request nobody answered, a
-	// ticketing deadline that passed. The GDS ran without one until the
-	// demand model started ticketing, which is when its absence would have
-	// become a silent hole rather than a dormant one.
-	sweeper := &queue.Sweeper{
-		Records: gdsStore, Queues: gds.Queues, Log: log.With("node", "gds"),
-		Cancel: gds,
-	}
-	go sweeper.Run(ctx, 30*time.Second)
-	s.mountConsole(GDSDesignator, &api.Server{
-		Gateway: gds, Store: gdsStore, Bus: gdsBus,
-		Log: log.With("console", GDSDesignator), Console: true,
-	})
+	s.GDS, s.GDSStore = s.GDSes[0].GW, s.GDSes[0].Store
 
 	wait := opts.LinkWait
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
-	if err := s.waitForLinks(ctx, len(m.Carriers)+1, wait); err != nil {
+	if err := s.waitForLinks(ctx, len(m.Carriers)+len(s.GDSes), wait); err != nil {
 		s.Stop()
 		return nil, err
 	}
@@ -273,12 +335,14 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
 	s.Stats.QueueDepths = func() map[string]int {
 		out := map[string]int{}
-		items, err := s.GDSStore.ListQueue(context.Background(), store.QueueFilter{})
-		if err != nil {
-			return out
-		}
-		for _, it := range items {
-			out[it.Queue]++
+		for _, g := range s.GDSes {
+			items, err := g.Store.ListQueue(context.Background(), store.QueueFilter{})
+			if err != nil {
+				continue
+			}
+			for _, it := range items {
+				out[it.Queue]++
+			}
 		}
 		return out
 	}
@@ -292,6 +356,21 @@ func (s *Sim) Stop() {
 	if s.Switch != nil {
 		s.Switch.Close()
 	}
+}
+
+// settledIn reports whether a record in st has no segment still awaiting an
+// answer.
+func settledIn(ctx context.Context, st store.Store, locator string) (bool, error) {
+	rec, err := st.GetPNR(ctx, locator)
+	if err != nil {
+		return false, err
+	}
+	for _, sg := range rec.Segments {
+		if sg.Status == "HN" || sg.Status == "NN" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Book places one booking through the GDS and returns its locator.
@@ -310,16 +389,7 @@ func (s *Sim) Book(ctx context.Context, f world.Flight, class string, dayOffset 
 
 // Settled reports whether every air segment of a record has been answered.
 func (s *Sim) Settled(ctx context.Context, locator string) (bool, error) {
-	rec, err := s.GDSStore.GetPNR(ctx, locator)
-	if err != nil {
-		return false, err
-	}
-	for _, sg := range rec.Segments {
-		if sg.Status == "HN" || sg.Status == "NN" {
-			return false, nil
-		}
-	}
-	return true, nil
+	return settledIn(ctx, s.GDSStore, locator)
 }
 
 // FlyDay walks the schedule and emits departures and arrivals as they come
@@ -415,7 +485,9 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	for _, c := range m.Carriers {
 		add("link-"+strings.ToLower(c.Designator), c.Designator, c.TTYAddress, c.Format, c.Transport)
 	}
-	add("link-gds", GDSDesignator, GDSAddress, "typeb", "tcp")
+	for _, slot := range gdsSlots {
+		add("link-"+strings.ToLower(slot.Designator), slot.Designator, gdsAddress(slot), "typeb", "tcp")
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("switch config: %w", err)
@@ -427,33 +499,51 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	})
 }
 
-// buildGDS assembles the distribution side: one gateway, one link to the
-// switch, and a peer entry per carrier in that carrier's own dialect --
-// AIRIMP over Type B or PADIS over EDIFACT, routed either way by the switch.
-func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string, log *slog.Logger) (*gateway.Gateway, store.Store, *gateway.Bus, error) {
-	st := store.NewMem()
-	st.MaxMessages, st.MaxRecords = s.maxMessages, s.maxRecords
+// buildGDSNode assembles one distribution system: a gateway with an
+// availability cache and queues, dialled into its own listener on the
+// switch. watcher marks the node whose bus flies the aircraft -- movement
+// traffic is copied to its address, and only its movement events reach the
+// Eye, so each flight is flown once.
+func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
+	switchAddr, dsn string, watcher bool, log *slog.Logger) error {
+
+	log = log.With("node", strings.ToLower(g.Designator))
+	var st store.Store
+	if dsn != "" {
+		pg, err := store.OpenPostgres(ctx, dsn)
+		if err != nil {
+			return fmt.Errorf("gds %s: %w", g.Designator, err)
+		}
+		if err := store.MigrateSchema(ctx, pg); err != nil {
+			return fmt.Errorf("gds %s: migrate: %w", g.Designator, err)
+		}
+		st = pg
+	} else {
+		mem := store.NewMem()
+		mem.MaxMessages, mem.MaxRecords = s.maxMessages, s.maxRecords
+		st = mem
+	}
 	bus := gateway.NewBus(256)
 	gw := gateway.New(gateway.Identity{
-		Designator: GDSDesignator, TTYAddress: GDSAddress, Name: "wholesky gds",
-	}, st, bus, log.With("node", "gds"), []byte("wholesky-gds"))
+		Designator: g.Designator, TTYAddress: g.Address, Name: g.Name,
+	}, st, bus, log, []byte("wholesky-"+g.Designator))
 	gw.Avail = avail.NewCache()
 	// Without a queue manager a schedule change has nowhere to put the
 	// bookings it touches -- applySchedule quietly does nothing. The halos on
 	// the map are these placements.
-	gw.Queues = &queue.Manager{Store: st, Log: log.With("node", "gds"),
+	gw.Queues = &queue.Manager{Store: st, Log: log,
 		Notify: func(item *store.QueueItem) { bus.Publish(gateway.EvQueue, item) }}
 
 	client := &transport.Client{
 		Addr: switchAddr, Framer: transport.DefaultFramer(),
-		Log: log.With("node", "gds"), SkipHello: true,
+		Log: log, SkipHello: true,
 	}
 	gw.Sender = client
 	client.OnMessage = func(ctx context.Context, peer string, raw []byte) error {
 		_, err := gw.Ingest(ctx, "net", raw)
 		return err
 	}
-	client.OnUp = func() { s.gdsUp.Store(true) }
+	client.OnUp = func() { g.up.Store(true) }
 	gw.AddPeer(&gateway.Peer{Name: "net", Format: store.FormatTypeB, TTYAddress: "XCHDD1X"})
 	for _, c := range m.Carriers {
 		format := store.FormatTypeB
@@ -465,16 +555,20 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 			Format: format, TTYAddress: c.TTYAddress,
 		})
 	}
+	g.GW, g.Store, g.Bus = gw, st, bus
 
 	go s.tapBus(ctx, bus, func(ev gateway.Event) {
 		switch ev.Type {
 		case gateway.EvMessage:
-			// The GDS row was registered without a bus, because the bus is
+			// Each GDS row was registered without a bus, because the bus is
 			// born here; feed it by hand.
 			if p, ok := ev.Data.(map[string]any); ok {
-				s.Fleet.Count(GDSDesignator, p)
+				s.Fleet.Count(g.Designator, p)
 			}
 		case gateway.EvMovement:
+			if !watcher {
+				return
+			}
 			s.Movements.Add(1)
 			s.Stats.OnMovement()
 			if p, ok := ev.Data.(map[string]any); ok {
@@ -494,7 +588,7 @@ func (s *Sim) buildGDS(ctx context.Context, m *world.Manifest, switchAddr string
 			log.Error("gds link ended", "err", err)
 		}
 	}()
-	return gw, st, bus, nil
+	return nil
 }
 
 // chaos is the Eye's control surface: close an airport and the world reacts
@@ -769,7 +863,13 @@ func (s *Sim) tapBus(ctx context.Context, bus *gateway.Bus, fn func(gateway.Even
 func (s *Sim) waitForLinks(ctx context.Context, want int, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
-		if len(s.Switch.LivePeers()) >= want && s.gdsUp.Load() {
+		allGDSUp := true
+		for _, g := range s.GDSes {
+			if !g.up.Load() {
+				allGDSUp = false
+			}
+		}
+		if len(s.Switch.LivePeers()) >= want && allGDSUp {
 			return nil
 		}
 		if time.Now().After(deadline) {
