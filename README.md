@@ -6,48 +6,58 @@ booking, and every Type B and EDIFACT message that makes it go, over real
 sockets.
 
 **Live demo:** https://wholesky-demo.fly.dev/eye — the Eye, watching the
-whole sky: 518 carriers, 2,883 airports, 57,513 flights a day, running
-continuously on one machine.
+whole sky: 518 carriers, 2,883 airports, 103,688 flights a day — about what
+the real world flies — booking at real reservations volume across six
+machines. The bar tells you what you are looking at: live messages per
+second, aircraft airborne, the sim clock with its own speed controls
+(pause the day, or run it at ten hours a minute), and a "what is this?"
+legend that names every mark. Click any aircraft for the bookings riding
+it, across every selling channel that holds one.
 
-![The globe: thousands of aircraft over the Earth, and Heathrow closing](docs/the-globe.gif)
+![The globe: fourteen thousand aircraft in the morning banks, a flight opened to its passengers, and an airport closing](docs/the-globe.gif)
 
 The globe has a second mode: **net**, the logical web of who converses with
 whom. The switch never appears — it is plumbing. Every relayed message
 carries the id of the inbound it forwards, so the Eye resolves each relay to
-a true src→dst conversation: carriers to the GDS, and carriers to their
-interline partners, to whom availability is broadcast the way it really is.
+a true src→dst conversation: carriers to the distribution systems, and carriers to their interline
+partners, to whom availability is broadcast the way it really is.
 Two layouts of the same graph — a force-directed **web**, where regional
 communities pull themselves together by their own message springs (China
 upper-left, the Americas upper-right, Europe below, with no geography told
 to the layout), and a **ring** with the conversations as woven chords.
-Everyone-talks-to-the-GDS is drawn as faint wallpaper; the ink goes to the
-carrier-to-carrier web. Every node is one click from its own console.
+Everyone-talks-to-a-GDS is drawn as faint wallpaper; the ink goes to the
+carrier-to-carrier web. Drag to pan, scroll to zoom, and every node is one
+click from its own console.
 
 ![The web: the world's interline conversations, laid out by their own springs](docs/the-web.gif)
 
-**Every node has a real console.** Each of the 519 embedded Jetway systems —
-the GDS and all 518 carriers — serves the full Jetway console at
-`/node/{code}/`, wearing its own identity: open `/node/FR/` and you are
+**Every node has a real console.** Each of the 522 Jetway systems — the
+switch, three distribution systems, and all 518 carriers — serves the full
+Jetway console
+at `/node/{code}/`, wearing its own identity: open `/node/FR/` and you are
 inside Ryanair's reservation system, its own message tape, records and
-queues.
+queues — proxied transparently to whichever machine runs it.
 
-![Ryanair's own console, one of 519](docs/the-tenant-console.jpg)
+![Ryanair's own console, one of 522](docs/the-tenant-console.jpg)
 
 And `/stats` is the cluster's instrument panel: ten minutes of time series at
 two-second resolution — message rates by wire format and traffic class,
-bookings, airborne count, queue depths, and undeliverable-per-second, the
-number that should be zero. The sixty-second AVS rebroadcast cycle is
-plainly visible as a heartbeat in the charts.
+bookings, airborne count, queue depths, name-list and baggage traffic, and
+undeliverable-per-second, the number that should be zero. The availability
+rebroadcast cycle is plainly visible as a heartbeat in the charts.
 
 ![The instrument panel](docs/the-stats.jpg)
 
 Behind the globe sits **the fleet** at `/fleet`: every Jetway system in the
-world as a live row — the switch, the GDS, and all 518 carrier tenants with
-their hubs, dialects, link state and message counters, fed by tapping each
-node's own event bus. Click a carrier for its records, queues and message
-log; click a message for the bytes as they crossed the wire.
+world as a live row — the switch, the distribution systems, and all 518
+carrier tenants with their hubs, dialects, transports (a share of the
+teletype world dials in over MATIP), link state and message counters,
+merged live from every machine in the deployment. Click a carrier for its
+records, queues and message log; click a message for the bytes as they
+crossed the wire; sever its circuit and watch the undeliverables bleed
+until you restore it.
 
-![The fleet in action: 520 nodes, into Ryanair, down to the raw telex](docs/the-fleet.gif)
+![The fleet in action: 522 nodes across six machines, into Ryanair mid-departure-bank, down to the raw telex, and a circuit cut and restored](docs/the-fleet.gif)
 
 The coastlines are [Natural Earth](https://www.naturalearthdata.com)
 1:110m, public domain, vendored at 76KB and embedded in the binary -- the
@@ -69,8 +79,7 @@ switch; the Eye subscribes to the buses the world already publishes on and
 knows nothing the network cannot see. The stats line counts messages,
 movements and bookings as the seeded demand books through the switch in both
 wire dialects. The switch's own console lives at the root — open any message
-and read it field by field. The machine suspends when nobody is watching and
-thaws mid-flight, replaying the last two sim-hours as a burst.
+and read it field by field.
 
 Design: "The Whole Sky" (design note, 2026-08-31). The short version — the
 sky is loud but it is not big. The world's reservation fabric peaks at a few
@@ -84,29 +93,71 @@ topology here mirrors the real one:
 - **Carriers** are tenants of a host process — most of the world's carriers
   are tenants of a handful of hosted reservation systems, so the efficient
   shape and the realistic shape are the same shape.
-- **The GDS** is a Jetway gateway with one switch link and a peer entry per
-  carrier. A booking's sell crosses two links and comes back confirmed.
+- **The GDSes** are Jetway gateways with one switch link each and a peer
+  entry per carrier. A booking's sell crosses two links and comes back
+  confirmed — and capacity holds across channels, because the carrier's
+  inventory is the single authority every channel converges on.
 - **OTAs are not nodes.** They are demand: load generators speaking NDC and
   booking APIs. (Phase two.)
 
 ## How it is put together
 
-One OS process; 520 Jetway instances as library assemblies; everything
-between them crosses real TCP. The only full `jetwayd` is the switch -- the
-same assembly the standalone binary runs, console included. The GDS and every
-carrier are embedded gateways: own identity, own store, own console, one
-socket each.
+Two shapes, one codebase. **Single-box** (`-role all`, the default and the
+test bed): one OS process, every Jetway instance a library assembly,
+everything between them crossing real TCP on loopback. **Multi-machine**
+(the deployed demo): the same assemblies spread across six machines, dialled
+together over a private network — and the switch cannot tell the
+difference, which is the point.
+
+The deployed shape splits along the world's real seams:
+
+- **core** — the switch (a full `jetwayd` in relay mode) and the
+  instruments: Eye, fleet, stats, and the only public HTTP. It flies its
+  globe entirely from its own switch bus, because every movement crosses
+  the switch, whoever it was addressed to.
+- **gds1g / gds1s / gds1a** — one distribution system each, plus its share
+  of demand: ~3,500 bookings a minute between them, which is real global
+  reservations volume. Bookings happen at the GDS, so that is where the
+  load lives.
+- **region0 / region1** — the 518 carriers, sharded by stable hash, each
+  region flying its slice of the flight day and telling its own ground
+  story (PNL, ADL, BSM, BPM).
+
+Federation is deliberately dumb: peers register with the core and heartbeat
+every few seconds; the reply carries the switch's link addresses, the
+current warp and the closed-airport set, so liveness, time control and
+chaos all propagate on one pulse. The fleet board merges every peer's rows
+and proxies drill-downs and consoles to whichever machine owns the node.
+
+```mermaid
+flowchart LR
+  subgraph core [core — public]
+    SW[switch · relay]
+    EYE[Eye · fleet · stats]
+  end
+  G1[gds1g + demand] <--> SW
+  G2[gds1s + demand] <--> SW
+  G3[gds1a + demand] <--> SW
+  R0[region0 · ~260 carriers] <--> SW
+  R1[region1 · ~258 carriers] <--> SW
+  G1 & G2 & G3 & R0 & R1 -. register + heartbeat .-> EYE
+```
+
+In single-box mode the only full `jetwayd` is the switch -- the same
+assembly the standalone binary runs, console included. The distribution
+systems and every carrier are embedded gateways: own identity, own store,
+own console, one socket each.
 
 ```mermaid
 flowchart TB
-  subgraph skyd [skyd — one process, one Fly machine]
+  subgraph skyd [skyd -role all — the single-box shape]
     direction TB
     subgraph sw [the switch — a full jetwayd, Relay mode]
-      SWG[gateway + store + 519 TCP listeners]
+      SWG[gateway + store + 523 TCP listeners]
       UI[console at / · /eye · /fleet · /stats · /node/*]
     end
-    subgraph gds [the GDS — embedded gateway]
-      G[gateway + store + queues + avail cache]
+    subgraph gds [five distribution systems — embedded gateways]
+      G[gateway + store + queues + avail cache, each]
     end
     subgraph host [carrier host — 518 tenants]
       T1[FR gateway + store + inventory]
@@ -118,7 +169,7 @@ flowchart TB
   end
   V((viewer))
 
-  G <-- "1 TCP link — AIRIMP + PADIS" --> SWG
+  G <-- "1 TCP link each — AIRIMP + PADIS" --> SWG
   T1 <-- "1 TCP link each" --> SWG
   T2 <---> SWG
   TN <---> SWG
@@ -129,15 +180,14 @@ flowchart TB
   V --> UI
 ```
 
-What is real: the wire (519 sockets, real framing, real Type B and EDIFACT
+What is real: the wire (521 sessions, real framing, real Type B and EDIFACT
 bytes, relay by address line and UNB recipient) and the state separation
-(nothing moves between nodes except a message). What is not: process
-isolation -- one panic takes the sky down, and all 520 share a scheduler.
-That trade is deliberate: the topology mirrors the real industry, where most
-carriers are tenants of a handful of hosted systems and everyone hangs off
-one message network, and the whole planet idles here at ~1.1GB. The seams
-for scaling out already exist -- a tenant host pointed at a switch across a
-real network works unchanged.
+(nothing moves between nodes except a message). In the deployed shape the
+process isolation is real too -- a region can die and restart while the
+rest of the sky keeps flying, and rejoining is just registering and
+dialling back in. The topology mirrors the real industry either way: most
+carriers are tenants of a handful of hosted systems, and everyone hangs off
+one message network.
 
 ## Building it
 
@@ -168,22 +218,30 @@ own, on `-console`, where every message can be opened and read field by field.
 
 ## Status
 
-Phase one. Works, and `go test ./...` proves it on every run: world
-compilation at any scale from a continent to the planet, deterministic by
-seed; the switch/tenant/GDS topology over real sockets; bookings settled in
-**both dialects** -- AIRIMP over Type B and PADIS over EDIFACT, relayed by
-address line and UNB recipient respectively; continuous seeded demand (a
-20-carrier European run: 299 bookings, 0 failures, both formats crossing the
-switch); and the flight day as real MVT traffic (1,286 movements through the
-fabric in the first simulated morning). The Eye serves the globe at `/eye`,
-drawn entirely from bus events on one dependency-free canvas: an
-orthographic projection when the manifest spans the world, flat for a
-region; aircraft from movements; pulses from the message stream; chaos
-halos from queue placements. The full 518-carrier world idles at ~1.1GB and
-a fraction of a core, breathing to ~2 cores during the global morning
-banks. Not yet: the real demand model (booking curve, channels, parties),
-PNL/ADL and baggage, the virtual clock, weather systems
-that close regions rather than airports.
+Works, and `go test ./...` proves it on every run: world compilation at any
+scale from a continent to the planet, deterministic by seed; the
+switch/tenant/GDS topology over real sockets; bookings settled in **both
+dialects** -- AIRIMP over Type B and PADIS over EDIFACT -- and over MATIP
+for the share of the teletype world that dials in on the airline transport;
+a demand model that lives with its bookings (connections, interline,
+parties, ticketing, cancellations, divides, a slice arriving as NDC
+orders); the ground story per departure (PNL at T−180, bags at T−90, the
+ADL diff at T−60, BPM at departure); tail rotations and a deterministic
+delay model; an adjustable sim clock; chaos that closes airports and cuts
+carrier circuits; an invariant suite (no oversell — including across
+selling channels — message conservation, interline convergence,
+cancelled-flight-queues-everyone); and a multi-machine test that boots
+core, GDS and region in one process and proves a booking crosses three
+machines and settles. Peak banks push over 8,000 messages a second through
+the deployed fabric.
+
+The pattern that keeps paying: every time the world gets bigger, it finds
+real bugs in Jetway — twenty releases so far, each fix landed upstream with
+a regression test that was watched to fail first. Not yet: replaying a real
+recorded day (BTS on-time data has every US flight with actual tails,
+delays and cancellations — the day before Thanksgiving is the obvious
+candidate), weather systems that close regions rather than airports, and
+booking curves with real seasonality.
 
 ## Licence
 
