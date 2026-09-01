@@ -100,6 +100,10 @@ type Options struct {
 	// Warp is sim minutes per wall minute, used by the flight day and by the
 	// Eye's aircraft animation. Zero means 1.
 	Warp int
+	// GDSList names the distribution systems that exist in this
+	// deployment, for a region machine whose own boot runs none of them.
+	// Empty means all five.
+	GDSList []string
 	// NoGDS runs no distribution system at all: a core machine, whose
 	// GDSes are peers on other machines.
 	NoGDS bool

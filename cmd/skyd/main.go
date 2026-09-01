@@ -25,7 +25,10 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sort"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +69,8 @@ func run() error {
 		shard     = flag.Int("shard", 0, "region: this machine's shard index")
 		shards    = flag.Int("shards", 1, "region: how many region shards exist")
 		linkBind  = flag.String("link-bind", "", "core: host the switch listeners bind; empty binds loopback")
+		gdsList   = flag.String("gds-list", "", "region: comma-separated designators of the GDSes this deployment runs; empty means all five")
+		memLimit  = flag.String("memlimit", "", "soft memory limit for the Go runtime, e.g. 3200MiB; empty leaves GOMEMLIMIT alone")
 	)
 	flag.Parse()
 	if *pprofAddr != "" {
@@ -96,6 +101,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if *memLimit != "" {
+		if n, err := parseByteSize(*memLimit); err == nil {
+			debug.SetMemoryLimit(n)
+		} else {
+			return fmt.Errorf("bad -memlimit: %w", err)
+		}
+	}
 	opts := sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
@@ -103,6 +115,13 @@ func run() error {
 		GDSCount:      *gdsCount,
 		StatsSnapshot: *statsSnap,
 		LinkBind:      *linkBind,
+	}
+	if *gdsList != "" {
+		for _, d := range strings.Split(*gdsList, ",") {
+			if d = strings.TrimSpace(strings.ToUpper(d)); d != "" {
+				opts.GDSList = append(opts.GDSList, d)
+			}
+		}
 	}
 	self := *selfURL
 	if self == "" {
@@ -174,6 +193,22 @@ func run() error {
 		})
 	}
 	return fmt.Errorf("unknown role %q", *role)
+}
+
+// parseByteSize reads "3200MiB" style limits.
+func parseByteSize(s string) (int64, error) {
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(s, "GiB"):
+		mult, s = 1<<30, strings.TrimSuffix(s, "GiB")
+	case strings.HasSuffix(s, "MiB"):
+		mult, s = 1<<20, strings.TrimSuffix(s, "MiB")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * mult, nil
 }
 
 // watch is the run loop: a heartbeat log until the context ends.

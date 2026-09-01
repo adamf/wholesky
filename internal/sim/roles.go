@@ -474,6 +474,28 @@ func airportOfReason(reason string) string {
 	return ""
 }
 
+// distributionAddresses maps GDS designators to their teletype addresses.
+// An empty list means every slot -- the single-box default -- but a
+// deployment running three channels must not have its tenants broadcasting
+// availability at two that do not exist: every such message is an
+// undeliverable the switch retries forever.
+func distributionAddresses(list []string) []string {
+	if len(list) == 0 {
+		for _, slot := range gdsSlots {
+			list = append(list, slot.Designator)
+		}
+	}
+	var out []string
+	for _, d := range list {
+		for _, slot := range gdsSlots {
+			if slot.Designator == d {
+				out = append(out, gdsAddress(slot))
+			}
+		}
+	}
+	return out
+}
+
 // GDSMachine is one distribution system on a machine of its own.
 type GDSMachine struct {
 	Sim  *Sim
@@ -561,10 +583,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		capacity = 100000
 	}
 	partners := partnerAddresses(m.Carriers, s.Flights)
-	var distribution []string
-	for _, slot := range gdsSlots {
-		distribution = append(distribution, gdsAddress(slot))
-	}
+	distribution := distributionAddresses(opts.GDSList)
 	mine := 0
 	for _, c := range m.Carriers {
 		if ShardOf(c.Designator, shards) != shard {

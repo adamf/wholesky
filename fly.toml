@@ -13,7 +13,7 @@ primary_region = "lhr"
   dockerfile = "Dockerfile"
 
 [env]
-  GOMEMLIMIT = "1600MiB"
+  # Per-role soft limits ride the -memlimit flag; nothing app-wide.
 
 # The world across machines: the switch and the instruments on core, one
 # distribution system per gds machine carrying its share of real-volume
@@ -21,12 +21,12 @@ primary_region = "lhr"
 # is public; everything else talks over the private network -- the same
 # jetway TCP that loopback used, dialled across 6PN.
 [processes]
-  core = "-world /etc/wholesky/whole.json -role core -carriers 0 -console 0.0.0.0:8080 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
-  gds1g = "-world /etc/wholesky/whole.json -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
-  gds1s = "-world /etc/wholesky/whole.json -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
-  gds1a = "-world /etc/wholesky/whole.json -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
-  region0 = "-world /etc/wholesky/whole.json -role region -shard 0 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
-  region1 = "-world /etc/wholesky/whole.json -role region -shard 1 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
+  core = "-world /etc/wholesky/whole.json -memlimit 3200MiB -role core -carriers 0 -console 0.0.0.0:8080 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
+  gds1g = "-world /etc/wholesky/whole.json -memlimit 3200MiB -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  gds1s = "-world /etc/wholesky/whole.json -memlimit 3200MiB -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  gds1a = "-world /etc/wholesky/whole.json -memlimit 3200MiB -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  region0 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 0 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
+  region1 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 1 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
 
 [http_service]
   processes = ["core"]
