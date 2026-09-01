@@ -145,6 +145,14 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
 	go s.Stats.Run(ctx.Done())
 
+	s.ConsoleProxy = func(w http.ResponseWriter, r *http.Request, code string) bool {
+		owner := c.ownerOf(code)
+		if owner == "" {
+			return false
+		}
+		return proxyPass(w, r, owner)
+	}
+
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
 	s.Fleet.OnOwners = c.SetOwners
@@ -299,6 +307,35 @@ func (c *Core) federatedQueues() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+// proxyPass forwards one request to a peer machine, path and query intact.
+func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := base + r.URL.Path
+	if r.URL.RawQuery != "" {
+		url += "?" + r.URL.RawQuery
+	}
+	var resp *http.Response
+	var err error
+	if r.Method == http.MethodPost {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		resp, err = client.Post(url, r.Header.Get("Content-Type"), bytes.NewReader(body))
+	} else {
+		resp, err = client.Get(url)
+	}
+	if err != nil {
+		http.Error(w, "the machine holding this node did not answer: "+err.Error(),
+			http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, 16<<20)) //nolint:errcheck
+	return true
 }
 
 // federatedFlightRecords fans the globe's drill-through out to every GDS

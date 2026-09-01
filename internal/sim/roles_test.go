@@ -146,6 +146,18 @@ func TestMultiMachineWorld(t *testing.T) {
 		t.Errorf("proxied drill-down = %d %s", resp.StatusCode, body)
 	}
 
+	// The node consoles the fleet page links to are proxied to whichever
+	// machine runs them: a tenant console through the core answers.
+	resp, err = http.Get(coreURL + "/node/" + c.Designator + "/api/status")
+	if err != nil {
+		t.Fatalf("proxied console: %v", err)
+	}
+	body, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("proxied console = %d %.80s", resp.StatusCode, body)
+	}
+
 	// Time control propagates on the heartbeat.
 	if err := core.Sim.SetWarp(300); err != nil {
 		t.Fatal(err)

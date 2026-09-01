@@ -189,6 +189,9 @@ type Sim struct {
 
 	fedMu      sync.RWMutex
 	fedHandler http.Handler
+	// ConsoleProxy, when set, forwards a /node/{code}/ request to the
+	// machine that owns the node. It reports whether it handled it.
+	ConsoleProxy func(w http.ResponseWriter, r *http.Request, code string) bool
 
 	log    *slog.Logger
 	ctx    context.Context
@@ -1015,6 +1018,12 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 	h := s.consoles[strings.ToUpper(code)]
 	s.consolesMu.Unlock()
 	if h == nil {
+		// Not one of ours. On a core machine the consoles live on the peer
+		// that runs the node; the same ownership map the fleet drill-downs
+		// use says where, and the whole page proxies through.
+		if s.ConsoleProxy != nil && s.ConsoleProxy(w, r, strings.ToUpper(code)) {
+			return
+		}
 		http.Error(w, "no such node", http.StatusNotFound)
 		return
 	}
