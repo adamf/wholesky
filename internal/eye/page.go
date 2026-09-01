@@ -20,8 +20,10 @@ const pageHTML = `<!doctype html>
   :root { --bg:#06090d; --ink:#9fb4c8; --dim:#3d4c5c; --hot:#5fd38d; --warn:#e05a5a; --plane:#e8eef4; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font:13px/1.4 "SF Mono", ui-monospace, Menlo, monospace; overflow:hidden; }
-  #bar { position:fixed; top:0; left:0; right:0; display:flex; gap:22px; align-items:baseline;
-    padding:10px 16px; background:linear-gradient(#06090df2,#06090d00); z-index:2; pointer-events:none; }
+  #bar { position:fixed; top:0; left:0; right:0; display:flex; gap:16px; align-items:baseline;
+    padding:10px 16px; background:linear-gradient(#06090df2,#06090d00); z-index:2; pointer-events:none;
+    white-space:nowrap; flex-wrap:nowrap; overflow:hidden; }
+  @media (max-width:1100px){ #bar .tot { display:none; } }
   #bar b { color:var(--plane); font-weight:600; letter-spacing:.08em; }
   #bar span i { font-style:normal; color:var(--hot); }
   #bar .qps i { font-size:16px; }

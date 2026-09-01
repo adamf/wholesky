@@ -21,7 +21,7 @@ primary_region = "lhr"
 # is public; everything else talks over the private network -- the same
 # jetway TCP that loopback used, dialled across 6PN.
 [processes]
-  core = "-world /etc/wholesky/whole.json -memlimit 3200MiB -role core -carriers 0 -console 0.0.0.0:8080 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
+  core = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role core -carriers 0 -console 0.0.0.0:8080 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
   gds1g = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 1 -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1s = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 2 -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1a = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 3 -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"

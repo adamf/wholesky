@@ -131,9 +131,15 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		}
 	})
 
-	// Hubs for the logical web: every GDS slot that could register.
-	for _, slot := range gdsSlots {
-		s.Eye.Hubs = append(s.Eye.Hubs, slot.Designator)
+	// Hubs for the logical web: the distribution systems this deployment
+	// actually runs. Listing slots that never register drew phantom green
+	// hubs with no conversations.
+	for _, addr := range distributionAddresses(opts.GDSList) {
+		for _, slot := range gdsSlots {
+			if gdsAddress(slot) == addr {
+				s.Eye.Hubs = append(s.Eye.Hubs, slot.Designator)
+			}
+		}
 	}
 	s.Eye.FlightPNRs = c.federatedFlightRecords
 
