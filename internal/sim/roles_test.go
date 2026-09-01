@@ -2,6 +2,7 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -151,6 +152,23 @@ func TestMultiMachineWorld(t *testing.T) {
 	}
 	waitFor("the region to follow the core's warp",
 		func() bool { return r.Sim.clock.Warp() == 300 })
+
+	// The federated bookings reach the core's instruments: the poll folds
+	// peer totals into the stats collector the panel serves.
+	waitFor("the booking to reach the core's stats", func() bool {
+		resp, err := http.Get(coreURL + "/stats/data.json")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Totals map[string]int64 `json:"totals"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out) != nil {
+			return false
+		}
+		return out.Totals["bookings"] >= 1
+	})
 
 	// And the drill-through finds the booking from the core, via the GDS
 	// machine's shard endpoint.

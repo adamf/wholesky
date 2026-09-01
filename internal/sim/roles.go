@@ -283,8 +283,11 @@ func (c *Core) pollSummaries(ctx context.Context) {
 		c.Sim.Eye.SetBookings(bookings)
 		c.Sim.Eye.SetHaloCounts(halos)
 		c.mu.Lock()
+		delta := bookings - c.lastBookings
+		c.lastBookings = bookings
 		c.latestQueues = queues
 		c.mu.Unlock()
+		c.Sim.Stats.AddBookings(delta)
 	}
 }
 
@@ -555,7 +558,10 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	})
 
 	mux := http.NewServeMux()
-	shardRoutes(mux, s, func() int64 { return s.DemBooked.Load() })
+	// The summary's booking count is the same number the single-box panel
+	// shows: record events at this distribution system, fed off its own bus
+	// -- demand, console bookings and NDC alike.
+	shardRoutes(mux, s, s.Stats.BookingsTotal)
 	return &GDSMachine{Sim: s, Node: g, Mux: mux}, nil
 }
 

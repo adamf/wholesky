@@ -288,6 +288,13 @@ func (c *Collector) OnBooking() {
 	c.mu.Unlock()
 }
 
+// BookingsTotal reports the running booking count, for a shard summary.
+func (c *Collector) BookingsTotal() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tBookings
+}
+
 // AddBookings folds a federated delta in: on a core machine the bookings
 // happen on other machines, and their counts arrive by poll rather than by
 // bus. The delta feeds the same window and total the bus path uses, so the
