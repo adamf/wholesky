@@ -50,6 +50,8 @@ func run() error {
 		console   = flag.String("console", "127.0.0.1:8090", "switch console address")
 		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
 		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
+		tMaxMsgs  = flag.Int("tenant-max-messages", 0, "message cap per carrier tenant; 0 inherits -max-messages")
+		tMaxRecs  = flag.Int("tenant-max-records", 0, "record cap per carrier tenant; 0 inherits -max-records")
 		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
 		gdsCount  = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
 		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
@@ -88,6 +90,7 @@ func run() error {
 	s, err := sim.Boot(ctx, &m, sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
+		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,
 		StatsSnapshot: *statsSnap,
 	})

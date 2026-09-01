@@ -19,12 +19,13 @@ primary_region = "lhr"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "suspend"
+  # Always on. A world this size takes a minute of boot to stand its five
+  # hundred links up, and the first visitor should meet a sky, not a boot
+  # screen. (Scale-to-zero also could not suspend a 4GB machine; every idle
+  # wake was a cold start.)
+  auto_stop_machines = "off"
   auto_start_machines = true
-  # Zero when idle. The world pauses when nobody is watching and resumes on
-  # the first visit; a fresh boot recompiles nothing, because the manifest is
-  # baked into the image.
-  min_machines_running = 0
+  min_machines_running = 1
 
   [http_service.concurrency]
     type = "requests"

@@ -89,6 +89,13 @@ type Options struct {
 	// and a looping flight day is a slow out-of-memory with extra steps.
 	MaxMessages int
 	MaxRecords  int
+	// TenantMaxMessages and TenantMaxRecords bound each carrier's store,
+	// separately from the hub caps, because tenants are the multiplier: five
+	// hundred ledgers at the hub cap is gigabytes of retained wire bytes --
+	// the deployed demo learned this from the OOM killer. Zero inherits the
+	// hub caps.
+	TenantMaxMessages int
+	TenantMaxRecords  int
 	// Warp is sim minutes per wall minute, used by the flight day and by the
 	// Eye's aircraft animation. Zero means 1.
 	Warp int
@@ -286,6 +293,13 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		if c.Transport == "matip" {
 			switchAddr = sw.Addr("link-" + strings.ToLower(c.Designator))
 		}
+		tenantMaxMsgs, tenantMaxRecs := opts.TenantMaxMessages, opts.TenantMaxRecords
+		if tenantMaxMsgs == 0 {
+			tenantMaxMsgs = opts.MaxMessages
+		}
+		if tenantMaxRecs == 0 {
+			tenantMaxRecs = opts.MaxRecords
+		}
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
 			WatchAddress:          GDSAddress,
@@ -293,8 +307,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			PartnerAddresses:      partners[c.Designator],
 			Capacity:              capacity,
 			BookingDate:           s.BookingDate,
-			MaxMessages:           opts.MaxMessages,
-			MaxRecords:            opts.MaxRecords,
+			MaxMessages:           tenantMaxMsgs,
+			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			Bus:                   tenantBus,
 			Log:                   log,

@@ -229,6 +229,19 @@ func (t *Tenant) Severed() bool {
 	return t.severed
 }
 
+// avsPhase spreads the broadcast herd: a stable per-carrier offset within
+// the interval, so the cycle's load lands flat instead of in one second.
+func avsPhase(designator string, interval time.Duration) time.Duration {
+	h := 0
+	for _, r := range designator {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return time.Duration(h) * interval / time.Duration(1<<16) % interval
+}
+
 // availabilityInterval is how often a tenant re-broadcasts.
 //
 // Change-triggered broadcasting is the realistic model and the roadmap; the
@@ -290,10 +303,14 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 				"carrier", t.Carrier.Designator, "sent", sent, "failed", failed)
 		}
 	}
+	// Each carrier broadcasts on its own phase of the interval. Started in
+	// lockstep, five hundred carriers all broadcast in the same second and
+	// the switch takes a thundering herd every cycle -- and again, worst of
+	// all, in the first minute of a cold boot.
 	select {
 	case <-ctx.Done():
 		return
-	case <-time.After(2 * time.Second):
+	case <-time.After(2*time.Second + avsPhase(t.Carrier.Designator, interval)):
 		send()
 	}
 	tick := time.NewTicker(interval)
