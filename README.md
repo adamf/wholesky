@@ -232,8 +232,9 @@ carrier circuits; an invariant suite (no oversell — including across
 selling channels — message conservation, interline convergence,
 cancelled-flight-queues-everyone); and a multi-machine test that boots
 core, GDS and region in one process and proves a booking crosses three
-machines and settles. Peak banks push over 8,000 messages a second through
-the deployed fabric.
+machines and settles. At full sky — some 15,700 aircraft airborne — the
+departure banks peak above 16,000 messages a second through the six-machine
+fabric.
 
 The pattern that keeps paying: every time the world gets bigger, it finds
 real bugs in Jetway — twenty releases so far, each fix landed upstream with
