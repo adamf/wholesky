@@ -1,6 +1,8 @@
 package stats
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 )
@@ -33,5 +35,26 @@ func TestSnapshotSurvivesARestart(t *testing.T) {
 	}
 	if b.tTotal != 5 || b.tBookings != 5 {
 		t.Errorf("restored totals = %d/%d, want 5/5", b.tTotal, b.tBookings)
+	}
+}
+
+// Every ring the collector keeps is a series the panel serves. The pnl and
+// bag rings once filled quietly while the JSON omitted them -- and the
+// page's poll loop died dereferencing the missing keys, freezing the charts
+// after their first paint.
+func TestDataServesEverySeries(t *testing.T) {
+	c := New()
+	rec := httptest.NewRecorder()
+	c.data(rec, httptest.NewRequest("GET", "/stats/data.json", nil))
+	var out struct {
+		Series map[string][]float64 `json:"series"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range ringNames {
+		if _, ok := out.Series[name]; !ok {
+			t.Errorf("series %q is missing from the panel data", name)
+		}
 	}
 }

@@ -310,6 +310,8 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 			"total": c.sTotal.slice(), "typeb": c.sTypeb.slice(), "edifact": c.sEdifact.slice(),
 			"avs": c.sAVS.slice(), "mvt": c.sMVT.slice(), "res": c.sRES.slice(),
 			"asm": c.sASM.slice(), "other": c.sOther.slice(),
+			"pnl": c.sPNL.slice(), "bag": c.sBag.slice(),
+
 			"undeliverable": c.sUndeliv.slice(),
 			"bookings":      c.sBookings.slice(), "movements": c.sMovements.slice(),
 			"airborne": c.sAirborne.slice(), "queued": c.sQueued.slice(),
