@@ -288,6 +288,20 @@ func (c *Collector) OnBooking() {
 	c.mu.Unlock()
 }
 
+// AddBookings folds a federated delta in: on a core machine the bookings
+// happen on other machines, and their counts arrive by poll rather than by
+// bus. The delta feeds the same window and total the bus path uses, so the
+// series and the headline agree with the single-box world's meaning.
+func (c *Collector) AddBookings(n int64) {
+	if n <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.bookings += n
+	c.tBookings += n
+	c.mu.Unlock()
+}
+
 // OnMovement counts a movement recognised at the watcher.
 func (c *Collector) OnMovement() {
 	c.mu.Lock()

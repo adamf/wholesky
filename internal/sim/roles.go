@@ -101,6 +101,7 @@ type Core struct {
 	seen         map[string]time.Time
 	nodeOwner    map[string]string // node code -> peer URL, from the last merge
 	latestQueues map[string]int
+	lastBookings int64
 }
 
 // BootCore stands up the switch and the room you watch it from.
