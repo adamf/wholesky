@@ -314,6 +314,14 @@ func (c *Collector) remoteNodeRows() []json.RawMessage {
 	return rows
 }
 
+// WarmRemotes refreshes the merged remote rows -- and with them the
+// ownership map -- outside the nodes.json request path, so a drill-down or
+// console link that arrives before anyone has loaded the board still finds
+// its owner.
+func (c *Collector) WarmRemotes() {
+	c.remoteNodeRows()
+}
+
 // proxyToOwner forwards a drill-down to the machine that owns the node.
 // It reports whether it handled the request.
 func (c *Collector) proxyToOwner(w http.ResponseWriter, r *http.Request, code string) bool {
@@ -321,6 +329,10 @@ func (c *Collector) proxyToOwner(w http.ResponseWriter, r *http.Request, code st
 		return false
 	}
 	owner := c.Owner(code)
+	if owner == "" {
+		c.WarmRemotes()
+		owner = c.Owner(code)
+	}
 	if owner == "" {
 		return false
 	}

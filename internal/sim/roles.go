@@ -148,6 +148,12 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.ConsoleProxy = func(w http.ResponseWriter, r *http.Request, code string) bool {
 		owner := c.ownerOf(code)
 		if owner == "" {
+			// Nobody has loaded the board yet, so the ownership map is
+			// cold; warm it rather than 404 a working console.
+			s.Fleet.WarmRemotes()
+			owner = c.ownerOf(code)
+		}
+		if owner == "" {
 			return false
 		}
 		return proxyPass(w, r, owner)
