@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -99,6 +100,9 @@ type Options struct {
 	// Warp is sim minutes per wall minute, used by the flight day and by the
 	// Eye's aircraft animation. Zero means 1.
 	Warp int
+	// NoGDS runs no distribution system at all: a core machine, whose
+	// GDSes are peers on other machines.
+	NoGDS bool
 	// GDSCount is how many distribution systems run, in gdsSlots order.
 	// Zero runs all five; the design calls for five because the real world
 	// has several, and inter-GDS behaviour -- the same flight sold through
@@ -109,6 +113,11 @@ type Options struct {
 	// instead of memory: the durable store jetway ships, exercised by the
 	// world instead of only by its own tests.
 	GDSDSN string
+	// LinkBind is the host the switch's subscriber listeners bind on. Empty
+	// binds loopback, which is the single-box world; a core machine binds
+	// "::" so subscribers on other machines can dial in over the private
+	// network.
+	LinkBind string
 	// StatsSnapshot, when set, persists the stats rings to this path every
 	// thirty seconds and restores them on boot, so a redeploy or a thawed
 	// machine does not open on blank charts.
@@ -174,12 +183,19 @@ type Sim struct {
 
 	airports map[string]world.Airport
 
+	fedMu      sync.RWMutex
+	fedHandler http.Handler
+
 	log    *slog.Logger
+	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // Boot stands the topology up and waits for every link.
-func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
+// bootBase stands up what every world shape shares: the Sim scaffolding,
+// the clock, the collectors, and the switch with its console. withSwitch is
+// false only for machines that dial someone else's switch.
+func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch bool) (*Sim, error) {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
@@ -205,9 +221,15 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	if warp < 1 {
 		warp = 1
 	}
+	// GDSCount zero means the single-box default of all five; NoGDS means
+	// none at all, which is a core machine whose distribution systems live
+	// on machines of their own.
 	gdsCount := opts.GDSCount
 	if gdsCount <= 0 || gdsCount > len(gdsSlots) {
 		gdsCount = len(gdsSlots)
+	}
+	if opts.NoGDS {
+		gdsCount = 0
 	}
 	var gdses []*GDSNode
 	for _, slot := range gdsSlots[:gdsCount] {
@@ -225,7 +247,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		closed:   map[string]bool{},
 		airports: map[string]world.Airport{},
 		consoles: map[string]http.Handler{},
-		log:      log, cancel: cancel,
+		log:      log, ctx: ctx, cancel: cancel,
 	}
 	for _, a := range m.Airports {
 		s.airports[a.IATA] = a
@@ -242,11 +264,26 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	s.Stats = stats.New()
 	s.Stats.SetSnapshotPath(opts.StatsSnapshot)
 
+	if !withSwitch {
+		return s, nil
+	}
 	sw, err := buildSwitch(ctx, m, opts, func(mux *http.ServeMux) {
 		s.Eye.Routes(mux)
 		s.Fleet.Routes(mux)
 		s.Stats.Routes(mux)
 		mux.HandleFunc("/node/", s.serveNodeConsole)
+		// The federation surface is late-bound: a core installs its registry
+		// here after boot; every other shape 404s the path.
+		mux.HandleFunc("/federation/", func(w http.ResponseWriter, r *http.Request) {
+			s.fedMu.RLock()
+			h := s.fedHandler
+			s.fedMu.RUnlock()
+			if h == nil {
+				http.NotFound(w, r)
+				return
+			}
+			h.ServeHTTP(w, r)
+		})
 	}, log)
 	if err != nil {
 		cancel()
@@ -277,6 +314,19 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			}
 		}()
 	}
+	return s, nil
+}
+
+func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
+	s, err := bootBase(ctx, m, opts, true)
+	if err != nil {
+		return nil, err
+	}
+	log := s.log
+	ctx = s.ctx
+	sw := s.Switch
+	gdses := s.GDSes
+	flights := s.Flights
 
 	capacity := opts.Capacity
 	if capacity <= 0 {
@@ -484,6 +534,14 @@ func (s *Sim) SetWarp(w int) error {
 	return nil
 }
 
+// SetFederationHandler installs the handler behind /federation/ on the
+// switch console: the core's registry.
+func (s *Sim) SetFederationHandler(h http.Handler) {
+	s.fedMu.Lock()
+	s.fedHandler = h
+	s.fedMu.Unlock()
+}
+
 // settledIn reports whether a record in st has no segment still awaiting an
 // answer.
 func settledIn(ctx context.Context, st store.Store, locator string) (bool, error) {
@@ -627,8 +685,12 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	// by_hello identification allows. MATIP circuits keep a listener per
 	// carrier -- a MATIP session is a host-to-host circuit, and its own
 	// session-open is the identification.
+	bind := opts.LinkBind
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
 	cfg.Ingress = append(cfg.Ingress, config.Ingress{
-		Name: "link-net", Type: "tcp", Addr: "127.0.0.1:0",
+		Name: "link-net", Type: "tcp", Addr: net.JoinHostPort(bind, "0"),
 		Identify: config.Identify{ByHello: true},
 	})
 	addPeer := func(designator, tty, format string) {
@@ -642,7 +704,7 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 		if c.Transport == "matip" {
 			cfg.Ingress = append(cfg.Ingress, config.Ingress{
 				Name: "link-" + strings.ToLower(c.Designator), Type: "matip",
-				Addr: "127.0.0.1:0", Identify: config.Identify{Peer: c.Designator},
+				Addr: net.JoinHostPort(bind, "0"), Identify: config.Identify{Peer: c.Designator},
 			})
 		}
 		addPeer(c.Designator, c.TTYAddress, c.Format)

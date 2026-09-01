@@ -232,6 +232,28 @@ func (e *Eye) LogicalEdges() map[string]int64 {
 	return out
 }
 
+// SetBookings replaces the booking counter with a federated total: on a
+// core machine the bookings happen elsewhere, and the sum arrives by poll
+// rather than by bus.
+func (e *Eye) SetBookings(n int64) {
+	e.mu.Lock()
+	e.bookings = n
+	e.mu.Unlock()
+}
+
+// SetHaloCounts replaces the halo map wholesale with federated counts.
+func (e *Eye) SetHaloCounts(m map[string]int64) {
+	e.mu.Lock()
+	e.halos = map[string]int64{}
+	for k, v := range m {
+		e.halos[k] = v
+	}
+	e.mu.Unlock()
+	for apt, n := range m {
+		e.broadcast(map[string]any{"t": "halo", "airport": apt, "count": n})
+	}
+}
+
 // OnQueue folds a queue placement into the halos.
 //
 // A schedule-change item names its flight in the reason; the manifest turns

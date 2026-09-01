@@ -9,9 +9,11 @@
 package fleet
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -65,6 +67,25 @@ type Collector struct {
 	// It is the fleet page's chaos hook; the world behind it decides what a
 	// cut link means.
 	LinkControl func(code, action string) error
+
+	// Remotes, when set, names the other machines whose fleets this board
+	// merges in: each serves the same /fleet endpoints for its own nodes.
+	Remotes func() []Remote
+	// Owner, when set, answers which remote's URL owns a node code, so
+	// drill-downs proxy to the machine that holds the store.
+	Owner func(code string) string
+	// OnOwners, when set, receives the code-to-URL map each merge discovers.
+	OnOwners func(map[string]string)
+
+	remoteMu   sync.Mutex
+	remoteRows []json.RawMessage
+	remoteAt   time.Time
+}
+
+// Remote is one peer machine's fleet.
+type Remote struct {
+	Name string
+	URL  string
 }
 
 // New builds an empty collector.
@@ -156,6 +177,9 @@ func (c *Collector) Routes(mux *http.ServeMux) {
 
 // linkControl severs or restores one carrier's circuit.
 func (c *Collector) linkControl(w http.ResponseWriter, r *http.Request) {
+	if code := r.PathValue("code"); code != "" && c.byCode(code) == nil && c.proxyToOwner(w, r, code) {
+		return
+	}
 	if c.LinkControl == nil {
 		http.Error(w, "this fleet has no link control", http.StatusNotImplemented)
 		return
@@ -214,6 +238,7 @@ func (c *Collector) nodesJSON(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, rw)
 	}
 	c.mu.Unlock()
+	remote := c.remoteNodeRows()
 	sort.SliceStable(rows, func(i, j int) bool {
 		ki, kj := kindRank(rows[i].Kind), kindRank(rows[j].Kind)
 		if ki != kj {
@@ -222,7 +247,104 @@ func (c *Collector) nodesJSON(w http.ResponseWriter, r *http.Request) {
 		return rows[i].In+rows[i].Out > rows[j].In+rows[j].Out
 	})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rows) //nolint:errcheck
+	if len(remote) == 0 {
+		json.NewEncoder(w).Encode(rows) //nolint:errcheck
+		return
+	}
+	// Merge without re-decoding: local rows first, then every remote row.
+	var b bytes.Buffer
+	b.WriteByte('[')
+	enc := json.NewEncoder(&b)
+	for i, rw := range rows {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		enc.Encode(rw)          //nolint:errcheck
+		b.Truncate(b.Len() - 1) // drop Encode's newline
+	}
+	for _, raw := range remote {
+		if b.Len() > 1 {
+			b.WriteByte(',')
+		}
+		b.Write(raw)
+	}
+	b.WriteByte(']')
+	w.Write(b.Bytes()) //nolint:errcheck
+}
+
+// remoteNodeRows fetches and caches every peer's rows. Two seconds of cache
+// keeps twenty open boards from multiplying into a poll storm.
+func (c *Collector) remoteNodeRows() []json.RawMessage {
+	if c.Remotes == nil {
+		return nil
+	}
+	c.remoteMu.Lock()
+	defer c.remoteMu.Unlock()
+	if time.Since(c.remoteAt) < 2*time.Second {
+		return c.remoteRows
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	var rows []json.RawMessage
+	owners := map[string]string{}
+	for _, r := range c.Remotes() {
+		resp, err := client.Get(r.URL + "/fleet/nodes.json")
+		if err != nil {
+			continue
+		}
+		var batch []json.RawMessage
+		err = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&batch)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		for _, raw := range batch {
+			var probe struct {
+				Code string `json:"code"`
+			}
+			if json.Unmarshal(raw, &probe) == nil && probe.Code != "" {
+				owners[probe.Code] = r.URL
+			}
+			rows = append(rows, raw)
+		}
+	}
+	c.remoteRows, c.remoteAt = rows, time.Now()
+	if c.OnOwners != nil {
+		c.OnOwners(owners)
+	}
+	return rows
+}
+
+// proxyToOwner forwards a drill-down to the machine that owns the node.
+// It reports whether it handled the request.
+func (c *Collector) proxyToOwner(w http.ResponseWriter, r *http.Request, code string) bool {
+	if c.Owner == nil {
+		return false
+	}
+	owner := c.Owner(code)
+	if owner == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	var resp *http.Response
+	var err error
+	if r.Method == http.MethodPost {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		resp, err = client.Post(owner+r.URL.Path, r.Header.Get("Content-Type"), bytes.NewReader(body))
+	} else {
+		resp, err = client.Get(owner + r.URL.Path)
+	}
+	if err != nil {
+		http.Error(w, "the machine holding "+code+" did not answer: "+err.Error(),
+			http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, 8<<20)) //nolint:errcheck
+	return true
 }
 
 func kindRank(k NodeKind) int {
@@ -242,6 +364,9 @@ func (c *Collector) byCode(code string) *node {
 }
 
 func (c *Collector) messagesJSON(w http.ResponseWriter, r *http.Request) {
+	if code := r.PathValue("code"); code != "" && c.byCode(code) == nil && c.proxyToOwner(w, r, code) {
+		return
+	}
 	n := c.byCode(r.PathValue("code"))
 	if n == nil || n.st == nil {
 		http.Error(w, "no such node", http.StatusNotFound)
@@ -278,6 +403,9 @@ func (c *Collector) messagesJSON(w http.ResponseWriter, r *http.Request) {
 // detailJSON is the one place the fleet reads records: a single node, on
 // demand, when somebody is actually looking at it.
 func (c *Collector) detailJSON(w http.ResponseWriter, r *http.Request) {
+	if code := r.PathValue("code"); code != "" && c.byCode(code) == nil && c.proxyToOwner(w, r, code) {
+		return
+	}
 	n := c.byCode(r.PathValue("code"))
 	if n == nil || n.st == nil {
 		http.Error(w, "no such node", http.StatusNotFound)
@@ -303,6 +431,9 @@ func (c *Collector) detailJSON(w http.ResponseWriter, r *http.Request) {
 // raw serves one message's bytes as they crossed the wire. The stored raw is
 // the evidence; showing anything reconstructed here would defeat the point.
 func (c *Collector) raw(w http.ResponseWriter, r *http.Request) {
+	if code := r.PathValue("code"); code != "" && c.byCode(code) == nil && c.proxyToOwner(w, r, code) {
+		return
+	}
 	n := c.byCode(r.PathValue("code"))
 	if n == nil || n.st == nil {
 		http.Error(w, "no such node", http.StatusNotFound)

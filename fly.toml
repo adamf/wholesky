@@ -1,9 +1,10 @@
-# Fly.io deployment for the public demo: a European sky, running continuously.
+# Fly.io deployment for the public demo: the whole sky, across machines.
 #
-# Only the switch console is published. The carriers, the GDS and the switch
-# all live in this one container, talking over loopback TCP -- which is the
-# same reason the jetway demo fits a container and would not fit a function
-# platform.
+# Six machines from one image: the switch and its instruments on core (the
+# only public one), a distribution system per gds machine carrying real
+# reservations volume, and the five hundred carriers sharded across two
+# regions. Every link between them is the same jetway TCP that loopback
+# used, dialled across the private network.
 
 app = "wholesky-demo"
 primary_region = "lhr"
@@ -12,11 +13,23 @@ primary_region = "lhr"
   dockerfile = "Dockerfile"
 
 [env]
-  # Two world-sized availability caches plus five hundred bounded ledgers
-  # want headroom discipline: keep the runtime's ceiling under the machine's.
-  GOMEMLIMIT = "3400MiB"
+  GOMEMLIMIT = "1600MiB"
+
+# The world across machines: the switch and the instruments on core, one
+# distribution system per gds machine carrying its share of real-volume
+# demand, and the carrier tenants sharded across two regions. Only the core
+# is public; everything else talks over the private network -- the same
+# jetway TCP that loopback used, dialled across 6PN.
+[processes]
+  core = "-world /etc/wholesky/whole.json -role core -carriers 0 -console 0.0.0.0:8080 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
+  gds1g = "-world /etc/wholesky/whole.json -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  gds1s = "-world /etc/wholesky/whole.json -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  gds1a = "-world /etc/wholesky/whole.json -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
+  region0 = "-world /etc/wholesky/whole.json -role region -shard 0 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
+  region1 = "-world /etc/wholesky/whole.json -role region -shard 1 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-max-records 800"
 
 [http_service]
+  processes = ["core"]
   internal_port = 8080
   force_https = true
   # Always on. A world this size takes a minute of boot to stand its five
@@ -42,9 +55,19 @@ primary_region = "lhr"
 
 # The whole sky idles around 1.1GB and spends CPU on the morning banks; two
 # shared cores and 2GB carry it at warp 60.
+# Dedicated cores everywhere: the shared tier's burst credits ran out under
+# the full world once, and the machine was throttled to a sliver.
 [[vm]]
-  # Dedicated cores. The shared tier's burst credits ran out under the full
-  # world and the machine was throttled to a sliver -- /proc/stat showed six
-  # times more stolen jiffies than worked ones, and every request starved.
+  processes = ["core"]
   size = "performance-2x"
-  memory = "4096mb"
+  memory = "2048mb"
+
+[[vm]]
+  processes = ["gds1g", "gds1s", "gds1a"]
+  size = "performance-1x"
+  memory = "2048mb"
+
+[[vm]]
+  processes = ["region0", "region1"]
+  size = "performance-2x"
+  memory = "2048mb"

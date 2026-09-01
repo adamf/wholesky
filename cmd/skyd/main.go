@@ -57,6 +57,15 @@ func run() error {
 		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
 		pprofAddr = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
 		verbose   = flag.Bool("v", false, "debug logging")
+
+		role      = flag.String("role", "all", "all | core | gds | region: which slice of the world this machine runs")
+		coreURL   = flag.String("core-url", "", "gds/region: the core machine's HTTP base, e.g. http://core.process.app.internal:8080")
+		selfURL   = flag.String("self-url", "", "gds/region: this machine's HTTP base as the core can reach it")
+		advertise = flag.String("advertise", "", "core: the hostname peers dial for switch links")
+		gdsDesig  = flag.String("gds-designator", "", "gds: which distribution system this machine runs, e.g. 1G")
+		shard     = flag.Int("shard", 0, "region: this machine's shard index")
+		shards    = flag.Int("shards", 1, "region: how many region shards exist")
+		linkBind  = flag.String("link-bind", "", "core: host the switch listeners bind; empty binds loopback")
 	)
 	flag.Parse()
 	if *pprofAddr != "" {
@@ -87,28 +96,88 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s, err := sim.Boot(ctx, &m, sim.Options{
+	opts := sim.Options{
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,
 		StatsSnapshot: *statsSnap,
-	})
-	if err != nil {
-		return err
+		LinkBind:      *linkBind,
 	}
-	defer s.Stop()
-	total := 0
-	for _, fs := range s.Flights {
-		total += len(fs)
+	self := *selfURL
+	if self == "" {
+		if id := os.Getenv("FLY_MACHINE_ID"); id != "" && os.Getenv("FLY_APP_NAME") != "" {
+			self = "http://" + id + ".vm." + os.Getenv("FLY_APP_NAME") + ".internal:8080"
+		}
 	}
-	log.Info("fabric up", "links", len(s.Switch.LivePeers()),
-		"flights_per_day", total,
-		"console", "http://"+*console, "eye", "http://"+*console+"/eye")
 
-	go s.FlyDay(ctx)
-	go s.Demand(ctx, *demand, *seed)
+	switch *role {
+	case "all":
+		s, err := sim.Boot(ctx, &m, opts)
+		if err != nil {
+			return err
+		}
+		defer s.Stop()
+		total := 0
+		for _, fs := range s.Flights {
+			total += len(fs)
+		}
+		log.Info("fabric up", "links", len(s.Switch.LivePeers()),
+			"flights_per_day", total,
+			"console", "http://"+*console, "eye", "http://"+*console+"/eye")
+		go s.FlyDay(ctx)
+		go s.Demand(ctx, *demand, *seed)
+		return watch(ctx, log, func() (int, int64) {
+			return len(s.Switch.LivePeers()), s.Movements.Load()
+		})
 
+	case "core":
+		c, err := sim.BootCore(ctx, &m, opts, *advertise)
+		if err != nil {
+			return err
+		}
+		defer c.Sim.Stop()
+		log.Info("core up", "console", "http://"+*console,
+			"advertise", *advertise)
+		return watch(ctx, log, func() (int, int64) {
+			return len(c.Sim.Switch.LivePeers()), c.Sim.Movements.Load()
+		})
+
+	case "gds":
+		if *gdsDesig == "" || *coreURL == "" {
+			return fmt.Errorf("-role gds needs -gds-designator and -core-url")
+		}
+		g, err := sim.BootGDS(ctx, &m, opts, *coreURL, self, *gdsDesig)
+		if err != nil {
+			return err
+		}
+		defer g.Sim.Stop()
+		go g.Sim.Demand(ctx, *demand, *seed)
+		log.Info("gds up", "designator", *gdsDesig, "core", *coreURL, "self", self)
+		return serveAndWatch(ctx, log, *console, g.Mux, func() (int, int64) {
+			return 1, g.Sim.DemBooked.Load()
+		})
+
+	case "region":
+		if *coreURL == "" {
+			return fmt.Errorf("-role region needs -core-url")
+		}
+		r, err := sim.BootRegion(ctx, &m, opts, *coreURL, self, *shard, *shards)
+		if err != nil {
+			return err
+		}
+		defer r.Sim.Stop()
+		go r.Sim.FlyDay(ctx)
+		log.Info("region up", "shard", *shard, "core", *coreURL, "self", self)
+		return serveAndWatch(ctx, log, *console, r.Mux, func() (int, int64) {
+			return len(r.Sim.Tenants), r.Sim.Movements.Load()
+		})
+	}
+	return fmt.Errorf("unknown role %q", *role)
+}
+
+// watch is the run loop: a heartbeat log until the context ends.
+func watch(ctx context.Context, log *slog.Logger, snap func() (int, int64)) error {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
@@ -117,8 +186,26 @@ func run() error {
 			log.Info("stopped")
 			return nil
 		case <-tick.C:
-			log.Info("sky", "links", len(s.Switch.LivePeers()),
-				"movements", s.Movements.Load())
+			links, moves := snap()
+			log.Info("sky", "links", links, "movements", moves)
 		}
 	}
+}
+
+// serveAndWatch serves a machine-local mux and heartbeats.
+func serveAndWatch(ctx context.Context, log *slog.Logger, addr string,
+	mux *http.ServeMux, snap func() (int, int64)) error {
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		<-ctx.Done()
+		shctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shctx) //nolint:errcheck
+	}()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("shard http stopped", "err", err)
+		}
+	}()
+	return watch(ctx, log, snap)
 }
