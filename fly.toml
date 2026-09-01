@@ -42,5 +42,8 @@ primary_region = "lhr"
 # The whole sky idles around 1.1GB and spends CPU on the morning banks; two
 # shared cores and 2GB carry it at warp 60.
 [[vm]]
-  size = "shared-cpu-2x"
+  # Dedicated cores. The shared tier's burst credits ran out under the full
+  # world and the machine was throttled to a sliver -- /proc/stat showed six
+  # times more stolen jiffies than worked ones, and every request starved.
+  size = "performance-2x"
   memory = "4096mb"
