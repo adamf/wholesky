@@ -18,7 +18,7 @@ const pageHTML = `<!doctype html>
           --hot:#5fd38d; --amber:#e0b93c; --warn:#e05a5a; --blue:#5f96be; --plane:#e8eef4; }
   html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink);
     font:13px/1.45 "SF Mono", ui-monospace, Menlo, monospace; }
-  a { color:var(--dim); text-decoration:none; } a:hover { color:var(--ink); }
+  a { color:#8fa6bc; text-decoration:none; } a:hover { color:#e8eef4; }
   #bar { position:sticky; top:0; display:flex; gap:22px; align-items:baseline;
     padding:12px 18px; background:#06090df2; border-bottom:1px solid var(--line); z-index:5; }
   #bar b { color:var(--plane); letter-spacing:.08em; }

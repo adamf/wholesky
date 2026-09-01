@@ -58,6 +58,15 @@ type Eye struct {
 	byFlight map[string]world.Flight
 	warp     int
 
+	// WarpNow, when set, reads the world's current time rate; SimPos reads
+	// its position in the sim day, in minutes. SetWarp changes the rate --
+	// the page's time control. Hubs names the distribution systems, so the
+	// logical web knows which nodes anchor it.
+	WarpNow func() int
+	SimPos  func() float64
+	SetWarp func(int) error
+	Hubs    []string
+
 	// FlightPNRs, when set, answers the drill-through from an aircraft to
 	// the bookings riding on it: what the distribution world holds on a
 	// flight, straight from the stores.
@@ -100,6 +109,20 @@ type Eye struct {
 }
 
 // New builds an Eye over a compiled world.
+// warpNow reads the live rate, falling back to the boot value. Movement
+// arithmetic divides by it, and a paused world must not divide by zero --
+// nothing departs while paused, but a message already decoded still lands.
+func (e *Eye) warpNow() int {
+	w := e.warp
+	if e.WarpNow != nil {
+		w = e.WarpNow()
+	}
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
 func New(m *world.Manifest, warp int) *Eye {
 	if warp < 1 {
 		warp = 1
@@ -305,7 +328,7 @@ func (e *Eye) OnMovement(payload map[string]any) {
 			Flight: flight, Reg: reg, From: f.From, To: f.To,
 			FromLat: from.Lat, FromLon: from.Lon, ToLat: to.Lat, ToLon: to.Lon,
 			Departed: now,
-			Arriving: now.Add(time.Duration(f.BlockMin) * time.Minute / time.Duration(e.warp)),
+			Arriving: now.Add(time.Duration(f.BlockMin) * time.Minute / time.Duration(e.warpNow())),
 		}
 		e.planes[flight] = p
 		e.mu.Unlock()
@@ -347,7 +370,7 @@ func (e *Eye) divert(flight, toApt string) {
 	p.FromLat, p.FromLon = curLat, curLon
 	p.To, p.ToLat, p.ToLon = toApt, div.Lat, div.Lon
 	p.Departed = now
-	p.Arriving = now.Add(time.Duration(km/820*60) * time.Minute / time.Duration(e.warp))
+	p.Arriving = now.Add(time.Duration(km/820*60) * time.Minute / time.Duration(e.warpNow()))
 	p.Diverted = true
 	cp := *p
 	e.mu.Unlock()
@@ -423,6 +446,28 @@ func (e *Eye) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /eye/stream", e.stream)
 	mux.HandleFunc("POST /eye/chaos", e.chaos)
 	mux.HandleFunc("GET /eye/flight/{flight}", e.flightRecords)
+	mux.HandleFunc("POST /eye/time", e.time)
+}
+
+// time is the day's speed control: pause it, run it, race it.
+func (e *Eye) time(w http.ResponseWriter, r *http.Request) {
+	if e.SetWarp == nil {
+		http.Error(w, "this world has no time control", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Warp int `json:"warp"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&req); err != nil {
+		http.Error(w, "malformed request", http.StatusBadRequest)
+		return
+	}
+	if err := e.SetWarp(req.Warp); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"warp":%d}`, req.Warp) //nolint:errcheck
 }
 
 // flightRecords answers the aircraft drill-through.
@@ -506,7 +551,8 @@ func (e *Eye) world(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
 		"airports": apts,
 		"carriers": hubs,
-		"warp":     e.warp,
+		"warp":     e.warpNow(),
+		"hubs":     e.Hubs,
 	})
 }
 
@@ -585,11 +631,19 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 					edges[e2.k] = e2.v
 				}
 			}
-			b, _ := json.Marshal(map[string]any{
+			ev := map[string]any{
 				"t": "stats", "messages": e.messages, "movements": e.movements,
 				"bookings": e.bookings, "airborne": len(e.planes), "closed": closed,
 				"rates": rates, "edges": edges,
-			})
+			}
+			if e.WarpNow != nil {
+				ev["warp"] = e.WarpNow()
+			}
+			if e.SimPos != nil {
+				m := int(e.SimPos())
+				ev["sim"] = fmt.Sprintf("%02d:%02d", m/60, m%60)
+			}
+			b, _ := json.Marshal(ev)
 			e.mu.Unlock()
 			fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck
 			fl.Flush()

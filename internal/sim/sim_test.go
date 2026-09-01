@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -701,5 +702,61 @@ func TestFlightDrillThroughFindsTheBookings(t *testing.T) {
 	if !found {
 		t.Errorf("the drill-through never found %s among %d records",
 			res.PNR.RecordLocator, len(recs))
+	}
+}
+
+// The clock re-anchors on every warp change, so time never jumps -- it just
+// starts passing at the new rate. Zero holds the day exactly where it is.
+func TestSimClockRepacesWithoutJumping(t *testing.T) {
+	c := newSimClock(60)
+	t0 := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	c.SetWarp(t0, 60) // anchor at a known instant
+	p0 := c.Pos(t0)
+
+	// One wall minute at warp 60 is one sim hour.
+	if got := c.Pos(t0.Add(time.Minute)); math.Abs(got-math.Mod(p0+60, 1440)) > 0.01 {
+		t.Errorf("after one minute at warp 60: pos = %.2f, want %.2f", got, math.Mod(p0+60, 1440))
+	}
+
+	// Speeding up mid-flight continues from the current position.
+	t1 := t0.Add(30 * time.Second)
+	before := c.Pos(t1)
+	c.SetWarp(t1, 600)
+	if got := c.Pos(t1); math.Abs(got-before) > 0.01 {
+		t.Fatalf("changing warp jumped the clock: %.2f -> %.2f", before, got)
+	}
+	if got := c.Pos(t1.Add(time.Minute)); math.Abs(got-math.Mod(before+600, 1440)) > 0.01 {
+		t.Errorf("after one minute at warp 600: pos = %.2f, want %.2f", got, math.Mod(before+600, 1440))
+	}
+
+	// Pause holds; resume continues from the held position.
+	t2 := t1.Add(2 * time.Minute)
+	held := c.Pos(t2)
+	c.SetWarp(t2, 0)
+	if got := c.Pos(t2.Add(time.Hour)); math.Abs(got-held) > 0.01 {
+		t.Errorf("an hour into the pause the day moved: %.2f -> %.2f", held, got)
+	}
+	t3 := t2.Add(2 * time.Hour)
+	c.SetWarp(t3, 60)
+	if got := c.Pos(t3.Add(time.Minute)); math.Abs(got-math.Mod(held+60, 1440)) > 0.01 {
+		t.Errorf("resume did not continue from the held position: %.2f, want %.2f",
+			got, math.Mod(held+60, 1440))
+	}
+}
+
+// The control clamps to sane rates.
+func TestSetWarpBounds(t *testing.T) {
+	s := &Sim{clock: newSimClock(60), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := s.SetWarp(601); err == nil {
+		t.Error("warp 601 accepted")
+	}
+	if err := s.SetWarp(-1); err == nil {
+		t.Error("negative warp accepted")
+	}
+	if err := s.SetWarp(0); err != nil {
+		t.Errorf("pause refused: %v", err)
+	}
+	if got := s.clock.Warp(); got != 0 {
+		t.Errorf("warp = %d after pause", got)
 	}
 }

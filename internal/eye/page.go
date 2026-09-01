@@ -24,9 +24,18 @@ const pageHTML = `<!doctype html>
     padding:10px 16px; background:linear-gradient(#06090df2,#06090d00); z-index:2; pointer-events:none; }
   #bar b { color:var(--plane); font-weight:600; letter-spacing:.08em; }
   #bar span i { font-style:normal; color:var(--hot); }
-  #bar a { color:var(--dim); text-decoration:none; pointer-events:auto; }
-  #bar a:first-of-type { margin-left:auto; }
-  #bar a:hover { color:var(--ink); }
+  #bar .qps i { font-size:16px; }
+  #bar .tot { color:#5b6b7d; } #bar .tot i { color:#8fa6bc; }
+  #bar a { color:#8fa6bc; text-decoration:none; pointer-events:auto; }
+  #bar a.nav:first-of-type { margin-left:auto; }
+  #bar a:hover { color:#e8eef4; }
+  #simctl a { padding:0 3px; } #simctl a.on { color:var(--hot); }
+  #legend { position:fixed; right:16px; top:44px; z-index:3; background:#0b1118ee;
+    border:1px solid #1d2836; border-radius:6px; padding:10px 14px; max-width:290px;
+    font-size:12px; line-height:1.55; }
+  #legend b { color:var(--plane); }
+  #legend .k { display:inline-block; width:14px; text-align:center; }
+  #legend .x { float:right; cursor:pointer; color:#5b6b7d; } #legend .x:hover { color:#e8eef4; }
   canvas { display:block; width:100vw; height:100vh; cursor:grab; }
   canvas.drag { cursor:grabbing; }
   #panel { position:fixed; left:16px; bottom:16px; background:#0b1118ee; border:1px solid #1d2836;
@@ -44,14 +53,18 @@ const pageHTML = `<!doctype html>
   <b>WHOLESKY</b>
   <span id="modes" style="pointer-events:auto"><a id="m-sky" style="color:#e8eef4">sky</a> · <a id="m-net">net</a></span>
   <span id="netmodes" style="pointer-events:auto;display:none"><a id="l-web" style="color:#e8eef4">web</a> · <a id="l-ring">ring</a></span>
-  <span>airborne <i id="air">0</i></span>
-  <span>movements <i id="mvt">0</i></span>
-  <span>bookings <i id="bkg">0</i></span>
-  <span>messages <i id="msg">0</i></span>
-  <a href="/fleet" style="pointer-events:auto">fleet →</a>
-  <a href="/stats" style="pointer-events:auto">stats →</a>
-  <a href="/">switch console →</a>
+  <span class="qps" title="live messages per second crossing the switch">msg/s <i id="qps">–</i></span>
+  <span title="aircraft currently in the air, flown by movement messages">airborne <i id="air">0</i></span>
+  <span id="simctl" title="the sim day's clock and speed; reservations keep flowing while paused">
+    day <i id="simclk">--:--</i>
+    <a id="w0" title="pause the day">⏸</a><a id="w60" title="one hour per minute">▶</a><a id="w300" title="five hours per minute">▶▶</a><a id="w600" title="ten hours per minute">▶▶▶</a></span>
+  <span class="tot" title="running totals since this world booted">since boot — msgs <i id="msg">0</i> · mvts <i id="mvt">0</i> · bkgs <i id="bkg">0</i></span>
+  <a class="nav" id="legendlink">what is this? →</a>
+  <a class="nav" href="/fleet">fleet →</a>
+  <a class="nav" href="/stats">stats →</a>
+  <a class="nav" href="/">console →</a>
 </div>
+<div id="legend" style="display:none"></div>
 <div id="panel"></div>
 <div id="closedlist"></div>
 <canvas id="c"></canvas>
@@ -62,7 +75,7 @@ const panel=document.getElementById("panel"), closedEl=document.getElementById("
 let W=0,H=0,DPR=1;
 function size(){ DPR=devicePixelRatio||1; W=innerWidth; H=innerHeight;
   cv.width=W*DPR; cv.height=H*DPR; cx.setTransform(DPR,0,0,DPR,0,0); }
-addEventListener("resize",size); size();
+addEventListener("resize",()=>{ size(); edgesDirty=true; settleFrames=0; }); size();
 
 let world=null, globe=false, anchor=null, mode="sky", land=null;
 fetch("/eye/land.json").then(r=>r.json()).then(l=>{ land=l; });
@@ -73,6 +86,57 @@ const flows=[];           // sampled conversations in flight
 const phys=new Map();     // code -> {x,y,vx,vy} for the web layout
 let physSeeded=false;
 const planes=new Map(), pulses=[], blips=[];
+let prevMsgTotal=null, prevMsgAt=0, qpsEMA=null;
+let simWarp=null, pausedMs=0, lastFrameW=0;
+let edgesDirty=true, settleFrames=0;
+const fmtN=n=> n>=1e6?(n/1e6).toFixed(1)+"m" : n>=1e4?(n/1e3).toFixed(0)+"k" : n;
+
+function setWarpUI(w){
+  if(simWarp===0 && w>0 && pausedMs>0){
+    for(const p of planes.values()){
+      if(p._dep!==undefined){ p._dep+=pausedMs; p._arr+=pausedMs; }
+    }
+    pausedMs=0;
+  }
+  simWarp=w;
+  for(const id of ["w0","w60","w300","w600"])
+    document.getElementById(id).classList.toggle("on", "w"+w===id);
+}
+for(const w of [0,60,300,600]){
+  document.getElementById("w"+w).onclick=()=>{
+    fetch("/eye/time",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({warp:w})}).then(()=>setWarpUI(w));
+  };
+}
+
+/* The explainer. Shown until dismissed once; the link brings it back. */
+const LEGEND_SKY=
+  "<span class='x' onclick='hideLegend()'>✕</span><b>the sky</b><br>"+
+  "Every mark is caused by a real message on the wire; nothing is animated for show.<br>"+
+  "<span class='k' style='color:#e8eef4'>➤</span> an aircraft — it departs and lands because its carrier's MVT movement messages crossed the switch<br>"+
+  "<span class='k' style='color:#e0b93c'>➤</span> a diverted aircraft (a DIV message named its alternate)<br>"+
+  "<span class='k' style='color:#5fd38d'>·</span> sparks — messages travelling to and from a carrier's home: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#e05a5a'>red</i> schedule<br>"+
+  "<span class='k' style='color:#e8eef4'>◌</span> an expanding ring — an arrival<br>"+
+  "<span class='k' style='color:#e05a5a'>◎</span> a red halo — a closed airport; its size counts real queue items: bookings an agent now has to rework<br>"+
+  "<b>click</b> an airport to close or reopen it · <b>click</b> an aircraft to see the bookings riding it · drag to spin, scroll to zoom";
+const LEGEND_NET=
+  "<span class='x' onclick='hideLegend()'>✕</span><b>the logical web</b><br>"+
+  "The same world as a network diagram: systems that talk, not places.<br>"+
+  "<span class='k' style='color:#5fd38d'>●</span> a distribution system (GDS)<br>"+
+  "<span class='k' style='color:#5b7a95'>●</span> a carrier, sized by how many conversations it is holding; quiet carriers park on the outer ring<br>"+
+  "<span class='k' style='color:#82afd7'>—</span> a conversation — bright lines are carrier↔carrier interline, faint ones lead to a GDS<br>"+
+  "<span class='k'>·</span> moving dots — sampled real messages riding their edges: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#5f96be'>blue</i> availability · <i style='color:#e05a5a'>red</i> schedule";
+function showLegend(){
+  document.getElementById("legend").innerHTML = mode==="net"?LEGEND_NET:LEGEND_SKY;
+  document.getElementById("legend").style.display="block";
+}
+function hideLegend(){
+  document.getElementById("legend").style.display="none";
+  try{ localStorage.setItem("eye-legend-seen","1"); }catch(e){}
+}
+document.getElementById("legendlink").onclick=showLegend;
+let seen=false; try{ seen=!!localStorage.getItem("eye-legend-seen"); }catch(e){}
+if(!seen) addEventListener("load",showLegend);
 const closed=new Map(); // iata -> halo count
 const D=Math.PI/180;
 
@@ -106,8 +170,10 @@ function projGlobe(lat,lon){
 }
 const proj=(lat,lon)=> globe?projGlobe(lat,lon):flatFit(lat,lon);
 
+let HUBS=new Set(["1G"]);
 fetch("/eye/world.json").then(r=>r.json()).then(w=>{
   world=w;
+  if(w.hubs&&w.hubs.length) HUBS=new Set(w.hubs);
   globe=span(w.airports)>150;
   flatFit=fitFlat(w.airports);
   const lhr=w.airports.find(a=>a.iata==="LHR");
@@ -128,18 +194,32 @@ function connect(){
     else if(d.t==="close"){ closed.set(d.airport, closed.get(d.airport)||0); renderClosed(); }
     else if(d.t==="halo"){ closed.set(d.airport, d.count); renderClosed(); }
     else if(d.t==="reopen"){ closed.delete(d.airport); renderClosed(); }
-    else if(d.t==="stats"){ air.textContent=d.airborne; mvt.textContent=d.movements;
-      bkg.textContent=d.bookings; msg.textContent=d.messages;
+    else if(d.t==="stats"){ air.textContent=d.airborne; mvt.textContent=fmtN(d.movements);
+      bkg.textContent=fmtN(d.bookings); msg.textContent=fmtN(d.messages);
+      /* live rate: the delta between two-second snapshots, lightly smoothed */
+      const nowW=Date.now();
+      if(prevMsgTotal!==null && nowW>prevMsgAt){
+        const r=Math.max(0,(d.messages-prevMsgTotal)/((nowW-prevMsgAt)/1000));
+        qpsEMA = qpsEMA===null ? r : qpsEMA*0.4+r*0.6;
+        qps.textContent=qpsEMA.toFixed(0);
+      }
+      prevMsgTotal=d.messages; prevMsgAt=nowW;
+      if(d.sim!==undefined) simclk.textContent=d.sim;
+      if(d.warp!==undefined) setWarpUI(d.warp);
       if(d.rates){ rates.clear(); for(const [p,n] of Object.entries(d.rates)) rates.set(p,n/2); }
       if(d.edges){
         /* Conversations pulse -- an AVS cycle every minute, bookings in
            bursts -- so the web remembers minutes, not seconds: a slow decay
-           with fresh counts folded on top. */
+           with fresh counts folded on top. Keys are parsed once, here, so
+           the render loop never splits a string. */
         for(const v of edgesE.values()) v.w*=0.96;
         for(const [k,n] of Object.entries(d.edges)){
-          const e=edgesE.get(k)||{w:0}; e.w=Math.min(60,Math.max(e.w,n)); edgesE.set(k,e);
+          let e=edgesE.get(k);
+          if(!e){ const gt=k.indexOf(">"); e={w:0,a:k.slice(0,gt),b:k.slice(gt+1)}; edgesE.set(k,e); }
+          e.w=Math.min(60,Math.max(e.w,n));
         }
         for(const [k,v] of edgesE) if(v.w<0.08) edgesE.delete(k);
+        edgesDirty=true; settleFrames=0;
       }
       if(d.closed){ closed.clear(); for(const [a,n] of Object.entries(d.closed)) closed.set(a,n); renderClosed(); } }
   };
@@ -154,7 +234,7 @@ function renderClosed(){
 const now=()=>performance.now();
 const hubPos=code=>{
   if(!world) return null;
-  if(code==="1G") return anchor;
+  if(HUBS.has(code)) return anchor;
   const c=(world.carriers||[]).find(c=>c.code===code);
   return c?[c.lat,c.lon]:null;
 };
@@ -166,8 +246,10 @@ document.getElementById("l-ring").onclick=()=>setNetLayout("ring");
 function setMode(m){ mode=m; panel.style.display="none";
   document.getElementById("m-sky").style.color=m==="sky"?"#e8eef4":"#3d4c5c";
   document.getElementById("m-net").style.color=m==="net"?"#e8eef4":"#3d4c5c";
-  document.getElementById("netmodes").style.display=m==="net"?"":"none"; }
-function setNetLayout(l){ netLayout=l;
+  document.getElementById("netmodes").style.display=m==="net"?"":"none";
+  settleFrames=0;
+  if(document.getElementById("legend").style.display!=="none") showLegend(); }
+function setNetLayout(l){ netLayout=l; settleFrames=0;
   document.getElementById("l-web").style.color=l==="web"?"#e8eef4":"#3d4c5c";
   document.getElementById("l-ring").style.color=l==="ring"?"#e8eef4":"#3d4c5c"; }
 
@@ -184,7 +266,11 @@ function layoutNet(){
     pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
   });
   pos.set("1X",[cxp,cyp]);
-  pos.set("1G",[cxp,cyp+R*0.45]);
+  const hubs=[...HUBS];
+  hubs.forEach((h,i)=>{
+    const a=Math.PI/2 + (i-(hubs.length-1)/2)*0.5;
+    pos.set(h,[cxp+R*0.45*Math.cos(a), cyp+R*0.45*Math.sin(a)]);
+  });
   return pos;
 }
 
@@ -209,10 +295,11 @@ cv.addEventListener("wheel",e=>{ e.preventDefault(); auto=false;
   zoom=Math.max(.6,Math.min(6,zoom*(e.deltaY<0?1.12:0.9))); },{passive:false});
 
 function planeAt(x,y){
-  const nowMs=Date.now();
+  const nowMs=Date.now()-pausedMs;
   let best=null,bd=11*11;
   for(const p of planes.values()){
-    const dep=Date.parse(p.departed), arr=Date.parse(p.arriving);
+    if(p._dep===undefined){ p._dep=Date.parse(p.departed); p._arr=Date.parse(p.arriving); }
+    const dep=p._dep, arr=p._arr;
     let f=(nowMs-dep)/Math.max(1,arr-dep); f=Math.max(0,Math.min(1,f));
     const lat=p.from_lat+(p.to_lat-p.from_lat)*f, lon=p.from_lon+(p.to_lon-p.from_lon)*f;
     const q=proj(lat,lon); if(!q[2]) continue;
@@ -264,7 +351,7 @@ function pickNode(x,y){
   }
   if(!best){ panel.style.display="none"; return; }
   const c=(world.carriers||[]).find(c=>c.code===best);
-  const name=best==="1X"?"the switch":best==="1G"?"the gds":best;
+  const name=best==="1X"?"the switch":HUBS.has(best)?best+" · gds":best;
   const rate=(rates.get(best)||0).toFixed(1);
   const consoleHref=best==="1X"?"/":"/node/"+best+"/";
   panel.innerHTML="<b>"+name+"</b><div class='sub'>"+rate+" msg/s on this link</div>"+
@@ -364,10 +451,16 @@ function draw(){
     cx.beginPath(); cx.arc(b.x,b.y,3+f*14,0,7); cx.stroke();
   }
 
-  /* aircraft */
-  const nowMs=Date.now();
+  /* aircraft. While the day is paused, sim time stands still but wall time
+     does not: the pause accumulates, and on resume every airborne plane's
+     schedule slides forward by exactly the time the world stood still. */
+  const wallNow=Date.now();
+  if(lastFrameW && simWarp===0) pausedMs+=wallNow-lastFrameW;
+  lastFrameW=wallNow;
+  const nowMs=wallNow-pausedMs;
   for(const p of planes.values()){
-    const dep=Date.parse(p.departed), arr=Date.parse(p.arriving);
+    if(p._dep===undefined){ p._dep=Date.parse(p.departed); p._arr=Date.parse(p.arriving); }
+    const dep=p._dep, arr=p._arr;
     let f=(nowMs-dep)/Math.max(1,arr-dep); f=Math.max(0,Math.min(1,f));
     const lat=p.from_lat+(p.to_lat-p.from_lat)*f, lon=p.from_lon+(p.to_lon-p.from_lon)*f;
     const q=proj(lat,lon); if(!q[2]) continue;
@@ -396,7 +489,11 @@ function ringPositions(){
     const a=-Math.PI/2 + i/cs.length*2*Math.PI;
     pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
   });
-  pos.set("1G",[cxp,cyp]);
+  const hubs=[...HUBS];
+  hubs.forEach((h,i)=>{
+    const a=(i/Math.max(1,hubs.length))*2*Math.PI;
+    pos.set(h,[cxp+40*Math.cos(a), cyp+40*Math.sin(a)]);
+  });
   return pos;
 }
 
@@ -408,67 +505,86 @@ function seedPhys(){
   physSeeded=true;
 }
 
-function degreeOf(code){
-  let d=0;
-  for(const k of edgesE.keys()){ const [a,b]=k.split(">"); if(a===code||b===code) d++; }
-  return d;
+/* The web's cast is recomputed only when the edges change (every stats
+   tick at most), never per frame: membership, the active array, the degree
+   count and the parked ring are all cached. The physics itself cools -- once
+   the sprawl stops moving it stops being simulated, and fresh conversations
+   reheat it. This page once split three thousand edge keys per node per
+   frame; a full net view now costs a settled layout almost nothing. */
+let webCache=null;
+function rebuildWeb(){
+  const cxp=W/2, cyp=(H+30)/2;
+  const inWeb=new Set(HUBS);
+  const deg=new Map();
+  for(const e of edgesE.values()){
+    inWeb.add(e.a); inWeb.add(e.b);
+    deg.set(e.a,(deg.get(e.a)||0)+1);
+    deg.set(e.b,(deg.get(e.b)||0)+1);
+  }
+  const active=[...phys.entries()].filter(([c])=>inWeb.has(c));
+  const parked=new Map();
+  const all=(world.carriers||[]).filter(c=>!inWeb.has(c.code)).sort((a,b)=>a.lon-b.lon);
+  const R=Math.min(W,H-60)*0.47;
+  all.forEach((c,i)=>{
+    const a=-Math.PI/2 + i/Math.max(1,all.length)*2*Math.PI;
+    parked.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
+  });
+  webCache={inWeb,deg,active,parked};
+  edgesDirty=false;
 }
 
-/* a few physics steps per frame keeps the sprawl alive without burning cpu */
 function stepPhys(){
   if(!physSeeded) seedPhys();
+  if(edgesDirty||!webCache) rebuildWeb();
+  const {inWeb,active,parked}=webCache;
   const cxp=W/2, cyp=(H+30)/2;
-  // Only the connected web takes part in the physics. A node with no
-  // current conversations has no springs, and repulsion alone just pins it
-  // to a wall; the quiet ones park on a dim outer ring instead.
-  const inWeb=new Set(["1G"]);
-  for(const k of edgesE.keys()){ const [a,b]=k.split(">"); inWeb.add(a); inWeb.add(b); }
-  const active=[...phys.entries()].filter(([c])=>inWeb.has(c));
+  // Cooled? Serve the settled layout without simulating anything.
+  const settled = settleFrames>30;
+  if(!settled){
   const K=2100;
+  let maxV=0;
   for(let it=0;it<2;it++){
     // repulsion
     for(let i=0;i<active.length;i++){
-      const [ci,a]=active[i];
+      const a=active[i][1];
       for(let j=i+1;j<active.length;j++){
-        const [cj,b]=active[j];
+        const b=active[j][1];
         let dx=a.x-b.x, dy=a.y-b.y;
         let d2=dx*dx+dy*dy; if(d2<25) d2=25;
+        if(d2>90000) continue; // beyond 300px repulsion is noise
         const f=K/d2, d=Math.sqrt(d2);
         dx/=d; dy/=d;
         a.vx+=dx*f; a.vy+=dy*f; b.vx-=dx*f; b.vy-=dy*f;
       }
     }
     // springs along conversations, stronger for louder ones
-    for(const [k,e] of edgesE){
-      const [s1,s2]=k.split(">");
-      const a=phys.get(s1), b=phys.get(s2);
+    for(const e of edgesE.values()){
+      const a=phys.get(e.a), b=phys.get(e.b);
       if(!a||!b) continue;
+      const hub=HUBS.has(e.a)||HUBS.has(e.b);
       const dx=b.x-a.x, dy=b.y-a.y, d=Math.max(1,Math.hypot(dx,dy));
-      const rest=(s1==="1G"||s2==="1G")?170:80-Math.min(40,Math.log1p(e.w)*12);
-      // The GDS holds a spring to nearly every carrier; unnormalised, five
+      const rest=hub?170:80-Math.min(40,Math.log1p(e.w)*12);
+      // A GDS holds a spring to nearly every carrier; unnormalised, five
       // hundred springs crush the web into a star. Hub springs are softened
       // so the carrier-to-carrier springs get to shape the clusters.
       let f=(d-rest)*0.004*Math.min(3,0.5+Math.log1p(e.w));
-      if(s1==="1G"||s2==="1G") f*=0.18;
+      if(hub) f*=0.18;
       a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f;
     }
-    // gravity, heavier for the GDS so the web hangs off it
+    // gravity, heavier for the hubs so the web hangs off them
     for(const [code,a] of active){
-      const g=code==="1G"?0.05:0.02;
+      const g=HUBS.has(code)?0.05:0.02;
       a.vx+=(cxp-a.x)*g; a.vy+=(cyp-a.y)*g;
       a.vx*=0.66; a.vy*=0.66;
       a.x+=a.vx; a.y+=a.vy;
+      const v=Math.abs(a.vx)+Math.abs(a.vy);
+      if(v>maxV) maxV=v;
     }
   }
-  const pos=new Map();
+  if(maxV<0.06) settleFrames++; else settleFrames=0;
+  }
+  const pos=new Map(parked);
   for(const [code,a] of phys){ if(inWeb.has(code)) pos.set(code,[a.x,a.y]); }
-  // the parked: quiet carriers on the boundary ring, still clickable
-  const all=(world.carriers||[]).filter(c=>!inWeb.has(c.code)).sort((a,b)=>a.lon-b.lon);
-  const R=Math.min(W,H-60)*0.47;
-  all.forEach((c,i)=>{
-    const a=-Math.PI/2 + i/Math.max(1,all.length)*2*Math.PI;
-    pos.set(c.code,[cxp+R*Math.cos(a), cyp+R*Math.sin(a)]);
-  });
   return pos;
 }
 
@@ -492,11 +608,10 @@ drawNet=function(t){
   /* edges: the conversations. Everyone talks to the GDS -- that is the known
      truth, drawn as faint wallpaper; the ink goes to the carrier-to-carrier
      web, which is the part worth reading. */
-  for(const [k,e] of edgesE){
-    const [s1,s2]=k.split(">");
-    const p1=netPos.get(s1), p2=netPos.get(s2);
+  for(const e of edgesE.values()){
+    const p1=netPos.get(e.a), p2=netPos.get(e.b);
     if(!p1||!p2) continue;
-    const hub=(s1==="1G"||s2==="1G");
+    const hub=HUBS.has(e.a)||HUBS.has(e.b);
     let al=Math.min(.5,.04+Math.log1p(e.w)*.09);
     let wd=Math.min(3,.3+Math.log1p(e.w)*.55);
     if(hub){ al*=0.22; wd=Math.min(wd,0.8); }
@@ -527,9 +642,10 @@ drawNet=function(t){
   }
 
   /* nodes: sized by how many conversations they hold */
+  const degs=(webCache&&webCache.deg)||new Map();
   for(const [code,p] of netPos){
-    if(code==="1G") continue;
-    const deg=degreeOf(code), r=1.4+Math.min(6,Math.log1p(deg)*1.7);
+    if(HUBS.has(code)) continue;
+    const deg=degs.get(code)||0, r=1.4+Math.min(6,Math.log1p(deg)*1.7);
     const rate=rates.get(code)||0;
     cx.fillStyle=rate>0.5?"#5b7a95":"#3a4d63";
     cx.beginPath(); cx.arc(p[0],p[1],r,0,7); cx.fill();
@@ -538,13 +654,14 @@ drawNet=function(t){
       cx.fillText(code,p[0]+r+3,p[1]+3);
     }
   }
-  const g=netPos.get("1G");
-  if(g){
+  for(const code of HUBS){
+    const g=netPos.get(code);
+    if(!g) continue;
     cx.fillStyle="#5fd38d"; cx.beginPath(); cx.arc(g[0],g[1],8,0,7); cx.fill();
     cx.strokeStyle="rgba(95,211,141,.5)"; cx.lineWidth=1.4;
     cx.beginPath(); cx.arc(g[0],g[1],12+2*Math.sin(t/400),0,7); cx.stroke();
     cx.fillStyle="#9fb4c8"; cx.font="11px ui-monospace";
-    cx.fillText("1G · gds",g[0]+16,g[1]+4);
+    cx.fillText(code+" · gds",g[0]+16,g[1]+4);
   }
 };
 draw();

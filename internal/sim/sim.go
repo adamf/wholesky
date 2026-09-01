@@ -135,7 +135,7 @@ type Sim struct {
 	// bookings were actually this.
 
 	maxMessages, maxRecords int
-	warp                    int
+	clock                   *simClock
 
 	closedMu sync.Mutex
 	closed   map[string]bool
@@ -214,7 +214,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		flightsByOrigin: byOrigin,
 		BookingDate:     time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
-		warp: warp, Eye: eye.New(m, warp),
+		clock: newSimClock(warp), Eye: eye.New(m, warp),
 		closed:   map[string]bool{},
 		airports: map[string]world.Airport{},
 		consoles: map[string]http.Handler{},
@@ -225,6 +225,12 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	s.Eye.Chaos = s.chaos
 	s.Eye.FlightPNRs = s.flightRecords
+	s.Eye.WarpNow = s.clock.Warp
+	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
+	s.Eye.SetWarp = s.SetWarp
+	for _, g := range gdses {
+		s.Eye.Hubs = append(s.Eye.Hubs, g.Designator)
+	}
 	s.Fleet = fleet.New()
 	s.Stats = stats.New()
 	s.Stats.SetSnapshotPath(opts.StatsSnapshot)
@@ -397,6 +403,73 @@ func (s *Sim) flightRecords(flight string) []eye.FlightRecord {
 	return out
 }
 
+// simClock is the world's one adjustable timepiece: a position in the sim
+// day that advances at warp sim-minutes per wall-minute, and can be re-paced
+// or paused while the world runs. Changing the warp re-anchors the clock at
+// its current position, so time never jumps -- it just starts passing at the
+// new rate. Anchors are stored with their monotonic reading stripped: a
+// suspended machine's monotonic clock freezes with it, and a thaw must jump
+// the day forward the way the wall did.
+type simClock struct {
+	mu         sync.Mutex
+	anchorWall time.Time
+	anchorPos  float64 // sim minutes into the day at anchorWall
+	warp       int
+}
+
+func newSimClock(warp int) *simClock {
+	now := time.Now()
+	// The boot anchor derives from absolute wall time, so every process --
+	// and every restart -- agrees where today is.
+	pos := math.Mod(float64(now.Unix())/60*float64(warp), 24*60)
+	return &simClock{anchorWall: now.Round(0), anchorPos: pos, warp: warp}
+}
+
+// Pos returns sim minutes into the day at a wall instant.
+func (c *simClock) Pos(now time.Time) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.posLocked(now)
+}
+
+func (c *simClock) posLocked(now time.Time) float64 {
+	elapsed := now.Round(0).Sub(c.anchorWall).Minutes()
+	pos := math.Mod(c.anchorPos+elapsed*float64(c.warp), 24*60)
+	if pos < 0 {
+		pos += 24 * 60
+	}
+	return pos
+}
+
+// Warp returns the current rate.
+func (c *simClock) Warp() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.warp
+}
+
+// SetWarp re-paces the day from this instant. Zero pauses it.
+func (c *simClock) SetWarp(now time.Time, w int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.anchorPos = c.posLocked(now)
+	c.anchorWall = now.Round(0)
+	c.warp = w
+}
+
+// SetWarp is the time control: how many sim minutes pass per wall minute.
+// Zero pauses the day -- aircraft hold, departures wait -- while the
+// reservations world keeps moving, because bookings do not stop when
+// aircraft do. The ceiling keeps one tick's catch-up sane.
+func (s *Sim) SetWarp(w int) error {
+	if w < 0 || w > 600 {
+		return fmt.Errorf("warp %d is outside 0..600", w)
+	}
+	s.clock.SetWarp(time.Now(), w)
+	s.log.Info("chaos: warp set", "warp", w)
+	return nil
+}
+
 // settledIn reports whether a record in st has no segment still awaiting an
 // answer.
 func settledIn(ctx context.Context, st store.Store, locator string) (bool, error) {
@@ -442,14 +515,10 @@ func (s *Sim) Settled(ctx context.Context, locator string) (bool, error) {
 // a thaw jumps the day to where it should be; the catch-up is clamped so the
 // first tick replays the recent past rather than a whole frozen week.
 func (s *Sim) FlyDay(ctx context.Context) {
-	warp := s.warp
-	const dayMin = 24 * 60
 	// The largest backlog one tick will replay after a pause.
 	const maxCatchUp = 120
 
-	pos := func(at time.Time) int {
-		return int(float64(at.Unix())/60*float64(warp)) % dayMin
-	}
+	pos := func(at time.Time) int { return int(s.clock.Pos(at)) }
 	day := time.Now().UTC().Truncate(24 * time.Hour)
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
