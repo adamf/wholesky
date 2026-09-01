@@ -80,6 +80,11 @@ func TestMultiMachineWorld(t *testing.T) {
 		}
 	}
 
+	if len(core.Sim.GDSes) != 0 || len(core.Sim.Eye.Hubs) != len(gdsSlots) {
+		t.Fatalf("core builds no GDS of its own and hubs every slot once: gdses=%d hubs=%v",
+			len(core.Sim.GDSes), core.Sim.Eye.Hubs)
+	}
+
 	// Every carrier and the GDS hold sessions on the core's switch.
 	want := len(m.Carriers) + 1
 	waitFor("every subscriber to dial the core",

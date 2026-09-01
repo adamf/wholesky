@@ -108,7 +108,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	if opts.LinkBind == "" {
 		opts.LinkBind = "::"
 	}
-	opts.GDSCount = 0 // GDSes live on their own machines
+	opts.NoGDS = true // the distribution systems live on machines of their own
 	s, err := bootBase(ctx, m, opts, true)
 	if err != nil {
 		return nil, err
