@@ -140,6 +140,10 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	c.Routes(fed)
 	s.SetFederationHandler(fed)
 
+	s.Stats.Airborne = s.Eye.Airborne
+	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
+	go s.Stats.Run(ctx.Done())
+
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
 	s.Fleet.OnOwners = c.SetOwners
