@@ -60,14 +60,14 @@ primary_region = "lhr"
 [[vm]]
   processes = ["core"]
   size = "performance-2x"
-  memory = "2048mb"
+  memory = "4096mb"
 
 [[vm]]
   processes = ["gds1g", "gds1s", "gds1a"]
   size = "performance-1x"
-  memory = "2048mb"
+  memory = "4096mb"
 
 [[vm]]
   processes = ["region0", "region1"]
   size = "performance-2x"
-  memory = "2048mb"
+  memory = "4096mb"
