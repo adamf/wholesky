@@ -89,6 +89,7 @@ const planes=new Map(), pulses=[], blips=[];
 let prevMsgTotal=null, prevMsgAt=0, qpsEMA=null;
 let simWarp=null, pausedMs=0, lastFrameW=0;
 let edgesDirty=true, settleFrames=0;
+let netZoom=1, netPanX=0, netPanY=0;
 const fmtN=n=> n>=1e6?(n/1e6).toFixed(1)+"m" : n>=1e4?(n/1e3).toFixed(0)+"k" : n;
 
 function setWarpUI(w){
@@ -125,7 +126,8 @@ const LEGEND_NET=
   "<span class='k' style='color:#5fd38d'>●</span> a distribution system (GDS)<br>"+
   "<span class='k' style='color:#5b7a95'>●</span> a carrier, sized by how many conversations it is holding; quiet carriers park on the outer ring<br>"+
   "<span class='k' style='color:#82afd7'>—</span> a conversation — bright lines are carrier↔carrier interline, faint ones lead to a GDS<br>"+
-  "<span class='k'>·</span> moving dots — sampled real messages riding their edges: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#5f96be'>blue</i> availability · <i style='color:#e05a5a'>red</i> schedule";
+  "<span class='k'>·</span> moving dots — sampled real messages riding their edges: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#5f96be'>blue</i> availability · <i style='color:#e05a5a'>red</i> schedule<br>"+
+  "<b>drag</b> to pan · <b>scroll</b> to zoom · <b>click</b> a node for its console";
 function showLegend(){
   document.getElementById("legend").innerHTML = mode==="net"?LEGEND_NET:LEGEND_SKY;
   document.getElementById("legend").style.display="block";
@@ -281,7 +283,8 @@ addEventListener("mousemove",e=>{
   if(!drag) return;
   const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
   if(Math.abs(dx)+Math.abs(dy)>3) drag.moved=true;
-  if(globe){ auto=false;
+  if(mode==="net"){ netPanX+=dx; netPanY+=dy; }
+  else if(globe){ auto=false;
     rot.lam-=dx/(140*zoom); rot.phi+=dy/(140*zoom);
     rot.phi=Math.max(-1.4,Math.min(1.4,rot.phi)); }
   drag.x=e.clientX; drag.y=e.clientY;
@@ -292,6 +295,15 @@ addEventListener("mouseup",e=>{
   drag=null;
 });
 cv.addEventListener("wheel",e=>{ e.preventDefault(); auto=false;
+  if(mode==="net"){
+    const f=e.deltaY<0?1.12:0.9;
+    const nz=Math.max(.4,Math.min(8,netZoom*f)), r=nz/netZoom;
+    // zoom about the cursor, so the point under it stays put
+    netPanX=e.clientX-(e.clientX-netPanX)*r;
+    netPanY=e.clientY-(e.clientY-netPanY)*r;
+    netZoom=nz;
+    return;
+  }
   zoom=Math.max(.6,Math.min(6,zoom*(e.deltaY<0?1.12:0.9))); },{passive:false});
 
 function planeAt(x,y){
@@ -344,6 +356,7 @@ function pick(x,y){
 }
 function pickNode(x,y){
   if(!netPos) return;
+  x=(x-netPanX)/netZoom; y=(y-netPanY)/netZoom;
   let best=null,bd=14*14;
   for(const [code,p] of netPos){
     const d=(p[0]-x)**2+(p[1]-y)**2;
@@ -604,6 +617,9 @@ const kindColor=k=> k==="MVT"||k==="MVA"||k==="DIV" ? "rgba(224,185,60," :
 drawNet=function(t){
   const curved = netLayout==="ring";
   netPos = curved ? ringPositions() : stepPhys();
+  cx.save();
+  cx.translate(netPanX,netPanY);
+  cx.scale(netZoom,netZoom);
 
   /* edges: the conversations. Everyone talks to the GDS -- that is the known
      truth, drawn as faint wallpaper; the ink goes to the carrier-to-carrier
@@ -663,6 +679,7 @@ drawNet=function(t){
     cx.fillStyle="#9fb4c8"; cx.font="11px ui-monospace";
     cx.fillText(code+" · gds",g[0]+16,g[1]+4);
   }
+  cx.restore();
 };
 draw();
 </script>
