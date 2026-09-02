@@ -4,3 +4,6 @@
 .DS_Store
 /world.json
 /*.json
+data/bts/*.zip
+data/bts/On_Time_*.csv
+data/bts/readme.html

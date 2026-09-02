@@ -183,7 +183,7 @@ func (e *Eye) OnMessage(payload map[string]any) {
 	switch dir {
 	case "in":
 		if id != "" {
-			e.inboundSrc[id] = inMeta{peer: peer, kind: strings.SplitN(kind, "/", 2)[0]}
+			e.inboundSrc[id] = inMeta{peer: peer, kind: kindClass(kind)}
 			e.inboundFIFO = append(e.inboundFIFO, id)
 			if len(e.inboundFIFO) > rememberCap {
 				delete(e.inboundSrc, e.inboundFIFO[0])
@@ -217,11 +217,22 @@ func (e *Eye) OnMessage(payload map[string]any) {
 	e.broadcast(map[string]any{
 		"t":    "pulse",
 		"peer": payload["peer"], "dir": payload["direction"],
-		"kind": strings.SplitN(kind, "/", 2)[0], "fmt": payload["format"],
+		"kind": kindClass(kind), "fmt": payload["format"],
 	})
 	if sendFlow {
 		e.broadcast(map[string]any{"t": "flow", "src": flowSrc, "dst": flowDst, "kind": flowKind})
 	}
+}
+
+// kindClass is a message kind's class: its first token, or for a relayed
+// copy the class of what it carries, so the web's pulses are coloured by
+// what crossed the switch rather than by the fact that it crossed.
+func kindClass(kind string) string {
+	parts := strings.SplitN(kind, "/", 3)
+	if parts[0] == "relay" && len(parts) > 1 {
+		return parts[1]
+	}
+	return parts[0]
 }
 
 // LogicalEdges snapshots the current window's conversation counts, for the

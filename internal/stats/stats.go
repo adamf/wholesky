@@ -253,7 +253,7 @@ func (c *Collector) OnMessage(payload map[string]any) {
 	kind, _ := payload["kind"].(string)
 	format, _ := payload["format"].(string)
 	status, _ := payload["status"].(string)
-	head := strings.SplitN(kind, "/", 2)[0]
+	head := kindClass(kind)
 	c.mu.Lock()
 	c.total++
 	c.tTotal++
@@ -323,6 +323,18 @@ func (c *Collector) OnMovement() {
 	c.mvts++
 	c.tMovements++
 	c.mu.Unlock()
+}
+
+// kindClass is the traffic class of a message kind: the first token, or for
+// a relayed copy -- relay/PNL/BA0117 -- the class of what it carries. A
+// switch forwards everything, and counting its outbound legs as "relay"
+// put every forwarded name list and load message under reservations.
+func kindClass(kind string) string {
+	parts := strings.SplitN(kind, "/", 3)
+	if parts[0] == "relay" && len(parts) > 1 {
+		return parts[1]
+	}
+	return parts[0]
 }
 
 // Routes mounts the panel.
