@@ -703,6 +703,22 @@ func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 	if err := tn.ReportBags(ctx, f, day); err != nil {
 		t.Fatalf("ReportBags: %v", err)
 	}
+	// The report crosses the wire to the airport before the door closes on
+	// it: two minutes apart in the timetable, a moment here.
+	loaded := func() bool {
+		fl, _ := tn.DCS.Flight(key)
+		for _, p := range fl.Passengers {
+			for _, b := range p.Bags {
+				if p.Status == dcs.StatusBoarded && !b.Loaded {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for wait := time.Now().Add(10 * time.Second); !loaded() && time.Now().Before(wait); {
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err := tn.Close(ctx, f, day); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
