@@ -183,6 +183,11 @@ type Sim struct {
 	// Movements counts EvMovement events seen at the GDS: flights whose
 	// departures and arrivals crossed the switch and were recognised.
 	Movements atomic.Int64
+	// Departures counts the departures the flight day issued from this
+	// machine, and reportErrs the aircraft reports that failed to leave;
+	// the run log carries both so a silent sky can be told from a quiet one.
+	Departures atomic.Int64
+	reportErrs atomic.Int64
 	// Rebooked counts passengers the irops engines moved off cancelled
 	// flights onto seats that were open.
 	Rebooked atomic.Int64
@@ -589,6 +594,18 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "records", recs, "messages", msgs)
+}
+
+// Warp is the sim clock's current rate; Pos its position in the day, in
+// minutes.
+func (s *Sim) Warp() int { return s.clock.Warp() }
+func (s *Sim) Pos() int  { return int(s.clock.Pos(time.Now())) }
+
+// RunStats is the run log's line: what this machine's day has done.
+func (s *Sim) RunStats() []any {
+	return []any{"links", len(s.Switch.LivePeers()), "movements", s.Movements.Load(),
+		"departures", s.Departures.Load(), "report_failures", s.reportErrs.Load(),
+		"pos", int(s.clock.Pos(time.Now())), "warp", s.clock.Warp()}
 }
 
 // fillDay writes the day's pre-sold bookings into this machine's tenants'
@@ -1029,6 +1046,9 @@ var groundEvents = []groundEvent{
 	{90, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 90)
 	}},
+	{60, "flight plan", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.FileFlightPlan(ctx, f, day)
+	}},
 	{60, "adl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.SendADL(ctx, f, day)
 	}},
@@ -1422,6 +1442,7 @@ func (s *Sim) departure(ctx context.Context, t *host.Tenant, f world.Flight, day
 	c := s.carriers[f.Carrier]
 	dep := day.Add(time.Duration(f.DepMin+delay) * time.Minute)
 	off := dep.Add(12 * time.Minute)
+	s.Departures.Add(1)
 	if s.DSP == nil {
 		if err := t.Depart(ctx, f, day, reg, delay); err != nil {
 			s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
@@ -1430,7 +1451,12 @@ func (s *Sim) departure(ctx context.Context, t *host.Tenant, f world.Flight, day
 	}
 	go func() {
 		if err := s.DSP.Report(ctx, c, f, reg, acars.KindDEP, dep, off); err != nil {
-			s.log.Debug("aircraft report not sent", "flight", f.Carrier+f.Number, "err", err)
+			// The first few are worth a warning: a provider that cannot
+			// report is a sky with no aircraft in it. After that the count
+			// in the run log carries the story.
+			if s.reportErrs.Add(1) <= 20 {
+				s.log.Warn("aircraft report not sent", "flight", f.Carrier+f.Number, "carrier", c.Designator, "err", err)
+			}
 		}
 		if s.ANSP != nil {
 			if err := s.ANSP.Departure(ctx, c, f, day, off); err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/store"
 )
 
 func freeAddr(t *testing.T) string {
@@ -193,4 +194,46 @@ func TestMultiMachineWorld(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// A region flies its slice of the day the way the single box does: a
+// departure reaches its datalink provider, which reports it to the airline
+// over the core's switch, and the movement comes out the other side.
+func TestRegionFliesItsDay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	coreAddr := freeAddr(t)
+	coreURL := "http://" + coreAddr
+	core, err := BootCore(ctx, m, Options{Console: coreAddr, Log: log, Warp: 60}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("core: %v", err)
+	}
+	defer core.Sim.Stop()
+	regAddr := freeAddr(t)
+	r, err := BootRegion(ctx, m, Options{Log: log, Warp: 60}, coreURL, "http://"+regAddr, 0, 1)
+	if err != nil {
+		t.Fatalf("region: %v", err)
+	}
+	defer r.Sim.Stop()
+	serveMux(t, ctx, regAddr, r.Mux)
+	deadline := time.Now().Add(30 * time.Second)
+	for len(core.Sim.Switch.LivePeers()) < len(m.Carriers)+2 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if r.Sim.DSP == nil {
+		t.Fatal("the region runs no datalink provider")
+	}
+	go r.Sim.FlyDay(ctx)
+	deadline = time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs, _ := r.Sim.DSP.Store.ListMessages(ctx, store.MessageFilter{Limit: 5})
+		if len(msgs) > 0 && core.Sim.Movements.Load() > 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	msgs, _ := r.Sim.DSP.Store.ListMessages(ctx, store.MessageFilter{Limit: 5})
+	t.Fatalf("after 40s at warp 60 the region's datalink provider holds %d messages and the core saw %d movements (departures issued %d, report failures %d)", len(msgs), core.Sim.Movements.Load(), r.Sim.Departures.Load(), r.Sim.reportErrs.Load())
 }

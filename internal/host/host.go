@@ -525,11 +525,23 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 		if len(r.Passengers) == 0 {
 			continue
 		}
-		class := "Y"
+		// A number flies several legs in a day; the list for this one
+		// carries the passengers boarding here, not everyone on the number.
+		class, onLeg := "Y", false
 		for _, sg := range r.Segments {
-			if sg.Carrier == f.Carrier && sg.FlightNum == f.Number && sg.Class != "" {
+			if sg.Carrier != f.Carrier || sg.FlightNum != f.Number {
+				continue
+			}
+			if sg.Board != "" && sg.Board != f.From {
+				continue
+			}
+			onLeg = true
+			if sg.Class != "" {
 				class = sg.Class
 			}
+		}
+		if !onLeg {
+			continue
 		}
 		n := pnl.Name{
 			Party:   len(r.Passengers),

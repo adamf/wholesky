@@ -64,17 +64,19 @@ func TestMeasureFilledCarrierOnPostgres(t *testing.T) {
 	node := pg.Node(biggest)
 	started := time.Now()
 	plan, err := Day(ctx, sub, Options{LoadFactor: 0.85, Seed: 1, Day: time.Date(2025, 11, 26, 0, 0, 0, 0, time.UTC)},
-		func(ctx context.Context, carrier string, recs []*pnr.PNR) error { return node.LoadPNRs(ctx, recs, "fill") })
+		func(ctx context.Context, carrier string, recs []*pnr.PNR) error {
+			return node.LoadPNRs(ctx, recs, "fill")
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
 	took := time.Since(started)
 	var rows int64
 	var pnrBytes, eventBytes, dbBytes int64
-	pool.QueryRow(ctx, `SELECT count(*) FROM pnr`).Scan(&rows)                                         //nolint:errcheck
-	pool.QueryRow(ctx, `SELECT pg_total_relation_size('pnr')`).Scan(&pnrBytes)                         //nolint:errcheck
-	pool.QueryRow(ctx, `SELECT pg_total_relation_size('pnr_event')`).Scan(&eventBytes)                 //nolint:errcheck
-	pool.QueryRow(ctx, `SELECT pg_database_size(current_database())`).Scan(&dbBytes)                    //nolint:errcheck
+	pool.QueryRow(ctx, `SELECT count(*) FROM pnr`).Scan(&rows)                         //nolint:errcheck
+	pool.QueryRow(ctx, `SELECT pg_total_relation_size('pnr')`).Scan(&pnrBytes)         //nolint:errcheck
+	pool.QueryRow(ctx, `SELECT pg_total_relation_size('pnr_event')`).Scan(&eventBytes) //nolint:errcheck
+	pool.QueryRow(ctx, `SELECT pg_database_size(current_database())`).Scan(&dbBytes)   //nolint:errcheck
 	t.Logf("%s: %d flights, %d records, %d passengers of %d seats (%d connecting) in %s", biggest, plan.Flights, plan.Records, plan.Passengers, plan.Seats, plan.Connecting, took.Round(time.Millisecond))
 	t.Logf("rows=%d pnr=%.1fMB (%.0f B/row) events=%.1fMB db=%.1fMB", rows, float64(pnrBytes)/1e6, float64(pnrBytes)/float64(max(rows, 1)), float64(eventBytes)/1e6, float64(dbBytes)/1e6)
 }

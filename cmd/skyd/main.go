@@ -153,9 +153,7 @@ func run() error {
 			"console", "http://"+*console, "eye", "http://"+*console+"/eye")
 		go s.FlyDay(ctx)
 		go s.Demand(ctx, *demand, *seed)
-		return watch(ctx, log, func() (int, int64) {
-			return len(s.Switch.LivePeers()), s.Movements.Load()
-		})
+		return watch(ctx, log, s.RunStats)
 
 	case "core":
 		c, err := sim.BootCore(ctx, &m, opts, *advertise)
@@ -165,9 +163,7 @@ func run() error {
 		defer c.Sim.Stop()
 		log.Info("core up", "console", "http://"+*console,
 			"advertise", *advertise)
-		return watch(ctx, log, func() (int, int64) {
-			return len(c.Sim.Switch.LivePeers()), c.Sim.Movements.Load()
-		})
+		return watch(ctx, log, c.Sim.RunStats)
 
 	case "gds":
 		if *gdsDesig == "" || *coreURL == "" {
@@ -180,8 +176,8 @@ func run() error {
 		defer g.Sim.Stop()
 		go g.Sim.Demand(ctx, *demand, *seed)
 		log.Info("gds up", "designator", *gdsDesig, "core", *coreURL, "self", self)
-		return serveAndWatch(ctx, log, *console, g.Mux, func() (int, int64) {
-			return 1, g.Sim.DemBooked.Load()
+		return serveAndWatch(ctx, log, *console, g.Mux, func() []any {
+			return []any{"booked", g.Sim.DemBooked.Load(), "pos", g.Sim.Pos(), "warp", g.Sim.Warp()}
 		})
 
 	case "region":
@@ -195,8 +191,8 @@ func run() error {
 		defer r.Sim.Stop()
 		go r.Sim.FlyDay(ctx)
 		log.Info("region up", "shard", *shard, "core", *coreURL, "self", self)
-		return serveAndWatch(ctx, log, *console, r.Mux, func() (int, int64) {
-			return len(r.Sim.Tenants), r.Sim.Movements.Load()
+		return serveAndWatch(ctx, log, *console, r.Mux, func() []any {
+			return append([]any{"tenants", len(r.Sim.Tenants)}, r.Sim.RunStats()...)
 		})
 	}
 	return fmt.Errorf("unknown role %q", *role)
@@ -219,7 +215,7 @@ func parseByteSize(s string) (int64, error) {
 }
 
 // watch is the run loop: a heartbeat log until the context ends.
-func watch(ctx context.Context, log *slog.Logger, snap func() (int, int64)) error {
+func watch(ctx context.Context, log *slog.Logger, snap func() []any) error {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
@@ -228,15 +224,14 @@ func watch(ctx context.Context, log *slog.Logger, snap func() (int, int64)) erro
 			log.Info("stopped")
 			return nil
 		case <-tick.C:
-			links, moves := snap()
-			log.Info("sky", "links", links, "movements", moves)
+			log.Info("sky", snap()...)
 		}
 	}
 }
 
 // serveAndWatch serves a machine-local mux and heartbeats.
 func serveAndWatch(ctx context.Context, log *slog.Logger, addr string,
-	mux *http.ServeMux, snap func() (int, int64)) error {
+	mux *http.ServeMux, snap func() []any) error {
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
