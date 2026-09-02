@@ -112,7 +112,7 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	if len(itin) == 1 && rng.Intn(100) < 18 {
 		if err := s.bookNDC(g, itin[0].Carrier, itin[0].Number, itin[0].From, itin[0].To,
 			itin[0].DepMin, class, day, surname); err != nil {
-			s.DemFailed.Add(1)
+			s.noteDemandFailure(err)
 			return
 		}
 		s.DemNDC.Add(1)
@@ -164,7 +164,7 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 		})
 	}
 	if err != nil {
-		s.DemFailed.Add(1)
+		s.noteDemandFailure(err)
 		return
 	}
 	s.DemBooked.Add(1)
@@ -330,4 +330,13 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// noteDemandFailure counts a booking that did not happen and, for one in a
+// hundred, says why: a day of silent failures cost an evening once, when
+// every booking on the recorded day failed and the log showed a counter.
+func (s *Sim) noteDemandFailure(err error) {
+	if n := s.DemFailed.Add(1); n%100 == 1 {
+		s.log.Warn("demand booking failed", "err", err, "failed", n)
+	}
 }
