@@ -617,16 +617,22 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		for _, g := range s.GDSes {
-			items, err := g.Store.ListQueue(ctx, jstore.QueueFilter{})
+			// Counts are one grouped query; only the schedule-change queue
+			// is read item by item, for the airports its reasons name.
+			counts, err := g.Store.QueueCounts(ctx)
+			if err != nil {
+				continue
+			}
+			for q, n := range counts {
+				sum.Queues[q] += n
+			}
+			items, err := g.Store.ListQueue(ctx, jstore.QueueFilter{Queue: string(jstore.QueueScheduleChange)})
 			if err != nil {
 				continue
 			}
 			for _, it := range items {
-				sum.Queues[it.Queue]++
-				if it.Queue == string(jstore.QueueScheduleChange) {
-					if apt := airportOfReason(it.Reason); apt != "" {
-						sum.Halos[apt]++
-					}
+				if apt := airportOfReason(it.Reason); apt != "" {
+					sum.Halos[apt]++
 				}
 			}
 		}

@@ -221,6 +221,13 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		case <-tick.C:
 		}
 		n++
+		// Queue depths are a store read on one node; every fifth tick is
+		// plenty for a chart, and it is read before the lock is taken: a
+		// slow store must not stall every event handler and page behind it.
+		var depths map[string]int
+		if c.QueueDepths != nil && n%5 == 0 {
+			depths = c.QueueDepths()
+		}
 		c.mu.Lock()
 		per := func(x int64) float64 { return float64(x) / 2 }
 		c.sTotal.push(per(c.total))
@@ -247,10 +254,8 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		if c.Airborne != nil {
 			c.sAirborne.push(float64(c.Airborne()))
 		}
-		// Queue depths are a store read on one node; every fifth tick is
-		// plenty for a chart.
-		if c.QueueDepths != nil && n%5 == 0 {
-			c.latestQueues = c.QueueDepths()
+		if depths != nil {
+			c.latestQueues = depths
 		}
 		q := 0
 		for _, v := range c.latestQueues {

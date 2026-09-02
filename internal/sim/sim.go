@@ -550,13 +550,15 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
 	s.Stats.QueueDepths = func() map[string]int {
 		out := map[string]int{}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		for _, g := range s.GDSes {
-			items, err := g.Store.ListQueue(context.Background(), store.QueueFilter{})
+			counts, err := g.Store.QueueCounts(ctx)
 			if err != nil {
 				continue
 			}
-			for _, it := range items {
-				out[it.Queue]++
+			for q, n := range counts {
+				out[q] += n
 			}
 		}
 		return out
