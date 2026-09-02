@@ -347,7 +347,12 @@ The pattern that keeps paying: every time the world gets bigger, it finds
 real bugs in Jetway — twenty releases so far, each fix landed upstream with
 a regression test that was watched to fail first. Not yet: filling a
 recorded day to its real passenger load, weather systems that close regions
-rather than airports, and booking curves with real seasonality.
+rather than airports, and booking curves with real seasonality. The
+longer list of what a full airline runs and this world does not is in
+[docs/missing-systems.md](docs/missing-systems.md); what it would take to
+run jetway itself in production, on Google Cloud with real load and high
+availability, is in
+[jetway's docs/production-gcp.md](https://github.com/adamf/jetway/blob/main/docs/production-gcp.md).
 
 ## Licence
 
