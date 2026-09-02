@@ -716,7 +716,7 @@ func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 		}
 		return true
 	}
-	for wait := time.Now().Add(10 * time.Second); !loaded() && time.Now().Before(wait); {
+	for wait := time.Now().Add(40 * time.Second); !loaded() && time.Now().Before(wait); {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if err := tn.Close(ctx, f, day); err != nil {

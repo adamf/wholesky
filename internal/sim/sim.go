@@ -1418,6 +1418,13 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 		case gateway.EvPNR:
 			s.Eye.OnBooking()
 			s.Stats.OnBooking()
+			// The price rides the record; count it once, when the record
+			// is first written.
+			if p, ok := ev.Data.(map[string]any); ok {
+				if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Version <= 1 {
+					s.Stats.OnRevenue(rec.Pricing.Total)
+				}
+			}
 		case gateway.EvQueue:
 			if qi, ok := ev.Data.(*store.QueueItem); ok {
 				s.Eye.OnQueue(string(qi.Queue), qi.Reason)

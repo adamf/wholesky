@@ -91,6 +91,7 @@ type welcome struct {
 // the core's instruments.
 type shardSummary struct {
 	Bookings int64            `json:"bookings"`
+	Revenue  int64            `json:"revenue"` // minor units
 	Queues   map[string]int   `json:"queues"`
 	Halos    map[string]int64 `json:"halos"`
 }
@@ -107,6 +108,7 @@ type Core struct {
 	nodeOwner    map[string]string // node code -> peer URL, from the last merge
 	latestQueues map[string]int
 	lastBookings int64
+	lastRevenue  int64
 }
 
 // BootCore stands up the switch and the room you watch it from.
@@ -285,7 +287,7 @@ func (c *Core) pollSummaries(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		var bookings int64
+		var bookings, revenue int64
 		queues := map[string]int{}
 		halos := map[string]int64{}
 		for _, p := range c.livePeers() {
@@ -300,6 +302,7 @@ func (c *Core) pollSummaries(ctx context.Context) {
 				continue
 			}
 			bookings += sum.Bookings
+			revenue += sum.Revenue
 			for k, v := range sum.Queues {
 				queues[k] += v
 			}
@@ -312,9 +315,12 @@ func (c *Core) pollSummaries(ctx context.Context) {
 		c.mu.Lock()
 		delta := bookings - c.lastBookings
 		c.lastBookings = bookings
+		rdelta := revenue - c.lastRevenue
+		c.lastRevenue = revenue
 		c.latestQueues = queues
 		c.mu.Unlock()
 		c.Sim.Stats.AddBookings(delta)
+		c.Sim.Stats.AddRevenue(rdelta)
 	}
 }
 
@@ -537,14 +543,25 @@ func federate(ctx context.Context, s *Sim, coreURL string, reg registration,
 
 // shardRoutes serves the compact state the core's instruments poll, plus the
 // full local fleet endpoints the core proxies drill-downs to.
-func shardRoutes(mux *http.ServeMux, s *Sim, bookings func() int64) {
+func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
+	bk := func() int64 {
+		if bookings == nil {
+			return 0
+		}
+		return bookings()
+	}
+	rev := func() int64 {
+		if revenue == nil {
+			return 0
+		}
+		return revenue()
+	}
 	s.Fleet.Routes(mux)
 	mux.HandleFunc("/node/", s.serveNodeConsole)
 	mux.HandleFunc("GET /shard/summary.json", func(w http.ResponseWriter, r *http.Request) {
 		sum := shardSummary{Queues: map[string]int{}, Halos: map[string]int64{}}
-		if bookings != nil {
-			sum.Bookings = bookings()
-		}
+		sum.Bookings = bk()
+		sum.Revenue = rev()
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		for _, g := range s.GDSes {
@@ -678,7 +695,7 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	// The summary's booking count is the same number the single-box panel
 	// shows: record events at this distribution system, fed off its own bus
 	// -- demand, console bookings and NDC alike.
-	shardRoutes(mux, s, s.Stats.BookingsTotal)
+	shardRoutes(mux, s, s.Stats.BookingsTotal, s.Stats.RevenueTotal)
 	return &GDSMachine{Sim: s, Node: g, Mux: mux}, nil
 }
 
@@ -792,6 +809,6 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	s.log.Info("region up", "shard", shard, "of", shards, "carriers", mine)
 
 	mux := http.NewServeMux()
-	shardRoutes(mux, s, nil)
+	shardRoutes(mux, s, nil, nil)
 	return &RegionMachine{Sim: s, Mux: mux}, nil
 }

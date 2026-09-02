@@ -54,6 +54,8 @@ type Collector struct {
 	kindDCS, kindOther            int64
 	kindACARS, kindATS            int64
 	undeliverable, bookings, mvts int64
+	revenue                       int64 // cents priced this window
+	tRevenue                      int64
 	queuePlaced                   int64
 
 	// series, per second
@@ -62,6 +64,7 @@ type Collector struct {
 	sPNL, sBag, sDCS                ring
 	sACARS, sATS                    ring
 	sUndeliv, sBookings, sMovements ring
+	sRevenue                        ring
 	sAirborne, sQueued              ring
 
 	// running totals for the headline numbers
@@ -120,6 +123,7 @@ func (c *Collector) SetSnapshotPath(path string) {
 	}
 	c.tTotal = snap.Totals["messages"]
 	c.tBookings = snap.Totals["bookings"]
+	c.tRevenue = snap.Totals["revenue"]
 	c.tMovements = snap.Totals["movements"]
 	c.tUndeliv = snap.Totals["undeliverable"]
 	c.tRebooked = snap.Totals["rebooked"]
@@ -162,6 +166,8 @@ func (c *Collector) ringByName(name string) *ring {
 		return &c.sUndeliv
 	case "bookings":
 		return &c.sBookings
+	case "revenue":
+		return &c.sRevenue
 	case "movements":
 		return &c.sMovements
 	case "airborne":
@@ -183,7 +189,7 @@ func (c *Collector) persist() {
 	snap := snapshot{
 		Series: map[string][]float64{},
 		Totals: map[string]int64{
-			"messages": c.tTotal, "bookings": c.tBookings,
+			"messages": c.tTotal, "bookings": c.tBookings, "revenue": c.tRevenue,
 			"movements": c.tMovements, "undeliverable": c.tUndeliv, "rebooked": c.tRebooked,
 		},
 	}
@@ -232,11 +238,12 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		c.sOther.push(per(c.kindOther))
 		c.sUndeliv.push(per(c.undeliverable))
 		c.sBookings.push(per(c.bookings))
+		c.sRevenue.push(per(c.revenue) / 100) // dollars a second
 		c.sMovements.push(per(c.mvts))
 		c.total, c.typeb, c.edifact = 0, 0, 0
 		c.kindAVS, c.kindMVT, c.kindRES, c.kindASM, c.kindOther = 0, 0, 0, 0, 0
 		c.kindPNL, c.kindBag, c.kindDCS, c.kindACARS, c.kindATS = 0, 0, 0, 0, 0
-		c.undeliverable, c.bookings, c.mvts, c.queuePlaced = 0, 0, 0, 0
+		c.undeliverable, c.bookings, c.mvts, c.queuePlaced, c.revenue = 0, 0, 0, 0, 0
 		if c.Airborne != nil {
 			c.sAirborne.push(float64(c.Airborne()))
 		}
@@ -317,6 +324,36 @@ func (c *Collector) BookingsTotal() int64 {
 	return c.tBookings
 }
 
+// OnRevenue records the price of a booking made on this machine, in minor
+// units, when the record was first written with a price.
+func (c *Collector) OnRevenue(cents int64) {
+	if cents <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.revenue += cents
+	c.tRevenue += cents
+	c.mu.Unlock()
+}
+
+// RevenueTotal reports the running priced total in minor units.
+func (c *Collector) RevenueTotal() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tRevenue
+}
+
+// AddRevenue folds a federated delta in, like AddBookings.
+func (c *Collector) AddRevenue(cents int64) {
+	if cents <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.revenue += cents
+	c.tRevenue += cents
+	c.mu.Unlock()
+}
+
 // AddBookings folds a federated delta in: on a core machine the bookings
 // happen on other machines, and their counts arrive by poll rather than by
 // bus. The delta feeds the same window and total the bus path uses, so the
@@ -377,6 +414,7 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 
 			"undeliverable": c.sUndeliv.slice(),
 			"bookings":      c.sBookings.slice(), "movements": c.sMovements.slice(),
+			"revenue":  c.sRevenue.slice(),
 			"airborne": c.sAirborne.slice(), "queued": c.sQueued.slice(),
 		},
 		"totals": map[string]int64{
