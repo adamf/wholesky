@@ -68,6 +68,7 @@ const pageHTML = `<!doctype html>
     day <i id="simclk">--:--</i>
     <a id="w0" title="pause the day">⏸</a><a id="w60" title="one hour per minute">▶</a><a id="w300" title="five hours per minute">▶▶</a><a id="w600" title="ten hours per minute">▶▶▶</a></span>
   <span class="tot" title="running totals since this world booted">since boot — msgs <i id="msg">0</i> · mvts <i id="mvt">0</i> · bkgs <i id="bkg">0</i></span>
+  <span class="tot" id="money" title="aloft: what every ticket on an aircraft in the air was sold for, synthetic tariff · sold: everything purchased since boot" style="display:none">aloft <i id="aloft">$0</i> · sold <i id="sold">$0</i></span>
   <a class="nav" id="legendlink">what is this? →</a>
   <a class="nav" href="/fleet">fleet →</a>
   <a class="nav" href="/stats">stats →</a>
@@ -207,6 +208,9 @@ function connect(){
     else if(d.t==="reopen"){ closed.delete(d.airport); renderClosed(); }
     else if(d.t==="stats"){ air.textContent=d.airborne; mvt.textContent=fmtN(d.movements);
       bkg.textContent=fmtN(d.bookings); msg.textContent=fmtN(d.messages);
+      if(d.aloft!==undefined||d.sold!==undefined){ document.getElementById("money").style.display="";
+        const usd=c=>"$"+Math.round((c||0)/100).toLocaleString();
+        document.getElementById("aloft").textContent=usd(d.aloft); document.getElementById("sold").textContent=usd(d.sold); }
       /* live rate: the delta between two-second snapshots, lightly smoothed */
       const nowW=Date.now();
       if(prevMsgTotal!==null && nowW>prevMsgAt){

@@ -81,6 +81,12 @@ type Eye struct {
 	// the bookings riding on it: what the distribution world holds on a
 	// flight, straight from the stores.
 	FlightPNRs func(flight, board string) []FlightRecord
+	// Aloft, when set, prices what is in the air: the ticket revenue on the
+	// legs named, which the Eye asks for every airborne aircraft. Sold is
+	// everything the day's purchases came to. Both in minor units.
+	Aloft func(keys []string) int64
+	Sold  func() int64
+
 	// FlightDCS answers the other half of the drill-through: what departure
 	// control says about the flight, or nil when this machine does not run
 	// the carrier.
@@ -561,6 +567,27 @@ func (e *Eye) time(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"warp":%d}`, req.Warp) //nolint:errcheck
 }
 
+// legKey names an aircraft's leg the way the revenue ledger does: carrier,
+// number without leading zeros, boarding point.
+func legKey(flight, board string) string {
+	if len(flight) < 3 {
+		return flight + "/" + board
+	}
+	return strings.ToUpper(flight[:2]) + strings.TrimLeft(flight[2:], "0") + "/" + strings.ToUpper(board)
+}
+
+// AirborneKeys names every leg in the air, for a machine that prices them
+// elsewhere.
+func (e *Eye) AirborneKeys() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	keys := make([]string, 0, len(e.planes))
+	for _, p := range e.planes {
+		keys = append(keys, legKey(p.Flight, p.From))
+	}
+	return keys
+}
+
 // flightRecords answers the aircraft drill-through.
 func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
 	if e.FlightPNRs == nil {
@@ -734,6 +761,13 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 					edges[e2.k] = e2.v
 				}
 			}
+			var keys []string
+			if e.Aloft != nil {
+				keys = make([]string, 0, len(e.planes))
+				for _, p := range e.planes {
+					keys = append(keys, legKey(p.Flight, p.From))
+				}
+			}
 			ev := map[string]any{
 				"t": "stats", "messages": e.messages, "movements": e.movements,
 				"bookings": e.bookings, "airborne": len(e.planes), "closed": closed,
@@ -746,6 +780,15 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 				m := int(e.SimPos())
 				ev["sim"] = fmt.Sprintf("%02d:%02d", m/60, m%60)
 			}
+			e.mu.Unlock()
+			if e.Aloft != nil {
+				ev["aloft"] = e.Aloft(keys)
+			}
+			if e.Sold != nil {
+				ev["sold"] = e.Sold()
+			}
+			e.mu.Lock()
+
 			b, _ := json.Marshal(ev)
 			e.mu.Unlock()
 			fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck

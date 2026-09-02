@@ -21,6 +21,7 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/wholesky/internal/host"
 
+	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -1314,6 +1315,13 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	}
 	if got := s.Stats.RevenueTotal(); got != rec.Pricing.Total {
 		t.Errorf("revenue counted %d, want the booking's %d", got, rec.Pricing.Total)
+	}
+	// And the ledger holds it against the leg, for the money in the air.
+	if got := s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}); got != rec.Pricing.Total {
+		t.Errorf("the leg's ledger holds %d, want the booking's %d", got, rec.Pricing.Total)
+	}
+	if s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, "ZZZ")}) != 0 {
+		t.Errorf("another boarding point should hold nothing")
 	}
 	// The synthetic world sells thirty days out; a 45-day advance purchase
 	// fare cannot be sold that close and the rules refuse it.

@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adamf/jetway/pkg/api"
@@ -109,6 +110,50 @@ type Core struct {
 	latestQueues map[string]int
 	lastBookings int64
 	lastRevenue  int64
+	aloft        atomic.Int64
+}
+
+// pollAloft asks every distribution and region machine what the legs now
+// airborne were sold for, and keeps the sum for the globe's bar.
+func (c *Core) pollAloft(ctx context.Context) {
+	client := &http.Client{Timeout: 4 * time.Second}
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		keys := c.Sim.Eye.AirborneKeys()
+		if len(keys) == 0 {
+			c.aloft.Store(0)
+			continue
+		}
+		body, err := json.Marshal(keys)
+		if err != nil {
+			continue
+		}
+		var total int64
+		for _, p := range c.livePeers() {
+			if p.Role != "gds" && p.Role != "region" {
+				continue
+			}
+			resp, err := client.Post(p.URL+"/shard/aloft", "application/json", bytes.NewReader(body))
+			if err != nil {
+				continue
+			}
+			var out struct {
+				Cents int64 `json:"cents"`
+			}
+			err = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out)
+			resp.Body.Close()
+			if err == nil {
+				total += out.Cents
+			}
+		}
+		c.aloft.Store(total)
+	}
 }
 
 // BootCore stands up the switch and the room you watch it from.
@@ -150,6 +195,10 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	}
 	s.Eye.FlightPNRs = c.federatedFlightRecords
 	s.Eye.FlightDCS = c.federatedFlightDCS
+	// The prices live on the machines that sold or filled the records; the
+	// core asks them for the legs in the air a few times a minute.
+	s.Eye.Aloft = func([]string) int64 { return c.aloft.Load() }
+	go c.pollAloft(ctx)
 
 	fed := http.NewServeMux()
 	c.Routes(fed)
@@ -588,6 +637,15 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(recs) //nolint:errcheck
+	})
+	mux.HandleFunc("POST /shard/aloft", func(w http.ResponseWriter, r *http.Request) {
+		var keys []string
+		if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&keys); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int64{"cents": s.Ledger.Sum(keys)}) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /shard/dcs/{flight}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

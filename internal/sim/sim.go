@@ -40,6 +40,7 @@ import (
 	"github.com/adamf/wholesky/internal/fill"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
@@ -173,7 +174,10 @@ type Sim struct {
 	gdsDB    *store.Postgres
 	// tariff is the world's fare filing, derived from the schedule: what
 	// the distribution systems price against and the filler prices with.
-	tariff     *tariff.Synthetic
+	tariff *tariff.Synthetic
+	// Ledger is what the day's tickets were sold for, by leg: fed where the
+	// price is known, read by the globe for the money in the air.
+	Ledger     *revenue.Ledger
 	dayMu      sync.Mutex
 	dayStarted time.Time
 	sellDays   int
@@ -309,6 +313,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		dayStarted:      time.Now(),
 		tariff:          tariff.FromManifest(m),
+		Ledger:          revenue.New(),
 		fill:            opts.Fill,
 		fillSeed:        opts.FillSeed,
 		flightsByOrigin: byOrigin,
@@ -330,6 +335,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Eye.Chaos = s.chaos
 	s.Eye.FlightPNRs = s.flightRecords
 	s.Eye.FlightDCS = s.flightDCS
+	s.Eye.Aloft = s.Ledger.Sum
+	s.Eye.Sold = s.Stats.RevenueTotal
 	s.Eye.WarpNow = s.clock.Warp
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp
@@ -738,7 +745,19 @@ func (s *Sim) fillDay(ctx context.Context) {
 		if !ok {
 			return nil
 		}
-		return t.Store.LoadPNRs(ctx, recs, "fill")
+		if err := t.Store.LoadPNRs(ctx, recs, "fill"); err != nil {
+			return err
+		}
+		// The pre-sold day's money, by leg. A codeshare is two records of
+		// one sale; the operator's copy carries the marketing carrier's
+		// locator and is not counted again.
+		for _, r := range recs {
+			if r.Origin.Channel == "codeshare" {
+				continue
+			}
+			s.Ledger.Record(r)
+		}
+		return nil
 	}
 	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff}, sink)
 	if err != nil {
@@ -1423,6 +1442,7 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 			if p, ok := ev.Data.(map[string]any); ok {
 				if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Version <= 1 {
 					s.Stats.OnRevenue(rec.Pricing.Total)
+					s.Ledger.Record(rec)
 				}
 			}
 		case gateway.EvQueue:
