@@ -71,6 +71,7 @@ func run() error {
 		linkBind  = flag.String("link-bind", "", "core: host the switch listeners bind; empty binds loopback")
 		gdsList   = flag.String("gds-list", "", "region: comma-separated designators of the GDSes this deployment runs; empty means all five")
 		memLimit  = flag.String("memlimit", "", "soft memory limit for the Go runtime, e.g. 3200MiB; empty leaves GOMEMLIMIT alone")
+		tenantDSN = flag.String("tenant-dsn", "", "all/region: Postgres DSN backing every carrier tenant's records (one database, one node per carrier, purged each sim day); $NAME reads the environment")
 	)
 	flag.Parse()
 	if *pprofAddr != "" {
@@ -115,6 +116,7 @@ func run() error {
 		GDSCount:      *gdsCount,
 		StatsSnapshot: *statsSnap,
 		LinkBind:      *linkBind,
+		TenantDSN:     *tenantDSN,
 	}
 	if *gdsList != "" {
 		for _, d := range strings.Split(*gdsList, ",") {

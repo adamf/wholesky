@@ -119,7 +119,10 @@ The deployed shape splits along the world's real seams:
   of demand: ~3,500 bookings a minute between them, which is real global
   reservations volume. Bookings happen at the GDS, so that is where the
   load lives.
-- **region0 / region1** — the 518 carriers, sharded by stable hash, each
+- **region0 / region1** — the 518 carriers, sharded by stable hash, their
+  books of record in one shared Managed Postgres (one node per carrier,
+  purged when the simulated day ends, because 259 reservations systems'
+  records in RAM is what the 4GB machines ran out of), each
   region flying its slice of the flight day and running its carriers'
   airports: every tenant is a reservations system *and* a departure
   control system, and the two talk over the network like the separate

@@ -14,6 +14,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -115,6 +116,12 @@ type Options struct {
 	// two channels, a schedule change fanning out to every subscriber -- only
 	// exists when there is more than one.
 	GDSCount int
+	// TenantDSN, when set, backs every carrier tenant's records with one
+	// shared Postgres: each tenant is a node view of it, and its message
+	// log stays in bounded memory. Records are purged when the simulated
+	// day wraps, so the database is one day deep. A value starting with
+	// "$" names an environment variable holding the DSN.
+	TenantDSN string
 	// GDSDSN, when set, backs the first distribution system with Postgres
 	// instead of memory: the durable store jetway ships, exercised by the
 	// world instead of only by its own tests.
@@ -135,8 +142,14 @@ type Options struct {
 
 // Sim is a running world.
 type Sim struct {
-	Manifest *world.Manifest
-	Switch   *node.Node
+	// tenantDB is the shared Postgres behind every tenant's records, when
+	// the deployment has one; dayStarted is the wall moment the current
+	// simulated day began, which is what the end-of-day purge cuts at.
+	tenantDB   *store.Postgres
+	dayMu      sync.Mutex
+	dayStarted time.Time
+	Manifest   *world.Manifest
+	Switch     *node.Node
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
 	// first, which is also the movement watcher.
 	GDSes       []*GDSNode
@@ -249,6 +262,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 
 	s := &Sim{
 		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
+		dayStarted:      time.Now(),
 		flightsByOrigin: byOrigin,
 		BookingDate:     time.Now().UTC().AddDate(0, 0, 30),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
@@ -347,6 +361,15 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	for _, g := range gdses {
 		distribution = append(distribution, g.Address)
 	}
+	tenantMsgs := opts.TenantMaxMessages
+	if tenantMsgs == 0 {
+		tenantMsgs = opts.MaxMessages
+	}
+	tenantStore, err := s.tenantStores(ctx, opts, tenantMsgs)
+	if err != nil {
+		s.Stop()
+		return nil, err
+	}
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
 		switchAddr := sw.Addr("link-net")
@@ -371,6 +394,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          inboundDelay,
+			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
 			Log:                   log,
 		})
@@ -444,6 +468,81 @@ func (s *Sim) Stop() {
 	if s.Switch != nil {
 		s.Switch.Close()
 	}
+	if s.tenantDB != nil {
+		s.tenantDB.Close()
+	}
+}
+
+// tenantStores opens the shared tenant database named by the options and
+// returns a factory for one tenant's store: a node view of Postgres for the
+// records, bounded memory for the message log. Without a DSN the factory
+// returns nil and the tenant keeps everything in memory.
+func (s *Sim) tenantStores(ctx context.Context, opts Options, maxMsgs int) (func(code string) store.Store, error) {
+	dsn := opts.TenantDSN
+	if strings.HasPrefix(dsn, "$") {
+		dsn = os.Getenv(strings.TrimPrefix(dsn, "$"))
+	}
+	if dsn == "" {
+		return func(string) store.Store { return nil }, nil
+	}
+	// One pool serves hundreds of tenants; the default of a handful of
+	// connections would serialise them behind each other. And a managed
+	// database is usually reached through a transaction-pooling proxy,
+	// which cannot carry a cached prepared statement from one transaction
+	// to the next, so statements are described per call.
+	for _, kv := range []string{"pool_max_conns=24", "default_query_exec_mode=exec"} {
+		key := strings.SplitN(kv, "=", 2)[0]
+		if strings.Contains(dsn, key) {
+			continue
+		}
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + kv
+	}
+	pg, err := store.OpenPostgres(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("tenant database: %w", err)
+	}
+	if err := store.MigrateSchema(ctx, pg); err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("tenant database: migrate: %w", err)
+	}
+	s.tenantDB = pg
+	return func(code string) store.Store {
+		mem := store.NewMem()
+		mem.MaxMessages = maxMsgs
+		return store.Split{Messages: mem, Records: pg.Node(code)}
+	}, nil
+}
+
+// purgeTenants discards every tenant's records and messages older than a
+// moment: the end of a simulated day, after which what was booked for it
+// has flown or not, and the book of record starts the next day clean.
+// Sequential and paced, because hundreds of deletes at once on the shared
+// database is a stampede on the day's first departures.
+func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
+	var msgs, recs int
+	codes := make([]string, 0, len(s.Tenants))
+	for code := range s.Tenants {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	for _, code := range codes {
+		if ctx.Err() != nil {
+			return
+		}
+		got, err := s.Tenants[code].Store.Purge(ctx, before)
+		if err != nil {
+			s.log.Warn("end-of-day purge failed", "carrier", code, "err", err)
+			continue
+		}
+		msgs += got.Messages
+		recs += got.Records
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "records", recs, "messages", msgs)
 }
 
 // flightRecords is the globe's drill-through: every booking any channel
@@ -615,7 +714,14 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		}
 		cur := pos(time.Now())
 		if cur < prev {
-			prev = 0 // the day wrapped; begin again
+			// The day wrapped. What was booked for it has flown or not;
+			// the tenants' books of record start the new day clean.
+			prev = 0
+			s.dayMu.Lock()
+			before := s.dayStarted
+			s.dayStarted = time.Now()
+			s.dayMu.Unlock()
+			go s.purgeTenants(ctx, before)
 		}
 		if cur-prev > maxCatchUp {
 			prev = cur - maxCatchUp

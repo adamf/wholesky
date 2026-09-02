@@ -864,3 +864,51 @@ func TestSetWarpBounds(t *testing.T) {
 		t.Errorf("warp = %d after pause", got)
 	}
 }
+
+// The end of a simulated day clears the tenants' books of record: what was
+// booked for it has flown or not, and the next day starts clean.
+func TestEndOfDayPurgeClearsTenantBooks(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	res, err := s.Book(ctx, f, "Y", 0, "PURGEME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if ok, _ := s.Settled(ctx, res.PNR.RecordLocator); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("never settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	tn := s.Tenants[c.Designator]
+	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	if recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wire, 100); len(recs) != 1 {
+		t.Fatalf("the carrier holds %d records before the purge", len(recs))
+	}
+	// A purge cut before the booking leaves it; one cut after takes it.
+	s.purgeTenants(ctx, time.Now().Add(-time.Hour))
+	if recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wire, 100); len(recs) != 1 {
+		t.Fatalf("a purge cut in the past removed a fresh record")
+	}
+	s.purgeTenants(ctx, time.Now().Add(time.Second))
+	if recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wire, 100); len(recs) != 0 {
+		t.Fatalf("the carrier still holds %d records after the day ended", len(recs))
+	}
+	// The distribution system's book is its own; the tenant's day ending
+	// does not touch it.
+	if _, err := s.GDSStore.GetPNR(ctx, res.PNR.RecordLocator); err != nil {
+		t.Errorf("the GDS lost the record: %v", err)
+	}
+}

@@ -679,6 +679,15 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	}
 	partners := partnerAddresses(m.Carriers, s.Flights)
 	distribution := distributionAddresses(opts.GDSList)
+	tenantMsgs := opts.TenantMaxMessages
+	if tenantMsgs == 0 {
+		tenantMsgs = opts.MaxMessages
+	}
+	tenantStore, err := s.tenantStores(ctx, opts, tenantMsgs)
+	if err != nil {
+		s.Stop()
+		return nil, err
+	}
 	mine := 0
 	for _, c := range m.Carriers {
 		if ShardOf(c.Designator, shards) != shard {
@@ -713,6 +722,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          inboundDelay,
+			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
 			Log:                   s.log,
 		})

@@ -111,8 +111,12 @@ type Options struct {
 	// AccountingCode is the carrier's three-digit numeric code, which leads
 	// its bag tags. Empty derives a stable stand-in from the designator.
 	AccountingCode string
-	Log            *slog.Logger
-	Bus            *gateway.Bus
+	// Store, when set, is the tenant's book of record -- a node view of a
+	// shared Postgres, wrapped so the message log stays in memory. Nil
+	// keeps everything in a bounded in-memory store.
+	Store store.Store
+	Log   *slog.Logger
+	Bus   *gateway.Bus
 }
 
 // Start brings one carrier up and dials its link.
@@ -129,8 +133,12 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		bus = gateway.NewBus(64)
 	}
 
-	st := store.NewMem()
-	st.MaxMessages, st.MaxRecords = opts.MaxMessages, opts.MaxRecords
+	var st store.Store = opts.Store
+	if st == nil {
+		mem := store.NewMem()
+		mem.MaxMessages, mem.MaxRecords = opts.MaxMessages, opts.MaxRecords
+		st = mem
+	}
 	gw := gateway.New(gateway.Identity{
 		Designator: c.Designator,
 		TTYAddress: c.TTYAddress,
