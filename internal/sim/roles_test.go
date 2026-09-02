@@ -225,6 +225,11 @@ func TestRegionFliesItsDay(t *testing.T) {
 	if r.Sim.DSP == nil {
 		t.Fatal("the region runs no datalink provider")
 	}
+	// The run log's line must not need a switch: a region has none, and a
+	// nil dereference here took both deployed regions down every 30s.
+	if line := r.Sim.RunStats(); len(line) == 0 {
+		t.Fatal("RunStats on a region returned nothing")
+	}
 	go r.Sim.FlyDay(ctx)
 	deadline = time.Now().Add(40 * time.Second)
 	for time.Now().Before(deadline) {

@@ -602,9 +602,15 @@ func (s *Sim) Pos() int  { return int(s.clock.Pos(time.Now())) }
 
 // RunStats is the run log's line: what this machine's day has done.
 func (s *Sim) RunStats() []any {
-	return []any{"links", len(s.Switch.LivePeers()), "movements", s.Movements.Load(),
+	out := []any{"movements", s.Movements.Load(),
 		"departures", s.Departures.Load(), "report_failures", s.reportErrs.Load(),
 		"pos", int(s.clock.Pos(time.Now())), "warp", s.clock.Warp()}
+	// Only the machine that runs the switch has links to count; a region or
+	// a distribution machine holds none of its own.
+	if s.Switch != nil {
+		out = append([]any{"links", len(s.Switch.LivePeers())}, out...)
+	}
+	return out
 }
 
 // rebuildInventories counts every tenant's book of record into its seat
