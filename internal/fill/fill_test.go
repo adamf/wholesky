@@ -130,3 +130,52 @@ func TestFillLoadsTheDay(t *testing.T) {
 		t.Errorf("the same seed should fill the same day: %d vs %d records", len(first), len(second))
 	}
 }
+
+// One party in a few thousand travels with a cello, and the cello has a
+// seat: a name of its own on the record, the CBBG request that tells the
+// airport what is in it, and a seat counted against the aircraft like any
+// other. Asked for on LinkedIn, and yes, it does.
+func TestACelloGetsASeat(t *testing.T) {
+	ctx := context.Background()
+	m := smallDay()
+	day := time.Date(2025, 11, 26, 0, 0, 0, 0, time.UTC)
+	var withCello []*pnr.PNR
+	sink := func(ctx context.Context, carrier string, recs []*pnr.PNR) error {
+		for _, r := range recs {
+			for _, p := range r.Passengers {
+				if p.Given == "CBBG" {
+					withCello = append(withCello, r)
+				}
+			}
+		}
+		return nil
+	}
+	if _, err := Day(ctx, m, Options{LoadFactor: 0.8, Seed: 11, Day: day, Cellos: 0.5}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(withCello) == 0 {
+		t.Fatal("half the parties were told to bring a cello and none did")
+	}
+	r := withCello[0]
+	cbbg := 0
+	for _, s := range r.SSRs {
+		if s.Code == "CBBG" && s.Text == "CELLO" {
+			cbbg++
+		}
+	}
+	if cbbg != 1 {
+		t.Errorf("a cello wants exactly one CBBG: %+v", r.SSRs)
+	}
+	seated := 0
+	for _, p := range r.Passengers {
+		if !p.Infant {
+			seated++
+		}
+	}
+	if r.Segments[0].Seats != seated || seated < 2 {
+		t.Errorf("the cello's seat should be counted: %d seats for %d seated names", r.Segments[0].Seats, seated)
+	}
+	if len(r.Tickets) != len(r.Passengers) {
+		t.Errorf("the cello is ticketed like everyone else: %d tickets, %d names", len(r.Tickets), len(r.Passengers))
+	}
+}

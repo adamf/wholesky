@@ -54,6 +54,11 @@ type Options struct {
 	Connecting float64
 	// Batch is how many records reach the sink at once. Default 2000.
 	Batch int
+	// Cellos is the share of parties travelling with an instrument too
+	// precious for the hold. It rides in a seat of its own, booked as a
+	// name of its own -- SURNAME/CBBG -- with the SSR that tells the
+	// airport what is sitting in 14C. Default one party in three thousand.
+	Cellos float64
 	// Secret is the locator secret convention the carriers' systems use, so
 	// filled locators are allocated from the same permutation as live ones
 	// and cannot collide with them: the fill takes counters from the top of
@@ -93,6 +98,9 @@ func (o Options) defaults() Options {
 	}
 	if o.Batch <= 0 {
 		o.Batch = 2000
+	}
+	if o.Cellos == 0 {
+		o.Cellos = 1.0 / 3000
 	}
 	if o.Secret == nil {
 		o.Secret = func(code string) []byte { return []byte("wholesky-" + code) }
@@ -313,12 +321,19 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 	}
 
 	// The party: adults, a share of children in parties of two or more, and
-	// now and then an infant on an adult's lap, who takes no seat.
-	kids := 0
-	if seats >= 2 && rng.Float64() < 0.28 {
-		kids = 1 + rng.Intn(min(seats-1, 3))
+	// now and then an infant on an adult's lap, who takes no seat. One party
+	// in a few thousand has a cello: it takes the last seat of the party,
+	// under the passenger's surname, and is as real a seat as any.
+	cello := seats >= 2 && rng.Float64() < opts.Cellos
+	people := seats
+	if cello {
+		people--
 	}
-	for i := 0; i < seats; i++ {
+	kids := 0
+	if people >= 2 && rng.Float64() < 0.28 {
+		kids = 1 + rng.Intn(min(people-1, 3))
+	}
+	for i := 0; i < people; i++ {
 		p := pnr.Passenger{Ref: i + 1, Surname: surname, Type: pnr.PaxAdult}
 		if i < kids {
 			p.Type = pnr.PaxChild
@@ -339,7 +354,10 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 		}
 		rec.Passengers = append(rec.Passengers, p)
 	}
-	if kids < seats && rng.Float64() < 0.03 {
+	if cello {
+		rec.Passengers = append(rec.Passengers, pnr.Passenger{Ref: len(rec.Passengers) + 1, Surname: surname, Given: "CBBG", Type: pnr.PaxAdult})
+	}
+	if kids < people && rng.Float64() < 0.03 {
 		rec.Passengers = append(rec.Passengers, pnr.Passenger{Ref: len(rec.Passengers) + 1, Surname: surname,
 			Given: givenChild[rng.Intn(len(givenChild))], Title: "INF", Type: pnr.PaxInfant, Infant: true})
 	}
@@ -365,6 +383,8 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 	// Special service requests, at the rates a holiday day runs them.
 	for _, p := range rec.Passengers {
 		switch {
+		case p.Given == "CBBG":
+			rec.SSRs = append(rec.SSRs, ssr("CBBG", carrier, p.Ref, len(legs), "CELLO"))
 		case p.Type == pnr.PaxInfant:
 			rec.SSRs = append(rec.SSRs, ssr("INFT", carrier, p.Ref, len(legs), fmt.Sprintf("%s/%s", p.Surname, p.Given)))
 		case p.Type == pnr.PaxChild:
