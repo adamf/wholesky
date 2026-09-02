@@ -638,28 +638,39 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 // the carrier markets but does not fly is registered under the marketing
 // number with the operating aircraft's cabins: the marketing carrier sells
 // the whole aeroplane and the operator flies it.
+// Cabins is the seats a flight offers by compartment: the fleet's cabin
+// sections for its type, or one economy cabin of the schedule's seat count
+// when the type is not known. The filler and the inventory must agree on
+// this, or the filler sells cabins the inventory does not have.
+func Cabins(f world.Flight, override int) map[string]int { return cabinsOf(fleetData(), f, override) }
+
+func cabinsOf(fleet *dcs.FleetData, f world.Flight, override int) map[string]int {
+	comps := map[string]int{}
+	if override > 0 {
+		comps["Y"] = override
+		if t, ok := fleet.Type(f.Equipment); ok {
+			for _, sec := range t.Cabin.Sections {
+				comps[sec.Compartment] = override
+			}
+		}
+	} else if t, ok := fleet.Type(f.Equipment); ok {
+		for _, sec := range t.Cabin.Sections {
+			perRow := len(strings.ReplaceAll(sec.Letters, " ", ""))
+			comps[sec.Compartment] += perRow * (sec.ToRow - sec.FromRow + 1)
+		}
+	} else {
+		comps["Y"] = f.Seats
+	}
+	return comps
+}
+
 func capacityFor(carrier string, flights []world.Flight, override int) inventory.Capacity {
 	type leg struct{ num, board string }
 	byLeg := map[leg]map[string]int{}
 	first := map[string]map[string]int{}
 	fleet := fleetData()
 	for _, f := range flights {
-		comps := map[string]int{}
-		if override > 0 {
-			comps["Y"] = override
-			if t, ok := fleet.Type(f.Equipment); ok {
-				for _, sec := range t.Cabin.Sections {
-					comps[sec.Compartment] = override
-				}
-			}
-		} else if t, ok := fleet.Type(f.Equipment); ok {
-			for _, sec := range t.Cabin.Sections {
-				perRow := len(strings.ReplaceAll(sec.Letters, " ", ""))
-				comps[sec.Compartment] += perRow * (sec.ToRow - sec.FromRow + 1)
-			}
-		} else {
-			comps["Y"] = f.Seats
-		}
+		comps := cabinsOf(fleet, f, override)
 		num := strings.TrimLeft(f.Number, "0")
 		if f.Carrier != carrier && f.Marketing == carrier {
 			num = strings.TrimLeft(f.MarketingNumber, "0")

@@ -22,6 +22,7 @@ package fill
 import (
 	"context"
 	"fmt"
+	"github.com/adamf/jetway/pkg/inventory"
 	"hash/fnv"
 	"math"
 	"math/rand"
@@ -59,6 +60,11 @@ type Options struct {
 	// marketing carrier's code rather than the operator's. Default nine in
 	// ten: a regional flying for a major sells almost nothing itself.
 	Marketed float64
+	// Cabins is the seats a flight offers by compartment, so a party is put
+	// in a cabin that has room for it on every leg: the business share of
+	// a Hawaii widebody is not the business cabin's size. Nil is one
+	// economy cabin of the flight's seats.
+	Cabins func(f world.Flight) map[string]int
 	// Cellos is the share of parties travelling with an instrument too
 	// precious for the hold. It rides in a seat of its own, booked as a
 	// name of its own -- SURNAME/CBBG -- with the SSR that tells the
@@ -259,6 +265,60 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		return fit[rng.Intn(len(fit))]
 	}
 
+	// Seats sold per compartment on each flight; the class a party draws
+	// has to fit its cabin on every leg, or it is moved.
+	sold := make([]map[string]int, len(flights))
+	for i := range sold {
+		sold[i] = map[string]int{}
+	}
+	cabinsOf := func(i int) map[string]int {
+		if opts.Cabins != nil {
+			if c := opts.Cabins(flights[i]); len(c) > 0 {
+				return c
+			}
+		}
+		return map[string]int{"Y": flights[i].Seats}
+	}
+	fits := func(idx []int, class string, size int) bool {
+		for _, i := range idx {
+			cab := cabinsOf(i)
+			if comp := inventory.CompartmentFor(class, cab); sold[i][comp]+size > cab[comp] {
+				return false
+			}
+		}
+		return true
+	}
+	// place draws a class the cabins can take on every leg and books the
+	// seats in them. A full premium cabin sends the party to economy; a
+	// full economy cabin upgrades it if a premium cabin has room; when no
+	// cabin has room the answer is empty and the flight is full.
+	place := func(idx []int, size int) string {
+		class := bookingClass(rng)
+		if !fits(idx, class, size) {
+			alts := []string{"Y", "B", "M", "H", "Q", "K", "J", "F"}
+			switch class {
+			case "F", "A", "P", "R", "J", "C", "D", "I", "Z":
+				alts = alts[:6]
+			default:
+				alts = alts[6:]
+			}
+			class = ""
+			for _, alt := range alts[rng.Intn(len(alts)):] {
+				if fits(idx, alt, size) {
+					class = alt
+					break
+				}
+			}
+			if class == "" {
+				return ""
+			}
+		}
+		for _, i := range idx {
+			sold[i][inventory.CompartmentFor(class, cabinsOf(i))] += size
+		}
+		return class
+	}
+
 	batch := make([]*pnr.PNR, 0, opts.Batch)
 	flush := func() error {
 		if len(batch) == 0 {
@@ -278,15 +338,33 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 				size = left
 			}
 			legs := []world.Flight{f}
-			assigned[i] += size
+			idx := []int{i}
+			j := -1
 			if rng.Float64() < opts.Connecting {
-				if j := onward(i, size); j >= 0 {
-					assigned[j] += size
-					legs = append(legs, flights[j])
-					plan.Connecting++
+				if j = onward(i, size); j >= 0 {
+					idx = append(idx, j)
 				}
 			}
-			rec := record(rng, code, acct, legs, size, opts, own, channels, &ticketSeq)
+			class := place(idx, size)
+			if class == "" && j >= 0 {
+				// The connection's cabins will not take the party; travel
+				// the one leg.
+				idx, j = idx[:1], -1
+				class = place(idx, size)
+			}
+			if class == "" {
+				// Cabin by cabin the aircraft is full: the target over the
+				// whole seat count overstated what its cabins can take.
+				assigned[i] = target[i]
+				break
+			}
+			assigned[i] += size
+			if j >= 0 {
+				assigned[j] += size
+				legs = append(legs, flights[j])
+				plan.Connecting++
+			}
+			rec := record(rng, code, acct, legs, size, class, opts, own, channels, &ticketSeq)
 			plan.Records++
 			plan.Passengers += len(rec.Passengers)
 			// A codeshare leg sold under the marketing carrier's code: the
@@ -415,7 +493,7 @@ func partySize(rng *rand.Rand) int {
 
 // record is one booking: a party on one or two legs, with everything a
 // record at the carrier carries.
-func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int, opts Options, own *allocator, channels map[string]*allocator, ticketSeq *uint64) *pnr.PNR {
+func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int, class string, opts Options, own *allocator, channels map[string]*allocator, ticketSeq *uint64) *pnr.PNR {
 	day := opts.Day
 	surname := surnames[rng.Intn(len(surnames))]
 	// Booked between a week and five months out, most of it six to ten
@@ -474,7 +552,6 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 	}
 
 	// The itinerary, in one booking class throughout.
-	class := bookingClass(rng)
 	for k, f := range legs {
 		dep := day.Add(time.Duration(f.DepMin) * time.Minute)
 		arr := day.Add(time.Duration(f.ArrMin) * time.Minute)

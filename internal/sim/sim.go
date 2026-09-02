@@ -198,6 +198,7 @@ type Sim struct {
 	GDS         *gateway.Gateway
 	GDSStore    store.Store
 	Tenants     map[string]*host.Tenant
+	capacity    int // the cabin override every carrier was built with
 	Flights     map[string][]world.Flight
 	BookingDate time.Time
 	// Movements counts EvMovement events seen at the GDS: flights whose
@@ -444,6 +445,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	flights := s.Flights
 
 	capacity := opts.Capacity
+	s.capacity = capacity
 	partners := partnerAddresses(m.Carriers, flights)
 	marketed, operators := codeshares(m.Carriers, flights)
 	var distribution []string
@@ -859,7 +861,8 @@ func (s *Sim) fillDay(ctx context.Context) {
 		}
 		return nil
 	}
-	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff}, sink)
+	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff,
+		Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, s.capacity) }}, sink)
 	if err != nil {
 		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
 		return
