@@ -75,6 +75,19 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 	}
 }
 
+// sellOffset picks which day a traveller books for. The default is the day
+// the world flies: a simulated day is minutes of wall time, so bookings
+// spread over four dates gave the flown one a quarter of a volume that was
+// already a sixtieth of real -- and every flight left nearly empty. A
+// deployment that wants the selling window back sets SellDays above one.
+func (s *Sim) sellOffset(rng *rand.Rand) int {
+	days := s.sellDays
+	if days <= 1 {
+		return 0
+	}
+	return rng.Intn(days) - 1
+}
+
 // placeDemand runs one traveller end to end: choose, book, settle, and live
 // with the consequences.
 func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carriers []string, n int) {
@@ -83,7 +96,7 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 		return
 	}
 	party := 1 + rng.Intn(3)
-	day := rng.Intn(4) - 1 // -1..+2 around the selling window
+	day := s.sellOffset(rng)
 	class := []string{"Y", "Y", "Y", "M", "M", "J", "F"}[rng.Intn(7)]
 	surname := fmt.Sprintf("DEMAND%06d", n)
 

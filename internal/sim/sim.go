@@ -116,6 +116,10 @@ type Options struct {
 	// two channels, a schedule change fanning out to every subscriber -- only
 	// exists when there is more than one.
 	GDSCount int
+	// SellDays is how many dates demand books for, starting the day before
+	// the flown one: 1 sells only the day the world flies; 4 is the older
+	// window of -1..+2. Zero means 1.
+	SellDays int
 	// TenantDSN, when set, backs every carrier tenant's records with one
 	// shared Postgres: each tenant is a node view of it, and its message
 	// log stays in bounded memory. Records are purged when the simulated
@@ -148,6 +152,7 @@ type Sim struct {
 	tenantDB   *store.Postgres
 	dayMu      sync.Mutex
 	dayStarted time.Time
+	sellDays   int
 	Manifest   *world.Manifest
 	Switch     *node.Node
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
