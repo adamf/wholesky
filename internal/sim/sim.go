@@ -37,6 +37,7 @@ import (
 	"github.com/adamf/jetway/pkg/mvt"
 
 	"github.com/adamf/wholesky/internal/eye"
+	"github.com/adamf/wholesky/internal/fill"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/stats"
@@ -126,6 +127,14 @@ type Options struct {
 	// the flown one: 1 sells only the day the world flies; 4 is the older
 	// window of -1..+2. Zero means 1.
 	SellDays int
+	// Fill, when positive, is the load factor the day's flights already
+	// carry when the day starts: the bookings sold in the weeks before,
+	// written into each carrier's book of record by internal/fill before
+	// the flight day runs, and again after each end-of-day purge. Meant
+	// for a world whose tenants are on Postgres; in memory it is a lot of
+	// records. FillSeed makes the fill reproducible.
+	Fill     float64
+	FillSeed int64
 	// TenantDSN, when set, backs every carrier tenant's records with one
 	// shared Postgres: each tenant is a node view of it, and its message
 	// log stays in bounded memory. Records are purged when the simulated
@@ -159,6 +168,8 @@ type Sim struct {
 	dayMu      sync.Mutex
 	dayStarted time.Time
 	sellDays   int
+	fill       float64
+	fillSeed   int64
 	Manifest   *world.Manifest
 	Switch     *node.Node
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
@@ -283,6 +294,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s := &Sim{
 		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		dayStarted:      time.Now(),
+		fill:            opts.Fill,
+		fillSeed:        opts.FillSeed,
 		flightsByOrigin: byOrigin,
 		BookingDate:     sellingDate(m),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
@@ -578,6 +591,38 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "records", recs, "messages", msgs)
 }
 
+// fillDay writes the day's pre-sold bookings into this machine's tenants'
+// books of record: the manifest's flights for the carriers run here, at
+// the configured load factor, deterministically from the seed. See
+// internal/fill for what a filled record is.
+func (s *Sim) fillDay(ctx context.Context) {
+	if s.fill <= 0 || len(s.Tenants) == 0 {
+		return
+	}
+	sub := &world.Manifest{}
+	for code, fs := range s.Flights {
+		if _, ok := s.Tenants[code]; ok {
+			sub.Flights = append(sub.Flights, fs...)
+		}
+	}
+	started := time.Now()
+	sink := func(ctx context.Context, carrier string, recs []*pnr.PNR) error {
+		t, ok := s.Tenants[carrier]
+		if !ok {
+			return nil
+		}
+		return t.Store.LoadPNRs(ctx, recs, "fill")
+	}
+	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate}, sink)
+	if err != nil {
+		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
+		return
+	}
+	s.log.Info("day filled", "load_factor", s.fill, "carriers", plan.Carriers, "flights", plan.Flights,
+		"records", plan.Records, "passengers", plan.Passengers, "seats", plan.Seats,
+		"connecting", plan.Connecting, "took", time.Since(started).Round(time.Millisecond).String())
+}
+
 // flightRecords is the globe's drill-through: every booking any channel
 // holds on a flight, straight from the stores. A plane on the map becomes
 // the people on it in one click, which is the whole point of drawing it.
@@ -806,6 +851,13 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	// and the date on every message. Flying the calendar day instead sent
 	// the airport empty lists.
 	day := s.BookingDate
+	// A filled world starts its day with the books loaded: whatever an
+	// earlier run left is purged and the day's bookings written before the
+	// first tick, so the first name lists out are the full ones.
+	if s.fill > 0 {
+		s.purgeTenants(ctx, time.Now())
+		s.fillDay(ctx)
+	}
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -824,7 +876,10 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			before := s.dayStarted
 			s.dayStarted = time.Now()
 			s.dayMu.Unlock()
-			go s.purgeTenants(ctx, before)
+			go func() {
+				s.purgeTenants(ctx, before)
+				s.fillDay(ctx)
+			}()
 		}
 		if cur-prev > maxCatchUp {
 			prev = cur - maxCatchUp

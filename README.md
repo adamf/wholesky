@@ -11,10 +11,27 @@ the real world flies — booking at real reservations volume across six
 machines. The bar tells you what you are looking at: live messages per
 second, aircraft airborne, the sim clock with its own speed controls
 (pause the day, or run it at ten hours a minute), and a "what is this?"
-legend that names every mark. Click any aircraft for the bookings riding
-it, across every selling channel that holds one.
+legend that names every mark. Click any aircraft for everything the
+carrier knows about it.
 
 ![The globe: fourteen thousand aircraft in the morning banks, a flight opened to its passengers, and an airport closing](docs/the-globe.gif)
+
+The flight panel is the carrier's own view of one departure, read live from
+the systems that hold it rather than from the map: the schedule and, on a
+recorded day, what really happened to it (delay by attributed cause, the
+cancellation code, the diversion); departure control's clock, the name
+list's parts and amendments, the counts, the seat map by cabin, the
+special service requests and connections, the alerts a supervisor would
+see; the load and the loadsheet once the door has closed; the operations
+desk's callsign, ICAO type, whether the flight plan went and what the
+towers said back; the manifest itself, name by name with seat, status and
+bags; and the bookings behind those names, under the locators the selling
+channels gave them, each one click from the record. The carrier's book is
+asked first -- a distribution system's ledger is bounded and turns over in
+minutes at this volume -- and when the carrier runs on another machine the
+question is federated to it.
+
+![The flight panel: one departure as its carrier holds it, from the schedule down to the loadsheet](docs/the-flight.jpg)
 
 The globe has a second mode: **net**, the logical web of who converses with
 whom. The switch never appears — it is plumbing. Every relayed message
@@ -219,7 +236,30 @@ is announced by ASM two hours out, after its counter has opened; a diverted
 one sends its DIV to the field it really landed at. What stays synthetic is
 labelled in the manifest: aircraft type inferred from carrier and stage
 length, seat counts, and the passengers, whom BTS does not count. It runs
-at https://wholesky-thanksgiving.fly.dev from `fly.thanksgiving.toml`.
+at https://wholesky-thanksgiving.fly.dev from `fly.thanksgiving.toml`, at
+warp 1, so the day before Thanksgiving takes the day before Thanksgiving.
+
+![The recorded day: the Wednesday before Thanksgiving 2025, every US flight on its real tail](docs/the-recorded-day.jpg)
+
+The passengers were the thin part. Demand at 800 bookings a minute puts
+about two bookings on each of 22,889 flights, so the name lists were short
+and most flights closed with a handful of names. `-fill` is the weeks
+before the day: `internal/fill` reads the schedule and writes each
+carrier's book of record before the day runs -- parties weighted the way
+holiday travel is, itineraries that connect on legs that actually connect
+(a fifth of them continue onto a second leg of the same carrier), booking
+classes, children and infants, special service requests at their real
+rates, a ticket per name, the carrier's own locator and the selling
+channel's, booking dates spread over the months before -- deterministically
+from a seed, straight into Postgres with `COPY` (jetway's
+`Store.LoadPNRs`), and again after each end-of-day purge. The demand
+generator then rides on top as what it is on the day of travel: the late
+trickle. Southwest's day alone is 260,000 records and 530,000 passengers,
+written in 24 seconds; a filled 737 sends a three-part name list, and the
+first real family folded a Type B line, which is how jetway v0.1.33 and
+v0.1.35 came to exist. The recorded day runs at `-fill 0.6` while the
+database's headroom over its own purge is measured; what full load costs
+is worked out in [docs/full-throttle.md](docs/full-throttle.md).
 
 ## Building it
 
@@ -297,11 +337,9 @@ to fly real loads is worked out in [docs/full-throttle.md](docs/full-throttle.md
 
 The pattern that keeps paying: every time the world gets bigger, it finds
 real bugs in Jetway — twenty releases so far, each fix landed upstream with
-a regression test that was watched to fail first. Not yet: replaying a real
-recorded day (BTS on-time data has every US flight with actual tails,
-delays and cancellations — the day before Thanksgiving is the obvious
-candidate), weather systems that close regions rather than airports, and
-booking curves with real seasonality.
+a regression test that was watched to fail first. Not yet: filling a
+recorded day to its real passenger load, weather systems that close regions
+rather than airports, and booking curves with real seasonality.
 
 ## Licence
 

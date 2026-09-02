@@ -92,3 +92,86 @@ the shape the Thanksgiving-Eve BTS replay needs: a real day's schedule, at
 real time, with real loads. Keep warp 6 as the demo's default pace (a
 person can watch a departure go through check-in and close in forty
 minutes), and switch to warp 1 for the recorded-day runs.
+
+## Filling the day: the bookings a recorded schedule needs
+
+Definition A settles the pace. It does not settle the passengers. The
+recorded day flies 22,889 real flights, and the demand generator books them
+the way it books the synthetic world: a stream of sells at the distribution
+systems, 800 a minute, spread over every flight of the day. Over a 24-hour
+day that is 1.15 million bookings -- but they arrive as the day runs, so a
+flight closing at 06:00 has had six hours of selling and one closing at
+23:00 has had twenty-three, and both are a long way short of the load the
+Wednesday before Thanksgiving actually carried. The name lists are short,
+the counters are quiet, the loadsheets are light. The wire is real; the
+aeroplane is empty.
+
+The realistic fix is the one the industry has: the day's bookings exist
+before the day starts. `internal/fill` (built 2 Sep 2026, `skyd -fill`)
+reads the compiled manifest and writes
+each carrier's book of record for the day -- every PNR that would be
+holding a seat at 00:00 -- straight into the tenants' Postgres, before the
+flight day runs. The demand generator then rides on top as what it really
+is on the day of travel: the late trickle of same-day sells, changes and
+cancellations.
+
+What it generates, per flight, from a load factor and a seed:
+
+- **Parties**: 1 to 6 names, weighted the way holiday travel is (more
+  families, fewer singles than a Tuesday in February), with real-shaped
+  names, titles, and a share of children and infants.
+- **Itineraries** that are consistent with the schedule: a quarter of
+  passengers connecting through the operating carrier's hubs on legs that
+  actually connect (minimum connect time respected, the inbound landing
+  before the outbound closes), so the PTM and the misconnect story have
+  something to work with; a share on the codeshares the record names
+  (sold as DL3991, flown by OO).
+- **Booking classes** by fare bucket, **SSRs** at a real rate (WCHR, CHLD,
+  INFT, meal codes), **tickets** issued against each name, and a **frequent
+  flyer** element on the share that would have one.
+- **Locators**: the carrier's own record locator, and the selling channel's
+  -- 1G, 1S, 1A or the carrier's direct channel -- in the record's
+  `Locators`, so the drill-through shows the passenger the locator they
+  were given and the console shows the record under both.
+- **Booking dates** spread over the months before, so the record histories
+  read as records do, and a slice of them already cancelled or changed.
+
+What it costs. A 2025 Thanksgiving-eve load factor of about 85% over the
+day's 3.4 million seats is 2.9 million passengers; at 1.6 names a party
+that is 1.8 million PNRs. The tenants' records run about 2.7KB live and
+somewhat less as `jsonb`, so the day's books are 4-5GB in Postgres with
+indexes -- inside the 10GB plan only if the distribution systems' copies
+are not kept too, or the plan grows. Writing them through `COPY` at 20,000
+rows a second is a minute and a half; through the store API, ten times
+that. The generator is
+deterministic from its seed, so there is no dump to keep: the end-of-day
+purge runs, and the filler runs again for the next day, either as the
+first step of the flight day or as a `skyd -fill` pass before it.
+
+What it changes downstream. The name lists become real name lists (a 737
+at 85% is 150 names, three PNL parts), the counters check in 2.9 million
+passengers a day with 1.7 million bags tagged and messaged to sortation,
+the closures carry real loads, the arrival stations receive transfer lists
+that mean something, and the IROPS engine has whole planeloads to
+reaccommodate when the record says a flight was cancelled. Departure
+control holds a flight in memory from T-180 to arrival, so the window is
+three to six hours of the day's flights at once -- 400,000 passengers,
+some 250MB -- which the performance-2x machine already has.
+
+Measured: Southwest's day at 0.85 is 4,222 flights, 260,037 records,
+528,956 passengers, 2.2KB a row on disk with indexes and 24 seconds to
+write on a laptop; the whole day scales to about 1.4 million records and
+3.5GB. The recorded-day app runs at 0.6 until the purge's dead tuples and
+the refill have been watched to fit inside the 10GB plan together.
+
+The one thing decided by building it: the distribution systems do not hold
+the same records, for now. Today their ledgers are in memory and
+bounded; on the recorded day the honest shape is a Postgres node each, so
+a booking exists at the channel that sold it as well as at the carrier
+that flies it, and a change made at either crosses the wire to the other.
+That doubles the storage. The alternative is to treat the pre-day
+bookings as already purged from the GDSes' active files (which is what
+happens to a GDS PNR after departure, not before) and hold them only at
+the carriers, with the selling channel's locator kept on the record. The
+first is right; the second is cheaper and gets the passengers on the
+aeroplanes, which is the point.

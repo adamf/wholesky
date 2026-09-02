@@ -71,6 +71,7 @@ func run() error {
 		linkBind  = flag.String("link-bind", "", "core: host the switch listeners bind; empty binds loopback")
 		gdsList   = flag.String("gds-list", "", "region: comma-separated designators of the GDSes this deployment runs; empty means all five")
 		memLimit  = flag.String("memlimit", "", "soft memory limit for the Go runtime, e.g. 3200MiB; empty leaves GOMEMLIMIT alone")
+		fillLF    = flag.Float64("fill", 0, "load factor the day's flights already carry at 00:00, written into the carriers' books before the day runs and after each purge; 0 fills nothing (use with -tenant-dsn on a big world)")
 		sellDays  = flag.Int("sell-days", 1, "how many dates demand books for, from the day before the flown one; 1 sells only the day the world flies")
 		tenantDSN = flag.String("tenant-dsn", "", "all/region: Postgres DSN backing every carrier tenant's records (one database, one node per carrier, purged each sim day); $NAME reads the environment")
 	)
@@ -119,6 +120,8 @@ func run() error {
 		LinkBind:      *linkBind,
 		TenantDSN:     *tenantDSN,
 		SellDays:      *sellDays,
+		Fill:          *fillLF,
+		FillSeed:      *seed,
 	}
 	if *gdsList != "" {
 		for _, d := range strings.Split(*gdsList, ",") {

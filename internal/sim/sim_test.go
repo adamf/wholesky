@@ -1153,3 +1153,73 @@ func TestAircraftReportsAndATSDriveTheDay(t *testing.T) {
 	})
 	waitFor("the tower's ARR at the airline", func() bool { return tn.ATSMessages()[ats.TypeARR] >= 1 })
 }
+
+// A filled world starts the day with its books loaded: the name list that
+// goes out at T-180 is a real one, dozens of names from records written
+// before the day ran, and the same seed writes the same books.
+func TestFilledDayOpensWithFullNameLists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Fill: 0.8, FillSeed: 3, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	s.fillDay(ctx)
+	var tn *host.Tenant
+	var f world.Flight
+	for code, fs := range s.Flights {
+		if len(fs) > 0 && s.Tenants[code] != nil {
+			tn, f = s.Tenants[code], fs[0]
+			break
+		}
+	}
+	if tn == nil {
+		t.Fatal("no tenant flies anything")
+	}
+	day := s.BookingDate
+	recs, err := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, strings.ToUpper(day.Format("02Jan")), 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seats := 0
+	for _, r := range recs {
+		for _, sg := range r.Segments {
+			if sg.FlightNum == f.Number && sg.Board == f.From {
+				seats += sg.Seats
+			}
+		}
+	}
+	if seats < f.Seats/2 || seats > f.Seats {
+		t.Fatalf("%s%s: %d of %d seats filled from %d records", f.Carrier, f.Number, seats, f.Seats, len(recs))
+	}
+	if err := tn.SendPNL(ctx, f, day); err != nil {
+		t.Fatalf("SendPNL: %v", err)
+	}
+	// The list crosses the wire to the airport; give it a moment to land.
+	var sum *host.Summary
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, ok := tn.Summarise(f.Carrier+f.Number, f.From); ok && got.Total >= len(recs) {
+			sum = got
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if sum == nil {
+		got, ok := tn.Summarise(f.Carrier+f.Number, f.From)
+		total := -1
+		if ok {
+			total = got.Total
+		}
+		t.Fatalf("departure control should hold every filled name: held=%v total=%d records=%d", ok, total, len(recs))
+	}
+	// Filling twice is a duplicate: the same books already exist.
+	before := len(recs)
+	s.fillDay(ctx)
+	again, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, strings.ToUpper(day.Format("02Jan")), 10000)
+	if len(again) != before {
+		t.Errorf("a second fill wrote more records: %d then %d", before, len(again))
+	}
+}
