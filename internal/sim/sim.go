@@ -31,6 +31,7 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 
+	"github.com/adamf/jetway/pkg/irops"
 	"github.com/adamf/jetway/pkg/mvt"
 
 	"github.com/adamf/wholesky/internal/eye"
@@ -116,6 +117,9 @@ type Options struct {
 	// two channels, a schedule change fanning out to every subscriber -- only
 	// exists when there is more than one.
 	GDSCount int
+	// IROPSInterval is how often each distribution system works its
+	// schedule-change queue. Zero uses the engine's default.
+	IROPSInterval time.Duration
 	// SellDays is how many dates demand books for, starting the day before
 	// the flown one: 1 sells only the day the world flies; 4 is the older
 	// window of -1..+2. Zero means 1.
@@ -166,6 +170,10 @@ type Sim struct {
 	// Movements counts EvMovement events seen at the GDS: flights whose
 	// departures and arrivals crossed the switch and were recognised.
 	Movements atomic.Int64
+	// Rebooked counts passengers the irops engines moved off cancelled
+	// flights onto seats that were open.
+	Rebooked atomic.Int64
+	irops    []*irops.Engine
 	// Each GDSNode's up flag flips when its client link is established. The
 	// switch counting a session is not enough: there is a window where the
 	// listener has accepted the connection but the client has not yet marked
@@ -432,6 +440,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			Log: log.With("node", strings.ToLower(g.Designator)), Cancel: g.GW,
 		}
 		go sweeper.Run(ctx, 30*time.Second)
+		s.irops = append(s.irops, s.startIROPS(ctx, g, opts.IROPSInterval, log.With("node", strings.ToLower(g.Designator))))
 		s.mountConsole(g.Designator, &api.Server{
 			Gateway: g.GW, Store: g.Store, Bus: g.Bus,
 			Log: log.With("console", g.Designator), Console: true,
@@ -774,6 +783,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 								f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
 							if err := t.SendSchedule(ctx, text); err != nil {
 								s.log.Debug("recorded cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+							}
+							if err := t.CancelFlight(ctx, f, day, "cancelled as recorded, code "+f.Actual.CancelCode); err != nil {
+								s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
 							}
 						}(f)
 					}
@@ -1226,6 +1238,11 @@ func (s *Sim) cancelFlightsTouching(iata string) {
 				f.Carrier, f.Number, date, f.From, f.To)
 			if err := t.SendSchedule(context.Background(), text); err != nil {
 				s.log.Debug("cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+			}
+			// The airport hears it too: anyone already checked in comes off
+			// with their bags, and the counter takes nobody else.
+			if err := t.CancelFlight(context.Background(), f, s.BookingDate, "airport "+iata+" closed"); err != nil {
+				s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
 			}
 			n++
 			time.Sleep(8 * time.Millisecond)

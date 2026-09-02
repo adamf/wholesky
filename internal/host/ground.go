@@ -15,6 +15,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -139,7 +140,42 @@ func (t *Tenant) startGround(accountingCode string) {
 	t.DCS = st
 	t.sortation = map[string]map[string]bool{}
 	t.boarded = map[string]int{}
+	t.cancelled = map[string]string{}
 	t.Gateway.Ground = t
+}
+
+// CancelFlight is the airport hearing that a flight will not fly: departure
+// control closes it, offloading whoever was accepted and pulling their
+// bags, and the rest of the day's ground story for it is skipped. A flight
+// not yet under control is remembered so its counter never opens.
+func (t *Tenant) CancelFlight(ctx context.Context, f world.Flight, day time.Time, reason string) error {
+	key := flightKey(f, day)
+	t.groundMu.Lock()
+	t.cancelled[key.Flight+"/"+key.Date] = reason
+	t.groundMu.Unlock()
+	c, err := t.DCS.CancelFlight(ctx, key, reason)
+	if errors.Is(err, dcs.ErrFlightNotFound) || errors.Is(err, dcs.ErrFlightClosed) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, p := range c.Offloaded {
+		if err := t.announceBags(ctx, c.Flight, p, "DEL"); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// isCancelled reports whether the day has cancelled a flight.
+func (t *Tenant) isCancelled(f world.Flight, day time.Time) bool {
+	key := flightKey(f, day)
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	_, ok := t.cancelled[key.Flight+"/"+key.Date]
+	return ok
 }
 
 // NameList implements gateway.Ground: reservations' PNL or ADL arriving at
@@ -385,6 +421,9 @@ func bagsFor(h int) []int {
 // by now and has not yet been accepted is checked in, seated, tagged, and
 // its bags announced to the sortation system.
 func (t *Tenant) CheckIn(ctx context.Context, f world.Flight, day time.Time, minutesOut int) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	key := flightKey(f, day)
 	fl, err := t.DCS.Flight(key)
 	if err != nil {
@@ -465,6 +504,9 @@ func (t *Tenant) OnOffload(ctx context.Context, fl *dcs.Flight, p *dcs.Passenger
 
 // CloseCheckIn closes the counter; standbys clear into whatever is left.
 func (t *Tenant) CloseCheckIn(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	_, _, err := t.DCS.CloseCheckIn(ctx, flightKey(f, day))
 	return err
 }
@@ -472,6 +514,9 @@ func (t *Tenant) CloseCheckIn(ctx context.Context, f world.Flight, day time.Time
 // Board is one wave of the gate: every accepted passenger whose turn has
 // come walks on. One in a few hundred never does.
 func (t *Tenant) Board(ctx context.Context, f world.Flight, day time.Time, minutesOut int) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	key := flightKey(f, day)
 	fl, err := t.DCS.Flight(key)
 	if err != nil {
@@ -504,6 +549,9 @@ func (t *Tenant) Board(ctx context.Context, f world.Flight, day time.Time, minut
 // and not told to pull is on board. It goes to check-in as a BPM, and
 // departure control reconciles it against the manifest.
 func (t *Tenant) ReportBags(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	key := flightKey(f, day)
 	t.groundMu.Lock()
 	tags := t.sortation[key.Flight+"/"+key.Date]
@@ -566,6 +614,9 @@ func cargoFor(f world.Flight, h int) (cargo, mail int) {
 // this tenant transmits what it produced, each message to the desk that
 // reads it.
 func (t *Tenant) Close(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	key := flightKey(f, day)
 	h := hashOf(f.Carrier + f.Number + day.Format("0102"))
 	cargo, mail := cargoFor(f, h)
@@ -632,6 +683,7 @@ func (t *Tenant) Forget(ctx context.Context, f world.Flight, day time.Time) {
 	t.groundMu.Lock()
 	delete(t.boarded, key.Flight+"/"+key.Date)
 	delete(t.sortation, key.Flight+"/"+key.Date)
+	delete(t.cancelled, key.Flight+"/"+key.Date)
 	t.groundMu.Unlock()
 }
 

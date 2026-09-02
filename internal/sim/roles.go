@@ -645,6 +645,7 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	}
 	s.GDS, s.GDSStore = g.GW, g.Store
 	s.Fleet.Add(ctx, g.Designator, g.Name, fleet.KindGDS, "", "", "", 0, g.Store, nil)
+	s.irops = append(s.irops, s.startIROPS(ctx, g, opts.IROPSInterval, s.log.With("node", strings.ToLower(g.Designator))))
 	sweeper := &queue.Sweeper{
 		Records: g.Store, Queues: g.GW.Queues,
 		Log: s.log.With("node", strings.ToLower(g.Designator)), Cancel: g.GW,

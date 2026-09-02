@@ -64,6 +64,7 @@ type Collector struct {
 
 	// running totals for the headline numbers
 	tTotal, tBookings, tMovements, tUndeliv int64
+	tRebooked                               int64
 
 	// Airborne and QueueDepths are polled at snapshot time rather than fed,
 	// because they are states, not events.
@@ -119,6 +120,7 @@ func (c *Collector) SetSnapshotPath(path string) {
 	c.tBookings = snap.Totals["bookings"]
 	c.tMovements = snap.Totals["movements"]
 	c.tUndeliv = snap.Totals["undeliverable"]
+	c.tRebooked = snap.Totals["rebooked"]
 }
 
 // ringNames is every series in the panel, which is also the persisted set.
@@ -176,7 +178,7 @@ func (c *Collector) persist() {
 		Series: map[string][]float64{},
 		Totals: map[string]int64{
 			"messages": c.tTotal, "bookings": c.tBookings,
-			"movements": c.tMovements, "undeliverable": c.tUndeliv,
+			"movements": c.tMovements, "undeliverable": c.tUndeliv, "rebooked": c.tRebooked,
 		},
 	}
 	for _, name := range ringNames {
@@ -318,6 +320,13 @@ func (c *Collector) AddBookings(n int64) {
 }
 
 // OnMovement counts a movement recognised at the watcher.
+// OnRebooked counts a passenger moved off a cancelled flight.
+func (c *Collector) OnRebooked() {
+	c.mu.Lock()
+	c.tRebooked++
+	c.mu.Unlock()
+}
+
 func (c *Collector) OnMovement() {
 	c.mu.Lock()
 	c.mvts++
@@ -359,7 +368,7 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 		},
 		"totals": map[string]int64{
 			"messages": c.tTotal, "bookings": c.tBookings,
-			"movements": c.tMovements, "undeliverable": c.tUndeliv,
+			"movements": c.tMovements, "undeliverable": c.tUndeliv, "rebooked": c.tRebooked,
 		},
 		"queues": c.latestQueues,
 		"uptime": int(time.Since(c.started).Seconds()),

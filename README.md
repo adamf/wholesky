@@ -268,6 +268,12 @@ the transfer and service lists to the arrival station, the ticket list to
 revenue, and the load and container messages with an AHM 560-method
 loadsheet — so the MVT's passenger count is who boarded, not a guess; a
 connecting passenger misses the flight when the inbound is late enough;
+irregular operations — when a flight is cancelled, by chaos or by the
+record, the distribution systems' irops engines work the schedule-change
+queue the way a desk does, moving each stranded booking onto the next open
+seat over the same city pair with a real sell and a real cancel on the
+wire, while the airport offloads whoever had checked in and pulls their
+bags; what nothing can carry stays on the queue for a person;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across

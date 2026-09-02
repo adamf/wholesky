@@ -9,7 +9,10 @@
 # Demand is sized to the day: 22,889 flights at about fifty bookings each
 # is 1.1 million bookings, which is 800 a minute.
 #
-#   fly deploy -c fly.thanksgiving.toml --remote-only
+#   fly deploy -c fly.thanksgiving.toml --remote-only --ha=false
+#
+# One machine, deliberately: two copies of the same world sharing one book
+# of record would each hold the other's bookings.
 #
 # The tenants' book of record is a database on the wholesky-tenants
 # Managed Postgres cluster, attached as DATABASE_URL; it is purged when the

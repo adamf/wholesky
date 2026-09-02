@@ -235,6 +235,34 @@ func kindClass(kind string) string {
 	return parts[0]
 }
 
+// OnRebooked folds a rebooking into the halos: one fewer stranded booking
+// at whichever closed airport the dead flight touched. The reason is the
+// queue item's, which names the flight the way OnQueue read it.
+func (e *Eye) OnRebooked(reason string) {
+	m := flightRe.FindStringSubmatch(reason)
+	if m == nil {
+		return
+	}
+	f, ok := e.lookup(m[1])
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	var hit string
+	var n int64
+	for _, apt := range []string{f.From, f.To} {
+		if e.closed[apt] && e.halos[apt] > 0 {
+			e.halos[apt]--
+			hit, n = apt, e.halos[apt]
+		}
+	}
+	e.mu.Unlock()
+	if hit != "" {
+		e.broadcast(map[string]any{"t": "halo", "airport": hit, "count": n})
+	}
+	e.broadcast(map[string]any{"t": "rebooked", "flight": m[1]})
+}
+
 // LogicalEdges snapshots the current window's conversation counts, for the
 // tests: the web must be derivable, not decorative.
 func (e *Eye) LogicalEdges() map[string]int64 {

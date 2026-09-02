@@ -65,6 +65,7 @@ type Tenant struct {
 	sortation    map[string]map[string]bool // flight/date -> tags the sortation system holds
 	boarded      map[string]int             // flight/date -> boarded count at close
 	arrivals     map[dcs.Kind]int
+	cancelled    map[string]string // flight/date -> why it will not fly
 	flightsByNum map[string]world.Flight
 	inboundDelay func(world.Flight, time.Time) int
 
@@ -562,6 +563,9 @@ func classesOf(items map[string]nameItem) []string {
 // SendPNL builds the passenger name list for one departure from the store
 // and sends it, remembering what it said so a later ADL can send the diff.
 func (t *Tenant) SendPNL(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	items, wireDate, err := t.nameItems(ctx, f, day)
 	if err != nil {
 		return err
@@ -601,6 +605,9 @@ func (t *Tenant) SendPNL(ctx context.Context, f world.Flight, day time.Time) err
 // SendADL sends the additions and deletions since the PNL, or nothing when
 // nothing changed -- an empty ADL is noise a check-in agent never wants.
 func (t *Tenant) SendADL(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) {
+		return nil
+	}
 	items, wireDate, err := t.nameItems(ctx, f, day)
 	if err != nil {
 		return err

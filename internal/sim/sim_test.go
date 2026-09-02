@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -270,7 +272,8 @@ func TestChaosCloseAirportCascades(t *testing.T) {
 	// The cascade must reach the queue: at least the booking above.
 	deadline = time.Now().Add(20 * time.Second)
 	for {
-		items, err := s.GDSStore.ListQueue(ctx, store.QueueFilter{Queue: store.QueueScheduleChange})
+		// Worked or pending: the irops engine may already have moved them.
+		items, err := s.GDSStore.ListQueue(ctx, store.QueueFilter{Queue: store.QueueScheduleChange, IncludeWorked: true})
 		if err != nil {
 			t.Fatalf("ListQueue: %v", err)
 		}
@@ -928,5 +931,117 @@ func TestSimClockSyncFollowsAnotherClock(t *testing.T) {
 	}
 	if peer.Warp() != 6 {
 		t.Fatalf("warp %d", peer.Warp())
+	}
+}
+
+// A cancelled flight's passenger is moved onto the next flight over the
+// same city pair: the engine at the distribution system does the desk's
+// work, and the record ends up holding a live segment on another flight.
+func TestIROPSRebooksOffACancelledFlight(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, AVSInterval: 2 * time.Second, IROPSInterval: 500 * time.Millisecond,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	// A city pair this world flies more than once, so there is somewhere to go.
+	var dead, alt world.Flight
+	found := false
+	for _, fs := range s.Flights {
+		for i, a := range fs {
+			for _, b := range fs[i+1:] {
+				if a.From == b.From && a.To == b.To && a.DepMin < b.DepMin {
+					dead, alt, found = a, b, true
+				}
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Skip("the small world has no city pair flown twice by one carrier")
+	}
+	res, err := s.Book(ctx, dead, "Y", 0, "REROUTE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc := res.PNR.RecordLocator
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if ok, _ := s.Settled(ctx, loc); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("never settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	// The alternative must be on free sale at the GDS before the engine
+	// looks, which is what the availability broadcast does.
+	altKey := avail.NewKey(alt.Carrier, alt.Number, s.BookingDate, alt.From, alt.To, "Y")
+	deadline = time.Now().Add(20 * time.Second)
+	for {
+		if _, ok, fresh := s.GDS.Avail.Lookup(altKey); ok && fresh {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the GDS never heard availability for %s%s", alt.Carrier, alt.Number)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	tn := s.Tenants[dead.Carrier]
+	date := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	text := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s", dead.Carrier, dead.Number, date, dead.From, dead.To)
+	if err := tn.SendSchedule(ctx, text); err != nil {
+		t.Fatal(err)
+	}
+	if err := tn.CancelFlight(ctx, dead, s.BookingDate, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		rec, err := s.GDSStore.GetPNR(ctx, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Own metal first: the new leg is one of the carrier's own later
+		// flights over the pair, whichever the schedule ranked nearest.
+		var onAlt, onDead *pnr.Segment
+		for i := range rec.Segments {
+			seg := &rec.Segments[i]
+			switch {
+			case seg.FlightNum == dead.Number:
+				onDead = seg
+			case seg.Carrier == dead.Carrier && seg.Board == dead.From && seg.Off == dead.To && seg.Status == "HK":
+				onAlt = seg
+			}
+		}
+		if onAlt != nil && onDead != nil && onDead.Status == "XX" {
+			if s.Rebooked.Load() < 1 {
+				t.Errorf("rebooked counter %d", s.Rebooked.Load())
+			}
+			items, _ := s.GDSStore.ListQueue(ctx, store.QueueFilter{Queue: store.QueueScheduleChange, IncludeWorked: true})
+			worked := false
+			for _, it := range items {
+				if it.Locator == loc && !it.Pending() && strings.Contains(it.Note, onAlt.Carrier+onAlt.FlightNum) {
+					worked = true
+				}
+			}
+			if !worked {
+				t.Errorf("the queue item was not worked with the new flight: %+v", items)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("never rebooked: segments %+v", rec.Segments)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
