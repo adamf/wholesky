@@ -33,6 +33,12 @@ type FlightRecord struct {
 	Party   int    `json:"party"`
 	Status  string `json:"status"`
 	GDS     string `json:"gds"`
+	// Queue is what happened to the booking after the flight failed it:
+	// the selling channel's latest queue note -- rebooked onto what,
+	// waitlisted where -- or the reason it is still waiting for a person.
+	Queue string `json:"queue,omitempty"`
+	// Waiting is set while the booking sits on a queue nobody has worked.
+	Waiting bool `json:"waiting,omitempty"`
 }
 
 type Plane struct {

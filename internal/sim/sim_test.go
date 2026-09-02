@@ -1071,6 +1071,17 @@ func TestIROPSRebooksOffACancelledFlight(t *testing.T) {
 			if !worked {
 				t.Errorf("the queue item was not worked with the new flight: %+v", items)
 			}
+			// The globe's panel on the cancelled flight says where its people went.
+			fates := s.flightRecords(dead.Carrier+strings.TrimLeft(dead.Number, "0"), dead.From)
+			told := false
+			for _, r := range fates {
+				if r.Locator == loc && strings.Contains(r.Queue, "rebooked") && !r.Waiting {
+					told = true
+				}
+			}
+			if !told {
+				t.Errorf("the drill-through should carry the rebooking note for %s: %+v", loc, fates)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
@@ -1078,6 +1089,7 @@ func TestIROPSRebooksOffACancelledFlight(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+
 }
 
 // The aircraft talks and the tower talks: an OOOI report from the datalink

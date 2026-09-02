@@ -363,7 +363,7 @@ func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
 func (c *Core) federatedFlightRecords(flight, board string) []eye.FlightRecord {
 	client := &http.Client{Timeout: 2 * time.Second}
 	var out []eye.FlightRecord
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, p := range c.livePeers() {
 		if p.Role != "gds" && p.Role != "region" {
 			continue
@@ -379,10 +379,15 @@ func (c *Core) federatedFlightRecords(flight, board string) []eye.FlightRecord {
 			continue
 		}
 		for _, r := range recs {
-			if seen[r.Locator] {
+			if j, dup := seen[r.Locator]; dup {
+				// The same booking from two machines: keep whichever knows
+				// what happened to it.
+				if out[j].Queue == "" && r.Queue != "" {
+					out[j] = r
+				}
 				continue
 			}
-			seen[r.Locator] = true
+			seen[r.Locator] = len(out)
 			out = append(out, r)
 		}
 		if len(out) >= 200 {

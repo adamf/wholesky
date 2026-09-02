@@ -780,7 +780,9 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 	// GDSes said "no records" about flights that were full.
 	if len(flight) >= 3 {
 		if t, ok := s.Tenants[flight[:2]]; ok {
-			recs, err := t.Store.FindPNRsByFlight(ctx, flight, "", 400)
+			// Ever on the flight, not only still on it: a cancelled flight's
+			// panel is the list of who was booked and what became of them.
+			recs, err := t.Store.FindPNRsEverOnFlight(ctx, flight, "", 400)
 			if err == nil {
 				for _, r := range recs {
 					if !onLeg(r) {
@@ -808,7 +810,7 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 		}
 	}
 	for _, g := range s.GDSes {
-		recs, err := g.Store.FindPNRsByFlight(ctx, flight, "", 200)
+		recs, err := g.Store.FindPNRsEverOnFlight(ctx, flight, "", 200)
 		if err != nil {
 			continue
 		}
@@ -828,7 +830,55 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 			}
 		}
 	}
+	s.fates(ctx, out)
 	return out
+}
+
+// fates fills in what the selling channel did about each booking after the
+// flight failed it: the latest note on its queue, or that it still waits.
+// A distribution system on this machine answers for the locators it
+// issued; the carrier's copies carry those locators too.
+func (s *Sim) fates(ctx context.Context, recs []eye.FlightRecord) {
+	byCode := map[string]*GDSNode{}
+	for _, g := range s.GDSes {
+		byCode[g.Designator] = g
+	}
+	for i := range recs {
+		g, ok := byCode[recs[i].GDS]
+		if !ok {
+			continue
+		}
+		rec, err := g.Store.GetPNR(ctx, recs[i].Locator)
+		if err != nil {
+			continue
+		}
+		items, err := g.Store.ListQueue(ctx, store.QueueFilter{PNRID: rec.ID, IncludeWorked: true, Limit: 10})
+		if err != nil || len(items) == 0 {
+			continue
+		}
+		// The most recent thing that happened wins: a worked item's note
+		// over an older pending one, a pending one over nothing.
+		var latest *store.QueueItem
+		for _, it := range items {
+			if latest == nil || it.PlacedAt.After(latest.PlacedAt) {
+				latest = it
+			}
+		}
+		for _, it := range items {
+			if it.WorkedAt != nil && (latest.WorkedAt == nil || it.WorkedAt.After(*latest.WorkedAt)) {
+				latest = it
+			}
+		}
+		if latest.WorkedAt != nil {
+			recs[i].Queue = latest.Note
+			if recs[i].Queue == "" {
+				recs[i].Queue = "worked"
+			}
+		} else {
+			recs[i].Queue = latest.Reason
+			recs[i].Waiting = true
+		}
+	}
 }
 
 // simClock is the world's one adjustable timepiece: a position in the sim
@@ -1120,6 +1170,15 @@ func (s *Sim) FlyDay(ctx context.Context) {
 // replay, thirty days out on a synthetic one.
 func sellingDate(m *world.Manifest) time.Time {
 	if m.Replay != nil && !m.Replay.Date.IsZero() {
+		// The wire carries a day and a month, no year, and every system
+		// resolves 26NOV to the next 26 November. The recorded day is flown
+		// on that date, so the bookings the filler writes, the sells the
+		// distribution systems make and the day the flight day flies all
+		// name the same date.
+		d, err := pnr.ResolveDate(strings.ToUpper(m.Replay.Date.Format("02Jan")), time.Now().UTC())
+		if err == nil {
+			return d
+		}
 		return m.Replay.Date
 	}
 	return time.Now().UTC().AddDate(0, 0, 30)
