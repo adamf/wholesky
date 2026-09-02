@@ -731,6 +731,34 @@ func (s *Sim) rebuildInventories(ctx context.Context) {
 	s.log.Info("inventories rebuilt", "carriers", len(s.Tenants), "seats_held", seats, "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
 }
 
+// dayFilled reports whether the books already hold the flown day: the
+// filler's records for it exist at the carrier with the most flights. A
+// day interrupted mid-fill counts as filled and is finished by hand with a
+// purge; that is rarer than a redeploy.
+func (s *Sim) dayFilled(ctx context.Context) bool {
+	var biggest *host.Tenant
+	most := 0
+	for code, t := range s.Tenants {
+		if n := len(s.Flights[code]); n > most {
+			biggest, most = t, n
+		}
+	}
+	if biggest == nil {
+		return false
+	}
+	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	rows, err := biggest.Store.SoldSeats(ctx, biggest.Carrier.Designator, wire)
+	if err != nil {
+		return false
+	}
+	seats := 0
+	for _, r := range rows {
+		seats += r.Seats
+	}
+	// More seats than the day's own selling could have put there by now.
+	return seats > most*10
+}
+
 // fillDay writes the day's pre-sold bookings into this machine's tenants'
 // books of record: the manifest's flights for the carriers run here, at
 // the configured load factor, deterministically from the seed. See
@@ -1069,8 +1097,15 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	// earlier run left is purged and the day's bookings written before the
 	// first tick, so the first name lists out are the full ones.
 	if s.fill > 0 {
-		s.purgeTenants(ctx, time.Now())
-		s.fillDay(ctx)
+		// A restart in the middle of a filled day keeps the day: the books
+		// already hold it, and refilling would cost the first departures
+		// their name lists while a million records were rewritten.
+		if s.dayFilled(ctx) {
+			s.log.Info("day already filled; keeping the books", "date", day.Format("2006-01-02"))
+		} else {
+			s.purgeTenants(ctx, time.Now())
+			s.fillDay(ctx)
+		}
 	}
 	s.rebuildInventories(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
