@@ -489,8 +489,8 @@ func (s *Sim) tenantStores(ctx context.Context, opts Options, maxMsgs int) (func
 	// connections would serialise them behind each other. And a managed
 	// database is usually reached through a transaction-pooling proxy,
 	// which cannot carry a cached prepared statement from one transaction
-	// to the next, so statements are described per call.
-	for _, kv := range []string{"pool_max_conns=24", "default_query_exec_mode=exec"} {
+	// to the next, so statement descriptions are cached client-side and no statement is prepared on the server.
+	for _, kv := range []string{"pool_max_conns=24", "default_query_exec_mode=cache_describe"} {
 		key := strings.SplitN(kv, "=", 2)[0]
 		if strings.Contains(dsn, key) {
 			continue
