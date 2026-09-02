@@ -403,7 +403,7 @@ async function showFlight(p){
   }
   h+=recs.length? "<div class='sub' style='margin:0 0 2px'>"+recs.length+" records</div>"+recs.slice(0,14).map(r=>
     "<div class='sub' style='margin:1px 0'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
-    "</a> "+esc(r.surname)+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+
+    "</a> "+esc(r.surname)+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+(r.fare?" · "+esc(r.fare):"")+
     (r.queue?"<div style='margin-left:12px;color:"+(r.waiting?"#e08a8a":"#e0b93c")+"'>"+(r.waiting?"waiting: ":"")+esc(r.queue)+"</div>":"")+"</div>").join("")
     : "<div class='sub'>no bookings held on this flight</div>";
   panel.innerHTML=h;

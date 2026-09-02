@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -71,6 +72,10 @@ type Options struct {
 	// Accounting gives a carrier's three-digit accounting code, which leads
 	// its ticket numbers. Default derives one from the designator.
 	Accounting func(code string) string
+	// Tariff, when set, prices every record as of the day it was booked:
+	// the fare basis on the segment, the money on the record and on the
+	// coupons. A class the rules will not sell that far out is sold as Y.
+	Tariff fare.Tariff
 }
 
 // Plan is what a fill produced.
@@ -347,6 +352,11 @@ func marketedCopy(op *pnr.PNR, leg world.Flight, owner *allocator, acct string, 
 		m.SSRs[i].Carrier = leg.Marketing
 	}
 	m.Remarks = []pnr.Remark{{Text: fmt.Sprintf("OPERATED BY %s AS %s%s", leg.Carrier, leg.Carrier, strings.TrimLeft(leg.Number, "0"))}}
+	if op.Pricing != nil {
+		pc := *op.Pricing
+		pc.Passengers = append([]pnr.PassengerPricing(nil), op.Pricing.Passengers...)
+		m.Pricing = &pc
+	}
 	m.Tickets = make([]pnr.Ticket, len(op.Tickets))
 	for i, t := range op.Tickets {
 		*ticketSeq++
@@ -513,6 +523,10 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 		rec.Tickets = append(rec.Tickets, t)
 	}
 
+	if opts.Tariff != nil {
+		price(rec, opts.Tariff, booked)
+	}
+
 	// Who sold it: a distribution system, with its own locator on the
 	// record, or the carrier direct.
 	if rng.Float64() < opts.Direct {
@@ -555,3 +569,78 @@ func bookingClass(rng *rand.Rand) string {
 
 // homeCity is where the phone number is from: the boarding point, mostly.
 func homeCity(f world.Flight) string { return f.From }
+
+// price prices a record against the tariff as of its booking date. The
+// class was drawn at random; if the rules will not sell it this far out the
+// party is moved to full fare, which is what the passenger would have been
+// offered.
+func price(rec *pnr.PNR, t fare.Tariff, booked time.Time) {
+	req := fare.Request{Purchased: booked}
+	for _, s := range rec.Segments {
+		req.Segments = append(req.Segments, fare.Segment{Carrier: s.Carrier, Origin: s.Board, Destination: s.Off, Class: s.Class, Depart: s.Depart})
+	}
+	for _, p := range rec.Passengers {
+		switch {
+		case p.Infant:
+			req.Passengers = append(req.Passengers, fare.Infant)
+		case p.Type == pnr.PaxChild:
+			req.Passengers = append(req.Passengers, fare.Child)
+		default:
+			req.Passengers = append(req.Passengers, fare.Adult)
+		}
+	}
+	q, err := fare.Price(t, req)
+	if err != nil {
+		for i := range req.Segments {
+			req.Segments[i].Class = "Y"
+		}
+		q, err = fare.Price(t, req)
+		if err != nil {
+			return
+		}
+		for i := range rec.Segments {
+			rec.Segments[i].Class = "Y"
+		}
+	}
+	pr := &pnr.Pricing{Currency: q.Currency, Base: q.Base.Amount, Taxes: q.Taxes.Amount, Total: q.Total.Amount, PricedAt: booked}
+	for i, pq := range q.Passengers {
+		pp := pnr.PassengerPricing{Ref: i + 1, Type: string(pq.Type), Base: pq.Base.Amount, Total: pq.Total.Amount}
+		for _, tl := range pq.Taxes {
+			pp.Taxes += tl.Amount.Amount
+		}
+		for _, sf := range pq.Segments {
+			pp.Bases = append(pp.Bases, sf.Basis)
+			pp.Segments = append(pp.Segments, sf.Base.Amount)
+		}
+		pr.Passengers = append(pr.Passengers, pp)
+	}
+	for i := range rec.Segments {
+		if i < len(q.Passengers[0].Segments) {
+			rec.Segments[i].FareBasis = q.Passengers[0].Segments[i].Basis
+		}
+	}
+	rec.Pricing = pr
+	// The coupons carry the value: the segment's base plus the passenger's
+	// taxes spread across their coupons.
+	for ti := range rec.Tickets {
+		tk := &rec.Tickets[ti]
+		var pp *pnr.PassengerPricing
+		for k := range pr.Passengers {
+			if pr.Passengers[k].Ref == tk.PaxRef {
+				pp = &pr.Passengers[k]
+			}
+		}
+		if pp == nil {
+			continue
+		}
+		for ci := range tk.Coupons {
+			idx := tk.Coupons[ci].SegmentRef - 1
+			if idx < 0 || idx >= len(pp.Segments) {
+				continue
+			}
+			v := pp.Segments[idx] + pp.Taxes/int64(len(pp.Segments))
+			tk.Coupons[ci].Amount = fmt.Sprintf("%d.%02d", v/100, v%100)
+			tk.Coupons[ci].Currency = pr.Currency
+		}
+	}
+}

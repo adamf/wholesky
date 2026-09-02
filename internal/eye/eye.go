@@ -39,6 +39,8 @@ type FlightRecord struct {
 	Queue string `json:"queue,omitempty"`
 	// Waiting is set while the booking sits on a queue nobody has worked.
 	Waiting bool `json:"waiting,omitempty"`
+	// Fare is what the booking was priced at: currency, total, fare basis.
+	Fare string `json:"fare,omitempty"`
 }
 
 type Plane struct {

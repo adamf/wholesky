@@ -1275,3 +1275,64 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 		t.Errorf("a second fill wrote more records: %d then %d", before, len(again))
 	}
 }
+
+// A booking made at a distribution system is priced against the world's
+// tariff before it is sold: a same-day sell pays full fare, the basis is on
+// the segment, the money on the record; and the carrier's cabin sells its
+// classes under the ladder, so a cheap class is unable while full fare is
+// still open.
+func TestBookingsArePricedAndClassesNest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	var f world.Flight
+	for code, fs := range s.Flights {
+		if len(fs) > 0 && s.Tenants[code] != nil {
+			f = fs[0]
+			break
+		}
+	}
+	res, err := s.Book(ctx, f, "Y", 0, "PRICED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.GDSStore.GetPNR(ctx, res.PNR.RecordLocator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Pricing == nil || rec.Pricing.Currency != "USD" || rec.Pricing.Total <= 0 || rec.Segments[0].FareBasis != "YOW" {
+		t.Fatalf("a booking at the GDS should be priced at full fare: %+v basis=%q", rec.Pricing, rec.Segments[0].FareBasis)
+	}
+	// The synthetic world sells thirty days out; a 45-day advance purchase
+	// fare cannot be sold that close and the rules refuse it.
+	if _, err := s.Book(ctx, f, "N", 0, "TOOLATE"); err == nil {
+		t.Errorf("a 45-day advance purchase fare sold thirty days out")
+	}
+	// The carrier's ladder: N may take 18% of the cabin, then it is unable while Y is open.
+	tn := s.Tenants[f.Carrier]
+	day := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	ask := func(class string, n int) string {
+		p := &pnr.PNR{Segments: []pnr.Segment{{Ref: 1, Type: pnr.SegmentAir, Carrier: f.Carrier, FlightNum: f.Number,
+			WireDate: day, Board: f.From, Off: f.To, Class: class, Status: "HN", Seats: n}}}
+		out, err := tn.Inventory.Decide(ctx, p, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out[p.Segments[0].Key()]
+	}
+	nAuth := int(float64(f.Seats)*0.18 + 0.5)
+	if got := ask("N", nAuth); got != "KK" {
+		t.Fatalf("N up to its authorisation should confirm: %s (%d seats)", got, nAuth)
+	}
+	if got := ask("N", 1); got != "UC" {
+		t.Errorf("N past its authorisation should be unable, not waitlisted: %s", got)
+	}
+	if got := ask("Y", 1); got != "KK" {
+		t.Errorf("Y should still be open: %s", got)
+	}
+}

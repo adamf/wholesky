@@ -33,6 +33,7 @@ import (
 	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/jetway/pkg/typeb"
 
+	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -174,7 +175,21 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		Name:       c.Name,
 	}, st, bus, log.With("carrier", c.Designator), []byte("wholesky-"+c.Designator))
 
-	inv := inventory.New(c.Designator, capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity))
+	capacity := capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity)
+	inv := inventory.New(c.Designator, capacity)
+	// Revenue management, leg-based: each cabin sells its classes under
+	// nested authorisations, so the last seats go at the higher fares.
+	inv.Levels = func(carrier, flightNum, wireDate, board, compartment string) []inventory.Level {
+		comps, ok := capacity(carrier, flightNum, wireDate, board)
+		if !ok {
+			return nil
+		}
+		var out []inventory.Level
+		for _, l := range tariff.Authorizations(compartment, comps[compartment]) {
+			out = append(out, inventory.Level{Class: l.Class, Authorized: l.Authorized})
+		}
+		return out
+	}
 
 	// The switch identifies this tenant by the listener it dialled, the way
 	// a real circuit identifies its subscriber. Which client dials depends on

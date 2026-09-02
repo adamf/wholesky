@@ -8,6 +8,7 @@ import (
 	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
 
+	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -42,7 +43,7 @@ func TestFillLoadsTheDay(t *testing.T) {
 		}
 		return st.LoadPNRs(ctx, recs, "fill")
 	}
-	plan, err := Day(ctx, m, Options{LoadFactor: 0.85, Seed: 7, Day: day}, sink)
+	plan, err := Day(ctx, m, Options{LoadFactor: 0.85, Seed: 7, Day: day, Tariff: tariff.FromManifest(m)}, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +83,23 @@ func TestFillLoadsTheDay(t *testing.T) {
 	if conn == 0 || bad > 0 {
 		t.Errorf("connections off WN0100: %d, of which %d onto a leg that does not connect", conn, bad)
 	}
-	// A record reads as one: names, class, ticket per name, a channel locator.
+	// A record reads as one: names, class, ticket per name, a channel locator,
+	// a price with the fare basis on the segment and the value on the coupons.
 	r := all[0]
 	if len(r.Tickets) != len(r.Passengers) || r.Status != pnr.StatusTicketed || r.Segments[0].WireDate != "26NOV" {
 		t.Errorf("record shape: %+v", r)
+	}
+	if r.Pricing == nil || r.Pricing.Total <= 0 || r.Segments[0].FareBasis == "" || r.Tickets[0].Coupons[0].Amount == "" {
+		t.Errorf("record not priced: pricing=%+v basis=%q coupon=%+v", r.Pricing, r.Segments[0].FareBasis, r.Tickets[0].Coupons[0])
+	}
+	bases := map[string]int{}
+	for _, x := range all {
+		if x.Pricing != nil {
+			bases[x.Pricing.Passengers[0].Bases[0]]++
+		}
+	}
+	if len(bases) < 3 {
+		t.Errorf("bookings weeks out should spread across the fare ladder: %v", bases)
 	}
 	channelled := 0
 	for _, r := range all {

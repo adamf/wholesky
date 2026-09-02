@@ -41,6 +41,7 @@ import (
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/stats"
+	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -168,8 +169,11 @@ type Sim struct {
 	// tenantDB is the shared Postgres behind every tenant's records, when
 	// the deployment has one; dayStarted is the wall moment the current
 	// simulated day began, which is what the end-of-day purge cuts at.
-	tenantDB   *store.Postgres
-	gdsDB      *store.Postgres
+	tenantDB *store.Postgres
+	gdsDB    *store.Postgres
+	// tariff is the world's fare filing, derived from the schedule: what
+	// the distribution systems price against and the filler prices with.
+	tariff     *tariff.Synthetic
 	dayMu      sync.Mutex
 	dayStarted time.Time
 	sellDays   int
@@ -304,6 +308,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s := &Sim{
 		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		dayStarted:      time.Now(),
+		tariff:          tariff.FromManifest(m),
 		fill:            opts.Fill,
 		fillSeed:        opts.FillSeed,
 		flightsByOrigin: byOrigin,
@@ -735,7 +740,7 @@ func (s *Sim) fillDay(ctx context.Context) {
 		}
 		return t.Store.LoadPNRs(ctx, recs, "fill")
 	}
-	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate}, sink)
+	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff}, sink)
 	if err != nil {
 		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
 		return
@@ -789,7 +794,7 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 						continue
 					}
 					fr := eye.FlightRecord{Locator: r.RecordLocator, Party: len(r.Passengers),
-						Status: string(r.Status), GDS: t.Carrier.Designator}
+						Status: string(r.Status), GDS: t.Carrier.Designator, Fare: fareOf(r)}
 					// Shown under the locator the passenger was given, which
 					// is the selling channel's, when the record carries it.
 					for _, l := range r.Locators {
@@ -820,7 +825,7 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 			}
 			fr := eye.FlightRecord{
 				Locator: r.RecordLocator, Party: len(r.Passengers),
-				Status: string(r.Status), GDS: g.Designator,
+				Status: string(r.Status), GDS: g.Designator, Fare: fareOf(r),
 			}
 			if len(r.Passengers) > 0 {
 				fr.Surname = r.Passengers[0].Surname
@@ -832,6 +837,18 @@ func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 	}
 	s.fates(ctx, out)
 	return out
+}
+
+// fareOf renders a record's price for the panel: total and the fare basis.
+func fareOf(r *pnr.PNR) string {
+	if r.Pricing == nil {
+		return ""
+	}
+	basis := ""
+	if len(r.Pricing.Passengers) > 0 && len(r.Pricing.Passengers[0].Bases) > 0 {
+		basis = " · " + strings.Join(r.Pricing.Passengers[0].Bases, "/")
+	}
+	return fmt.Sprintf("%s %d.%02d%s", r.Pricing.Currency, r.Pricing.Total/100, r.Pricing.Total%100, basis)
 }
 
 // fates fills in what the selling channel did about each booking after the
@@ -1350,6 +1367,7 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 		Designator: g.Designator, TTYAddress: g.Address, Name: g.Name,
 	}, st, bus, log, []byte("wholesky-"+g.Designator))
 	gw.Avail = avail.NewCache()
+	gw.Tariff = s.tariff
 	// Without a queue manager a schedule change has nowhere to put the
 	// bookings it touches -- applySchedule quietly does nothing. The halos on
 	// the map are these placements.

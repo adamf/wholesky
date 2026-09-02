@@ -310,9 +310,17 @@ loadsheet — so the MVT's passenger count is who boarded, not a guess; a
 connecting passenger misses the flight when the inbound is late enough;
 every carrier answers sells from the aircraft's own seats (jetway's
 `pkg/inventory`: cabins from the fleet's layout, pooled per leg, rebuilt
-from the book of record at every start and purge), so a filled 737
-confirms what is left, waitlists the next party and refuses after that,
-and the availability it broadcasts says how many seats remain;
+from the book of record at every start and purge), under a nested class
+ladder, so a filled 737 confirms what is left, closes its cheap classes
+while full fare is still open, waitlists the next party and refuses after
+that, and the availability it broadcasts says how many seats remain;
+every booking is priced before it sells against a fare filing derived from
+the schedule (jetway's `pkg/fare`: a ladder of classes per market with
+basis codes, advance-purchase and stay rules, change fees and refundability,
+and taxes shaped like a US domestic ticket), so a same-day sell pays full
+fare, a cheap class that the rules will not sell is refused with the rule
+named, and the money is on the record and the ticket coupons -- the fares
+are synthetic and labelled, the structure is the industry's;
 the other two networks — each machine runs a datalink service provider
 and an air navigation service provider beside the airlines: an aircraft
 reports OUT and OFF over its datalink, the provider forwards the ARINC 620

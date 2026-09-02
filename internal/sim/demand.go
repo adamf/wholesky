@@ -3,12 +3,14 @@ package sim
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http/httptest"
 	"strings"
 	"time"
 
+	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/gateway"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -97,7 +99,10 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	}
 	party := 1 + rng.Intn(3)
 	day := s.sellOffset(rng)
-	class := []string{"Y", "Y", "Y", "M", "M", "J", "F"}[rng.Intn(7)]
+	// Booked on the day: the cheap fares' advance-purchase rules have
+	// closed, so most of this demand is full fare, some business, a little
+	// first. A class the tariff will not sell for the trip falls back to Y.
+	class := []string{"Y", "Y", "Y", "Y", "Y", "M", "B", "J", "F"}[rng.Intn(9)]
 	surname := fmt.Sprintf("DEMAND%06d", n)
 
 	interline := len(itin) == 2 && itin[0].Carrier != itin[1].Carrier
@@ -147,6 +152,17 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	res, err := g.GW.Book(ctx, &gateway.BookingRequest{
 		Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky", Channel: "sim",
 	})
+	var nf *fare.ErrNoFare
+	if errors.As(err, &nf) {
+		// The class cannot be sold for this trip under its rules; the
+		// passenger pays the fare that can.
+		for k := range segs {
+			segs[k].Class = "Y"
+		}
+		res, err = g.GW.Book(ctx, &gateway.BookingRequest{
+			Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky", Channel: "sim",
+		})
+	}
 	if err != nil {
 		s.DemFailed.Add(1)
 		return
