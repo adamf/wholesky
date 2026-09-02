@@ -61,9 +61,9 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 	// Routes drive everything: an airport nobody flies to and an airline
 	// flying nothing do not belong in the world.
 	type carrierAgg struct {
-		name, country string
-		routes        []rawRoute
-		touch         map[string]int
+		name, country, icao string
+		routes              []rawRoute
+		touch               map[string]int
 	}
 	agg := map[string]*carrierAgg{}
 	for _, r := range routes {
@@ -81,7 +81,7 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 		}
 		a := agg[al.iata]
 		if a == nil {
-			a = &carrierAgg{name: al.name, country: al.country, touch: map[string]int{}}
+			a = &carrierAgg{name: al.name, country: al.country, icao: al.icao, touch: map[string]int{}}
 			agg[al.iata] = a
 		}
 		a.routes = append(a.routes, r)
@@ -122,6 +122,7 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 		}
 		carriers = append(carriers, Carrier{
 			Designator: code, Name: a.name, Country: a.country,
+			ICAO:       icaoDesignator(code, a.icao),
 			Hub:        hub,
 			TTYAddress: ttyAddress(hub, code),
 			Format:     format,
@@ -257,7 +258,7 @@ func hash32(s string) uint32 {
 // --- raw file readers ---------------------------------------------------
 
 type rawAirline struct {
-	iata, name, country string
+	iata, icao, name, country string
 }
 
 type rawRoute struct {
@@ -300,8 +301,12 @@ func readAirports(path string) (map[string]*Airport, error) {
 		if err1 != nil || err2 != nil {
 			continue
 		}
+		icao := rec[5]
+		if len(icao) != 4 || icao == "\\N" {
+			icao = ""
+		}
 		out[iata] = &Airport{
-			IATA: iata, Name: rec[1], City: rec[2], Country: rec[3],
+			IATA: iata, ICAO: icao, Name: rec[1], City: rec[2], Country: rec[3],
 			Lat: lat, Lon: lon, TZ: rec[11],
 		}
 	}
@@ -327,7 +332,7 @@ func readAirlines(path string) (map[string]rawAirline, error) {
 		if len(iata) != 2 || iata == "\\N" || iata == "-" {
 			continue
 		}
-		out[rec[0]] = rawAirline{iata: iata, name: rec[1], country: rec[6]}
+		out[rec[0]] = rawAirline{iata: iata, icao: rec[4], name: rec[1], country: rec[6]}
 	}
 	return out, nil
 }

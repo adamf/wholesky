@@ -703,6 +703,12 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		s.Stop()
 		return nil, err
 	}
+	if err := s.startNetworks(ctx, shard%networkShards, wl.SwitchAddr, s.log); err != nil {
+		s.Stop()
+		return nil, err
+	}
+	s.Fleet.Add(ctx, s.DSP.Name, "datalink provider", fleet.KindNetwork, "typeb", "", "", 0, s.DSP.Store, s.DSP.Bus)
+	s.Fleet.Add(ctx, s.ANSP.Name, "air navigation services", fleet.KindNetwork, "aftn", "", "", 0, s.ANSP.Store, s.ANSP.Bus)
 	mine := 0
 	for _, c := range m.Carriers {
 		if ShardOf(c.Designator, shards) != shard {
@@ -737,6 +743,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          inboundDelay,
+			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
 			Log:                   s.log,
@@ -745,6 +752,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			s.Stop()
 			return nil, fmt.Errorf("start carrier %s: %w", c.Designator, err)
 		}
+		t.SetDay(s.BookingDate)
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
 			c.Format, c.Transport, c.Hub, len(s.Flights[c.Designator]), t.Store, tenantBus)

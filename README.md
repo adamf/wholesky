@@ -268,6 +268,14 @@ the transfer and service lists to the arrival station, the ticket list to
 revenue, and the load and container messages with an AHM 560-method
 loadsheet — so the MVT's passenger count is who boarded, not a guess; a
 connecting passenger misses the flight when the inbound is late enough;
+the other two networks — each machine runs a datalink service provider
+and an air navigation service provider beside the airlines: an aircraft
+reports OUT and OFF over its datalink, the provider forwards the ARINC 620
+report to the airline's operations desk over Type B, and the MVT the world
+runs on is derived from it rather than asserted; operations files an ICAO
+flight plan with the towers at both ends over the AFTN an hour before
+departure, and the towers send their DEP and ARR back over it when the
+aircraft moves, addressed by the airline's ICAO designator;
 irregular operations — when a flight is cancelled, by chaos or by the
 record, the distribution systems' irops engines work the schedule-change
 queue the way a desk does, moving each stranded booking onto the next open

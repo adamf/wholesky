@@ -621,6 +621,7 @@ function edgePoint(p1,p2,f,curved){
 }
 
 const kindColor=k=> k==="MVT"||k==="MVA"||k==="DIV" ? "rgba(224,185,60," :
+  k==="ACARS" ? "rgba(127,208,255," : k==="ATS"||k==="AFTN" ? "rgba(255,210,127," :
   k==="ASM"||k==="SSM" ? "rgba(224,90,90," :
   k==="AVS" ? "rgba(95,150,190," : "rgba(95,211,141,";
 

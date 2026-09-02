@@ -31,6 +31,10 @@ const (
 	KindSwitch  NodeKind = "switch"
 	KindGDS     NodeKind = "gds"
 	KindCarrier NodeKind = "carrier"
+	// KindNetwork is a provider beside the airlines: a datalink service
+	// provider forwarding aircraft reports, or the air navigation service
+	// provider running the AFTN.
+	KindNetwork NodeKind = "network"
 )
 
 // node is one Jetway system's live ledger.

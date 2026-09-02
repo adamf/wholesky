@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/adamf/jetway/pkg/ats"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
 	"github.com/adamf/jetway/pkg/dcs"
@@ -68,6 +69,11 @@ type Tenant struct {
 	cancelled    map[string]string // flight/date -> why it will not fly
 	flightsByNum map[string]world.Flight
 	inboundDelay func(world.Flight, time.Time) int
+	// The operations desk: which day is being flown, the ICAO indicators
+	// of the airports, and the air traffic services messages received.
+	day     time.Time
+	icao    func(iata string) string
+	atsSeen map[ats.Type]int
 
 	// The link runs under its own sub-context so chaos can cut it without
 	// touching the tenant. bootCtx is what a restored link derives from.
@@ -112,6 +118,9 @@ type Options struct {
 	// AccountingCode is the carrier's three-digit numeric code, which leads
 	// its bag tags. Empty derives a stable stand-in from the designator.
 	AccountingCode string
+	// ICAO resolves an airport's IATA code to its ICAO location indicator,
+	// for flight plans and the aircraft's reports. Nil files no plans.
+	ICAO func(iata string) string
 	// Store, when set, is the tenant's book of record -- a node view of a
 	// shared Postgres, wrapped so the message log stays in memory. Nil
 	// keeps everything in a bounded in-memory store.
@@ -201,7 +210,12 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
 		pnlSent:      map[string]map[string]nameItem{},
 		arrivals:     map[dcs.Kind]int{},
+		atsSeen:      map[ats.Type]int{},
 		inboundDelay: opts.InboundDelay,
+		icao:         opts.ICAO,
+	}
+	if opts.ICAO != nil {
+		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
 	t.startGround(opts.AccountingCode)
 	linkCtx, linkCancel := context.WithCancel(ctx)

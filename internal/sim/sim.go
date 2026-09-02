@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/adamf/jetway/pkg/acars"
 	"github.com/adamf/jetway/pkg/api"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/config"
@@ -174,6 +175,11 @@ type Sim struct {
 	// flights onto seats that were open.
 	Rebooked atomic.Int64
 	irops    []*irops.Engine
+	// DSP and ANSP are this machine's datalink provider and air navigation
+	// service provider: the networks beside the airlines' own.
+	DSP      *Datalink
+	ANSP     *ANSP
+	carriers map[string]world.Carrier
 	// Each GDSNode's up flag flips when its client link is established. The
 	// switch counting a session is not enough: there is a window where the
 	// listener has accepted the connection but the client has not yet marked
@@ -288,6 +294,10 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	for _, a := range m.Airports {
 		s.airports[a.IATA] = a
 	}
+	s.carriers = map[string]world.Carrier{}
+	for _, c := range m.Carriers {
+		s.carriers[c.Designator] = c
+	}
 	s.Eye.Chaos = s.chaos
 	s.Eye.FlightPNRs = s.flightRecords
 	s.Eye.FlightDCS = s.flightDCS
@@ -383,6 +393,10 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Stop()
 		return nil, err
 	}
+	if err := s.startNetworks(ctx, 0, sw.Addr("link-net"), log); err != nil {
+		s.Stop()
+		return nil, err
+	}
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
 		switchAddr := sw.Addr("link-net")
@@ -407,6 +421,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          inboundDelay,
+			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
 			Log:                   log,
@@ -415,6 +430,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			s.Stop()
 			return nil, fmt.Errorf("start carrier %s: %w", c.Designator, err)
 		}
+		t.SetDay(s.BookingDate)
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
 			c.Format, c.Transport, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
@@ -447,12 +463,14 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		})
 	}
 	s.GDS, s.GDSStore = s.GDSes[0].GW, s.GDSes[0].Store
+	s.Fleet.Add(ctx, s.DSP.Name, "datalink provider", fleet.KindNetwork, "typeb", "", "", 0, s.DSP.Store, s.DSP.Bus)
+	s.Fleet.Add(ctx, s.ANSP.Name, "air navigation services", fleet.KindNetwork, "aftn", "", "", 0, s.ANSP.Store, s.ANSP.Bus)
 
 	wait := opts.LinkWait
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
-	if err := s.waitForLinks(ctx, len(m.Carriers)+len(s.GDSes), wait); err != nil {
+	if err := s.waitForLinks(ctx, len(m.Carriers)+len(s.GDSes)+2, wait); err != nil {
 		s.Stop()
 		return nil, err
 	}
@@ -787,6 +805,11 @@ func (s *Sim) FlyDay(ctx context.Context) {
 							if err := t.CancelFlight(ctx, f, day, "cancelled as recorded, code "+f.Actual.CancelCode); err != nil {
 								s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
 							}
+							if s.ANSP != nil {
+								if err := s.ANSP.Cancellation(ctx, s.carriers[f.Carrier], f, day); err != nil {
+									s.log.Debug("flight plan cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+								}
+							}
 						}(f)
 					}
 					if a := f.ArrMin; a > prev && a <= cur {
@@ -827,9 +850,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					continue
 				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
-					if err := t.Depart(ctx, f, day, reg, depDelay); err != nil {
-						s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
-					}
+					s.departure(ctx, t, f, day, reg, depDelay)
 				}
 				if f.Actual != nil && f.Actual.Diverted && f.Actual.DivertedTo != "" {
 					// The record says the aircraft landed somewhere else
@@ -840,9 +861,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					}
 				}
 				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
-					if err := t.Arrive(ctx, f, day, reg, arrDelay); err != nil {
-						s.log.Debug("arrival not sent", "flight", f.Carrier+f.Number, "err", err)
-					}
+					s.arrival(ctx, t, f, day, reg, arrDelay)
 				}
 			}
 		}
@@ -971,6 +990,22 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 			})
 		}
 		addPeer(c.Designator, c.TTYAddress, c.Format)
+		// The carrier's ICAO designator routes its AFTN traffic here too.
+		cfg.Peers[len(cfg.Peers)-1].ICAO = c.ICAO
+	}
+	// The other networks: a datalink provider and an ANSP per region shard.
+	for shard := 0; shard < networkShards; shard++ {
+		cfg.Peers = append(cfg.Peers, config.Peer{
+			Name: dspPeer(shard), TTYAddress: dspAddress(shard), Format: "typeb",
+			Egress: config.Egress{Type: "tcp_accept"},
+		})
+		// One link takes the aeronautical network's unclaimed indicators --
+		// the towers' -- so the flight plans land on one ANSP; the other
+		// shard's ANSP still sends its own towers' messages.
+		cfg.Peers = append(cfg.Peers, config.Peer{
+			Name: atcPeer(shard), TTYAddress: atcAddress(shard), Format: "aftn", AFTN: shard == 0,
+			Egress: config.Egress{Type: "tcp_accept"},
+		})
 	}
 	for _, slot := range gdsSlots {
 		addPeer(slot.Designator, gdsAddress(slot), "typeb")
@@ -1263,6 +1298,57 @@ func (s *Sim) mountConsole(code string, srv *api.Server) {
 	s.consolesMu.Lock()
 	s.consoles[strings.ToUpper(code)] = h
 	s.consolesMu.Unlock()
+}
+
+// departure is the aircraft leaving. With a datalink provider on this
+// machine the aircraft reports OUT and OFF, the provider forwards the report
+// to the airline, and the airline's operations desk derives the MVT from it;
+// the tower sends its own DEP over the AFTN. Without one, the tenant asserts
+// the movement itself, as the world did before it had aircraft that talk.
+func (s *Sim) departure(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time, reg string, delay int) {
+	c := s.carriers[f.Carrier]
+	dep := day.Add(time.Duration(f.DepMin+delay) * time.Minute)
+	off := dep.Add(12 * time.Minute)
+	if s.DSP == nil {
+		if err := t.Depart(ctx, f, day, reg, delay); err != nil {
+			s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
+		}
+		return
+	}
+	go func() {
+		if err := s.DSP.Report(ctx, c, f, reg, acars.KindDEP, dep, off); err != nil {
+			s.log.Debug("aircraft report not sent", "flight", f.Carrier+f.Number, "err", err)
+		}
+		if s.ANSP != nil {
+			if err := s.ANSP.Departure(ctx, c, f, day, off); err != nil {
+				s.log.Debug("tower departure not sent", "flight", f.Carrier+f.Number, "err", err)
+			}
+		}
+	}()
+}
+
+// arrival is the aircraft landing: ON and IN from the aircraft, ARR from
+// the tower.
+func (s *Sim) arrival(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time, reg string, delay int) {
+	c := s.carriers[f.Carrier]
+	in := day.Add(time.Duration(f.ArrMin+delay) * time.Minute)
+	on := in.Add(-8 * time.Minute)
+	if s.DSP == nil {
+		if err := t.Arrive(ctx, f, day, reg, delay); err != nil {
+			s.log.Debug("arrival not sent", "flight", f.Carrier+f.Number, "err", err)
+		}
+		return
+	}
+	go func() {
+		if err := s.DSP.Report(ctx, c, f, reg, acars.KindARR, on, in); err != nil {
+			s.log.Debug("aircraft report not sent", "flight", f.Carrier+f.Number, "err", err)
+		}
+		if s.ANSP != nil {
+			if err := s.ANSP.Arrival(ctx, c, f, f.To, on); err != nil {
+				s.log.Debug("tower arrival not sent", "flight", f.Carrier+f.Number, "err", err)
+			}
+		}
+	}()
 }
 
 // wrapMin folds a minute of the day into 0..1440.

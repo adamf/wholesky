@@ -52,6 +52,7 @@ type Collector struct {
 	kindAVS, kindMVT, kindRES     int64
 	kindASM, kindPNL, kindBag     int64
 	kindDCS, kindOther            int64
+	kindACARS, kindATS            int64
 	undeliverable, bookings, mvts int64
 	queuePlaced                   int64
 
@@ -59,6 +60,7 @@ type Collector struct {
 	sTotal, sTypeb, sEdifact        ring
 	sAVS, sMVT, sRES, sASM, sOther  ring
 	sPNL, sBag, sDCS                ring
+	sACARS, sATS                    ring
 	sUndeliv, sBookings, sMovements ring
 	sAirborne, sQueued              ring
 
@@ -125,7 +127,7 @@ func (c *Collector) SetSnapshotPath(path string) {
 
 // ringNames is every series in the panel, which is also the persisted set.
 var ringNames = []string{"total", "typeb", "edifact", "avs", "mvt", "res",
-	"asm", "pnl", "bag", "dcs", "other", "undeliverable", "bookings", "movements",
+	"asm", "pnl", "bag", "dcs", "acars", "ats", "other", "undeliverable", "bookings", "movements",
 	"airborne", "queued"}
 
 func (c *Collector) ringByName(name string) *ring {
@@ -150,6 +152,10 @@ func (c *Collector) ringByName(name string) *ring {
 		return &c.sBag
 	case "dcs":
 		return &c.sDCS
+	case "acars":
+		return &c.sACARS
+	case "ats":
+		return &c.sATS
 	case "other":
 		return &c.sOther
 	case "undeliverable":
@@ -221,13 +227,15 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		c.sPNL.push(per(c.kindPNL))
 		c.sBag.push(per(c.kindBag))
 		c.sDCS.push(per(c.kindDCS))
+		c.sACARS.push(per(c.kindACARS))
+		c.sATS.push(per(c.kindATS))
 		c.sOther.push(per(c.kindOther))
 		c.sUndeliv.push(per(c.undeliverable))
 		c.sBookings.push(per(c.bookings))
 		c.sMovements.push(per(c.mvts))
 		c.total, c.typeb, c.edifact = 0, 0, 0
 		c.kindAVS, c.kindMVT, c.kindRES, c.kindASM, c.kindOther = 0, 0, 0, 0, 0
-		c.kindPNL, c.kindBag, c.kindDCS = 0, 0, 0
+		c.kindPNL, c.kindBag, c.kindDCS, c.kindACARS, c.kindATS = 0, 0, 0, 0, 0
 		c.undeliverable, c.bookings, c.mvts, c.queuePlaced = 0, 0, 0, 0
 		if c.Airborne != nil {
 			c.sAirborne.push(float64(c.Airborne()))
@@ -280,6 +288,10 @@ func (c *Collector) OnMessage(payload map[string]any) {
 		c.kindBag++
 	case "PFS", "PTM", "PSM", "ETL", "LDM", "CPM":
 		c.kindDCS++
+	case "ACARS":
+		c.kindACARS++
+	case "ATS", "AFTN":
+		c.kindATS++
 	default:
 		c.kindOther++
 	}
@@ -361,6 +373,7 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 			"avs": c.sAVS.slice(), "mvt": c.sMVT.slice(), "res": c.sRES.slice(),
 			"asm": c.sASM.slice(), "other": c.sOther.slice(),
 			"pnl": c.sPNL.slice(), "bag": c.sBag.slice(), "dcs": c.sDCS.slice(),
+			"acars": c.sACARS.slice(), "ats": c.sATS.slice(),
 
 			"undeliverable": c.sUndeliv.slice(),
 			"bookings":      c.sBookings.slice(), "movements": c.sMovements.slice(),

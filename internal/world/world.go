@@ -23,7 +23,10 @@ import (
 
 // Airport is a place a flight can touch.
 type Airport struct {
-	IATA    string  `json:"iata"`
+	IATA string `json:"iata"`
+	// ICAO is the four-letter location indicator air traffic services use;
+	// empty for a field the snapshot has none for.
+	ICAO    string  `json:"icao,omitempty"`
 	Name    string  `json:"name"`
 	City    string  `json:"city"`
 	Country string  `json:"country"`
@@ -40,6 +43,10 @@ type Carrier struct {
 	Designator string `json:"designator"`
 	Name       string `json:"name"`
 	Country    string `json:"country"`
+	// ICAO is the carrier's three-letter designator -- BAW, DLH, AAL -- which
+	// heads its callsigns and its AFTN addresses. Synthesised when the
+	// snapshot lacks one.
+	ICAO string `json:"icao,omitempty"`
 	// Hub is the airport this carrier touches most, which anchors its
 	// teletype address and its aircraft rotations.
 	Hub string `json:"hub"`
@@ -178,6 +185,29 @@ func blockMinutes(km float64) int {
 		pad = 30
 	}
 	return int(math.Round(cruise + pad))
+}
+
+// icaoDesignator gives a carrier a three-letter ICAO designator: the one the
+// snapshot has, or one made from its IATA code so callsigns and AFTN
+// addresses have something to carry. A made-up one is not any real
+// carrier's; the digits real IATA codes contain map onto letters.
+func icaoDesignator(iata, icao string) string {
+	if len(icao) == 3 && icao != "N/A" {
+		return icao
+	}
+	var b []byte
+	for _, r := range iata {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			b = append(b, byte(r))
+		case r >= '0' && r <= '9':
+			b = append(b, byte('Q'+(r-'0')%10))
+		}
+	}
+	for len(b) < 3 {
+		b = append(b, 'X')
+	}
+	return string(b[:3])
 }
 
 // sortCarriers orders carriers largest first, then by code for determinism.

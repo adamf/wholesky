@@ -285,7 +285,7 @@ func CompileReplay(opts ReplayOptions) (*Manifest, error) {
 				hub, best = apt, n
 			}
 		}
-		name, country := code, "United States"
+		name, country, icao := code, "United States", ""
 		if al, ok := airlines[code]; ok {
 			if al.name != "" {
 				name = al.name
@@ -293,6 +293,7 @@ func CompileReplay(opts ReplayOptions) (*Manifest, error) {
 			if al.country != "" {
 				country = al.country
 			}
+			icao = al.icao
 		}
 		format := "typeb"
 		if hash32(code)%3 == 0 {
@@ -304,6 +305,7 @@ func CompileReplay(opts ReplayOptions) (*Manifest, error) {
 		}
 		cs = append(cs, Carrier{
 			Designator: code, Name: name, Country: country, Hub: hub,
+			ICAO:       icaoDesignator(code, icao),
 			TTYAddress: ttyAddress(hub, code), Format: format, Transport: transport,
 			Routes: len(a.routes),
 		})

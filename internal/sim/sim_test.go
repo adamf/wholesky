@@ -13,11 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/ats"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
+	"github.com/adamf/wholesky/internal/host"
 
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -1044,4 +1046,94 @@ func TestIROPSRebooksOffACancelledFlight(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// The aircraft talks and the tower talks: an OOOI report from the datalink
+// provider becomes the airline's MVT, the airline's flight plan reaches
+// air traffic services, and the tower's DEP reaches the airline.
+func TestAircraftReportsAndATSDriveTheDay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if s.DSP == nil || s.ANSP == nil {
+		t.Fatal("the world has no datalink provider or ANSP")
+	}
+	c := m.Carriers[0]
+	f := s.Flights[c.Designator][0]
+	tn := s.Tenants[c.Designator]
+	day := s.BookingDate
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("never saw %s", what)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	// The day is flying, so many MVTs arrive; match the one this flight's
+	// aircraft produced by a substring of its raw text.
+	inbound := func(st store.Store, kind, contains string) *store.Message {
+		msgs, _ := st.ListMessages(ctx, store.MessageFilter{Limit: 5000})
+		for _, msg := range msgs {
+			if strings.HasPrefix(msg.Kind, kind) && msg.Direction == store.Inbound {
+				full, _ := st.GetMessage(ctx, msg.ID)
+				if full != nil && (contains == "" || strings.Contains(string(full.Raw), contains)) {
+					return full
+				}
+			}
+		}
+		return nil
+	}
+
+	// Operations files the plan; the ANSP receives it.
+	if err := tn.FileFlightPlan(ctx, f, day); err != nil {
+		t.Fatalf("FileFlightPlan: %v", err)
+	}
+	waitFor("the flight plan at the ANSP", func() bool { return s.ANSP.FlightPlansFiled() >= 1 })
+	fpl := inbound(s.ANSP.Store, "ATS/FPL/", host.Callsign(c, f))
+	if fpl == nil || !strings.Contains(string(fpl.Raw), "(FPL-"+host.Callsign(c, f)) || !strings.Contains(string(fpl.Raw), "ZPZX") {
+		t.Errorf("the ANSP holds no readable flight plan: %v", fpl)
+	}
+
+	// The aircraft departs: the provider reports, the airline derives the
+	// MVT, the watcher sees it with the report's times.
+	s.departure(ctx, tn, f, day, "SKY777", 5)
+	waitFor("the MVT at the watcher", func() bool { return inbound(s.GDSStore, "MVT/", "SKY777") != nil })
+	mvt := string(inbound(s.GDSStore, "MVT/", "SKY777").Raw)
+	dep := day.Add(time.Duration(f.DepMin+5) * time.Minute)
+	wantAD := "AD" + dep.Format("1504") + "/" + dep.Add(12*time.Minute).Format("1504")
+	if !strings.Contains(mvt, wantAD) || !strings.Contains(mvt, "SKY777") {
+		t.Errorf("the MVT does not carry the aircraft's OUT/OFF (%s) and registration:\n%s", wantAD, mvt)
+	}
+	if !strings.Contains(mvt, "DL") {
+		t.Errorf("a five-minute delay should be coded:\n%s", mvt)
+	}
+	if inbound(tn.Store, "ACARS/DEP/", "") == nil {
+		t.Error("the airline never received the aircraft's report")
+	}
+	waitFor("the tower's DEP at the airline", func() bool { return tn.ATSMessages()[ats.TypeDEP] >= 1 })
+
+	// And the landing.
+	s.arrival(ctx, tn, f, day, "SKY777", 0)
+	waitFor("the arrival MVT", func() bool {
+		msgs, _ := s.GDSStore.ListMessages(ctx, store.MessageFilter{Limit: 5000})
+		for _, msg := range msgs {
+			if strings.HasPrefix(msg.Kind, "MVT/") {
+				full, _ := s.GDSStore.GetMessage(ctx, msg.ID)
+				if full != nil && strings.Contains(string(full.Raw), "SKY777") && strings.Contains(string(full.Raw), "\nAA") {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	waitFor("the tower's ARR at the airline", func() bool { return tn.ATSMessages()[ats.TypeARR] >= 1 })
 }
