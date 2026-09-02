@@ -195,6 +195,32 @@ dialling back in. The topology mirrors the real industry either way: most
 carriers are tenants of a handful of hosted systems, and everyone hangs off
 one message network.
 
+## The recorded day
+
+The synthetic world flies a schedule the compiler made up from real routes.
+The recorded world flies a day that happened. `worldc -bts` reads one day of
+the Bureau of Transportation Statistics' on-time performance file -- every
+US scheduled passenger flight, with its tail number, its scheduled and
+actual times, why it was late, whether it was cancelled and why, whether it
+diverted and where -- and compiles a manifest whose flights are those
+flights.
+
+```sh
+go run ./cmd/worldc -bts data/bts/2025-11-26.csv -date 2025-11-26 -o thanksgiving.json
+go run ./cmd/skyd -world thanksgiving.json -warp 1 -demand 800 -sell-days 1
+```
+
+The Wednesday before Thanksgiving 2025: 22,889 flights, 20 operating
+carriers, 351 airports, 5,313 real airframes, 64 cancellations, 44
+diversions, 7,157 flights sold under a major's number and flown by a
+regional. At warp 1 the day takes a day: the delays are the recorded ones
+and the MVTs carry the record's causes as reason codes; a cancelled flight
+is announced by ASM two hours out, after its counter has opened; a diverted
+one sends its DIV to the field it really landed at. What stays synthetic is
+labelled in the manifest: aircraft type inferred from carrier and stage
+length, seat counts, and the passengers, whom BTS does not count. It runs
+at https://wholesky-thanksgiving.fly.dev from `fly.thanksgiving.toml`.
+
 ## Building it
 
 wholesky pins [Jetway](https://github.com/adamf/jetway) by tag, so it builds

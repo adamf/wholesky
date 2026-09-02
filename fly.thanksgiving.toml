@@ -1,0 +1,50 @@
+# Fly.io deployment for the recorded day: the Wednesday before Thanksgiving
+# 2025, every US scheduled passenger flight the Bureau of Transportation
+# Statistics saw, flown in real time.
+#
+# One machine, the single-box shape: 20 carriers, three distribution
+# systems and the switch in one process, the same assemblies the six-machine
+# world spreads out. At warp 1 the day takes a day, so the departure banks
+# arrive when they arrived and the delays are the ones the record holds.
+# Demand is sized to the day: 22,889 flights at about fifty bookings each
+# is 1.1 million bookings, which is 800 a minute.
+#
+#   fly deploy -c fly.thanksgiving.toml --remote-only
+#
+# The tenants' book of record is a database on the wholesky-tenants
+# Managed Postgres cluster, attached as DATABASE_URL; it is purged when the
+# day wraps.
+
+app = "wholesky-thanksgiving"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "-world /etc/wholesky/thanksgiving.json -memlimit 3200MiB -role all -warp 1 -demand 800 -sell-days 1 -carriers 0 -gds 3 -console 0.0.0.0:8080 -avs-interval 60s -max-messages 2000 -max-records 8000 -tenant-max-messages 300 -tenant-dsn $DATABASE_URL -stats-snapshot /tmp/wholesky-stats.json"
+
+[http_service]
+  processes = ["app"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 60
+    hard_limit = 120
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  processes = ["app"]
+  size = "performance-2x"
+  memory = "4096mb"
