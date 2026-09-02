@@ -308,6 +308,11 @@ the transfer and service lists to the arrival station, the ticket list to
 revenue, and the load and container messages with an AHM 560-method
 loadsheet — so the MVT's passenger count is who boarded, not a guess; a
 connecting passenger misses the flight when the inbound is late enough;
+every carrier answers sells from the aircraft's own seats (jetway's
+`pkg/inventory`: cabins from the fleet's layout, pooled per leg, rebuilt
+from the book of record at every start and purge), so a filled 737
+confirms what is left, waitlists the next party and refuses after that,
+and the availability it broadcasts says how many seats remain;
 the other two networks — each machine runs a datalink service provider
 and an air navigation service provider beside the airlines: an aircraft
 reports OUT and OFF over its datalink, the provider forwards the ARINC 620
@@ -318,9 +323,12 @@ departure, and the towers send their DEP and ARR back over it when the
 aircraft moves, addressed by the airline's ICAO designator;
 irregular operations — when a flight is cancelled, by chaos or by the
 record, the distribution systems' irops engines work the schedule-change
-queue the way a desk does, moving each stranded booking onto the next open
-seat over the same city pair with a real sell and a real cancel on the
-wire, while the airport offloads whoever had checked in and pulls their
+queue the way a desk does: the next flights over the same city pair, own
+metal first, free sale where the cache offers it and a request to the
+carrier where it does not, each request waited on until the carrier
+answers — a confirmed seat drops the dead leg with a real sell and a real
+cancel on the wire, a waitlist is kept and named, a refusal comes off the
+record — while the airport offloads whoever had checked in and pulls their
 bags; what nothing can carry stays on the queue for a person;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts

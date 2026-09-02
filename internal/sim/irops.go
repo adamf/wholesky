@@ -95,6 +95,11 @@ func (s *Sim) startIROPS(ctx context.Context, g *GDSNode, every time.Duration, l
 		Schedule: irops.ScheduleFunc(s.alternatives),
 		By:       "irops-" + strings.ToLower(g.Designator),
 		Log:      log,
+		// Full flights are the normal case on a filled day: ask the carriers
+		// for what the cache does not offer on free sale, and give each
+		// answer the time a real link takes.
+		AskCarriers:  true,
+		ReplyTimeout: 15 * time.Second,
 		OnRebooked: func(ctx context.Context, item *store.QueueItem, out irops.Outcome) {
 			s.Rebooked.Add(1)
 			s.Stats.OnRebooked()
