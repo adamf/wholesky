@@ -297,6 +297,14 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 				mrec := marketedCopy(rec, m, ownerFor(m.Marketing), opts.Accounting(m.Marketing), &ticketSeq)
 				rec.Locators = []pnr.ExternalLocator{{Owner: m.Marketing, Value: mrec.RecordLocator}}
 				rec.Origin = pnr.Origin{Party: m.Marketing, Agent: "interline", Channel: "codeshare"}
+				// The operator's copy came over the interline link, which
+				// carries no fare: the marketing carrier holds the price.
+				rec.Pricing = nil
+				for i := range rec.Tickets {
+					for j := range rec.Tickets[i].Coupons {
+						rec.Tickets[i].Coupons[j].Amount, rec.Tickets[i].Coupons[j].Currency = "", ""
+					}
+				}
 				marketedOut[m.Marketing] = append(marketedOut[m.Marketing], mrec)
 				plan.Marketed++
 				if len(marketedOut[m.Marketing]) >= opts.Batch {

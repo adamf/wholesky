@@ -1276,6 +1276,13 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 			}
 		}
 	}
+	// The ledger rebuilt from the book agrees with the ledger the fill fed,
+	// within the even split a store aggregate makes of a record's taxes.
+	fed := s.Ledger.Total()
+	s.rebuildLedger(ctx)
+	if got := s.Ledger.Total(); fed == 0 || got < fed*99/100 || got > fed*101/100 {
+		t.Errorf("ledger rebuilt from the book: %d, fed by the fill: %d", got, fed)
+	}
 	// The inventory is rebuilt from the book: the seats the fill sold are
 	// gone, availability says how many are left, and a party larger than
 	// what is left waitlists instead of overselling the aircraft.

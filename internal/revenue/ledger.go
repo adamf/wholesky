@@ -10,13 +10,43 @@ import (
 	"sync"
 
 	"github.com/adamf/jetway/pkg/pnr"
+	"github.com/adamf/jetway/pkg/store"
 )
 
 // Ledger is a per-leg total in minor units.
 type Ledger struct {
+	// Resolve, when set, maps a segment sold under a marketing code to the
+	// leg that flies it: a distribution system's record says DL5203, the
+	// aircraft in the air is 9E5203.
+	Resolve func(carrier, number, board string) (operating string, ok bool)
+
 	mu    sync.Mutex
 	legs  map[string]int64
 	total int64
+}
+
+// Reset forgets everything, before a rebuild from the book.
+func (l *Ledger) Reset() {
+	l.mu.Lock()
+	l.legs, l.total = map[string]int64{}, 0
+	l.mu.Unlock()
+}
+
+// Fill credits legs from a store's aggregate: each leg's share of the
+// priced records that hold it.
+func (l *Ledger) Fill(legs []store.LegRevenue) {
+	for _, r := range legs {
+		l.Add(l.key(r.Carrier, r.FlightNum, r.Board), r.Cents)
+	}
+}
+
+func (l *Ledger) key(carrier, number, board string) string {
+	if l.Resolve != nil {
+		if op, ok := l.Resolve(carrier, number, board); ok && op != "" {
+			carrier = op
+		}
+	}
+	return Key(carrier, number, board)
 }
 
 // New returns an empty ledger.
@@ -72,7 +102,7 @@ func (l *Ledger) Record(r *pnr.PNR) {
 				cents += pp.Segments[idx] + pp.Taxes/int64(air)
 			}
 		}
-		l.Add(Key(carrier, s.FlightNum, s.Board), cents)
+		l.Add(l.key(carrier, s.FlightNum, s.Board), cents)
 		idx++
 	}
 }

@@ -177,7 +177,10 @@ type Sim struct {
 	tariff *tariff.Synthetic
 	// Ledger is what the day's tickets were sold for, by leg: fed where the
 	// price is known, read by the globe for the money in the air.
-	Ledger     *revenue.Ledger
+	Ledger *revenue.Ledger
+	// marketedBy resolves a marketing carrier's number and boarding point
+	// to the carrier that flies the leg.
+	marketedBy map[string]string
 	dayMu      sync.Mutex
 	dayStarted time.Time
 	sellDays   int
@@ -314,6 +317,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		dayStarted:      time.Now(),
 		tariff:          tariff.FromManifest(m),
 		Ledger:          revenue.New(),
+		marketedBy:      marketedIndex(m),
 		fill:            opts.Fill,
 		fillSeed:        opts.FillSeed,
 		flightsByOrigin: byOrigin,
@@ -335,6 +339,10 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Eye.Chaos = s.chaos
 	s.Eye.FlightPNRs = s.flightRecords
 	s.Eye.FlightDCS = s.flightDCS
+	s.Ledger.Resolve = func(carrier, number, board string) (string, bool) {
+		op, ok := s.marketedBy[revenue.Key(carrier, number, board)]
+		return op, ok
+	}
 	s.Eye.Aloft = s.Ledger.Sum
 	// Bound late: the stats collector is built after the Eye's hooks are.
 	s.Eye.Sold = func() int64 {
@@ -708,6 +716,46 @@ func (s *Sim) RunStats() []any {
 		out = append([]any{"links", len(s.Switch.LivePeers())}, out...)
 	}
 	return out
+}
+
+// marketedIndex maps marketing code + number + board to the operating
+// carrier, for the legs sold under another carrier's code.
+func marketedIndex(m *world.Manifest) map[string]string {
+	out := map[string]string{}
+	for _, f := range m.Flights {
+		if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" {
+			out[revenue.Key(f.Marketing, f.MarketingNumber, f.From)] = f.Carrier
+		}
+	}
+	return out
+}
+
+// rebuildLedger counts every book on this machine into the revenue ledger:
+// what each leg's priced records paid, from the carriers' books and the
+// distribution systems' alike. The live sells add to it from here on.
+func (s *Sim) rebuildLedger(ctx context.Context) {
+	started := time.Now()
+	s.Ledger.Reset()
+	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	stores := map[string]store.Store{}
+	for code, t := range s.Tenants {
+		stores[code] = t.Store
+	}
+	for _, g := range s.GDSes {
+		stores[g.Designator] = g.Store
+	}
+	legs, failed := 0, 0
+	for code, st := range stores {
+		rows, err := st.RevenueByLeg(ctx, wire)
+		if err != nil {
+			failed++
+			s.log.Warn("ledger rebuild failed", "node", code, "err", err)
+			continue
+		}
+		s.Ledger.Fill(rows)
+		legs += len(rows)
+	}
+	s.log.Info("ledger rebuilt", "books", len(stores), "legs", legs, "total_cents", s.Ledger.Total(), "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
 }
 
 // rebuildInventories counts every tenant's book of record into its seat
@@ -1108,6 +1156,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		}
 	}
 	s.rebuildInventories(ctx)
+	s.rebuildLedger(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -1130,6 +1179,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				s.purgeTenants(ctx, before)
 				s.fillDay(ctx)
 				s.rebuildInventories(ctx)
+				s.rebuildLedger(ctx)
 			}()
 		}
 		if cur-prev > maxCatchUp {
