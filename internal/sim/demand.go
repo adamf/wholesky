@@ -118,8 +118,14 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	segs := make([]gateway.BookingSegment, 0, len(itin))
 	date := strings.ToUpper(s.BookingDate.AddDate(0, 0, day).Format("02Jan"))
 	for _, f := range itin {
+		carrier, number := f.Carrier, f.Number
+		// A codeshare sells under the marketing carrier's code nine times in
+		// ten; the operator's own code is the exception.
+		if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" && rng.Intn(10) < 9 {
+			carrier, number = f.Marketing, f.MarketingNumber
+		}
 		segs = append(segs, gateway.BookingSegment{
-			Carrier: f.Carrier, FlightNum: f.Number, Class: class,
+			Carrier: carrier, FlightNum: number, Class: class,
 			Date: date, Board: f.From, Off: f.To, Seats: party,
 		})
 	}

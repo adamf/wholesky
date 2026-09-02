@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adamf/jetway/pkg/ats"
@@ -70,6 +71,10 @@ type Tenant struct {
 	arrivals     map[dcs.Kind]int
 	cancelled    map[string]string // flight/date -> why it will not fly
 	flightsByNum map[string]world.Flight
+	// marketed are the legs this carrier sells but does not fly, by
+	// marketing number and boarding point.
+	marketed     map[string]world.Flight
+	codeshares   atomic.Int64
 	inboundDelay func(world.Flight, time.Time) int
 	// The operations desk: which day is being flown, the ICAO indicators
 	// of the airports, and the air traffic services messages received.
@@ -110,6 +115,13 @@ type Options struct {
 	// wants headroom or a demonstration that wants single digits. Zero
 	// means the aircraft's own cabins, from the fleet data and the schedule.
 	Capacity int
+	// Marketed are the legs this carrier sells under its own code but does
+	// not fly: the codeshares. It answers for their seats from the operating
+	// leg's cabins and forwards every sale to the operator, the way a
+	// marketing carrier does. OperatorAddresses are the operating carriers'
+	// teletype addresses, so the forwarded sell can be routed.
+	Marketed          []world.Flight
+	OperatorAddresses map[string]string
 	// BookingDate is the date the world sells, for availability broadcasts.
 	BookingDate time.Time
 	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
@@ -162,8 +174,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		Name:       c.Name,
 	}, st, bus, log.With("carrier", c.Designator), []byte("wholesky-"+c.Designator))
 
-	inv := inventory.New(c.Designator, capacityFor(c.Designator, flights, opts.Capacity))
-	gw.Responder = inv
+	inv := inventory.New(c.Designator, capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity))
 
 	// The switch identifies this tenant by the listener it dialled, the way
 	// a real circuit identifies its subscriber. Which client dials depends on
@@ -208,7 +219,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	})
 	t := &Tenant{
 		Carrier: c, Gateway: gw, Store: st, Inventory: inv,
-		flights: flights, client: client, watch: opts.WatchAddress,
+		flights: flights, marketed: map[string]world.Flight{}, client: client, watch: opts.WatchAddress,
 		distribution: opts.DistributionAddresses,
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
 		pnlSent:      map[string]map[string]nameItem{},
@@ -219,6 +230,16 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		inboundDelay: opts.InboundDelay,
 		icao:         opts.ICAO,
 	}
+	for _, f := range opts.Marketed {
+		t.marketed[strings.TrimLeft(f.MarketingNumber, "0")+"/"+f.From] = f
+	}
+	// The operating carriers of the legs this carrier markets are peers in
+	// their own right: a forwarded sell is addressed to them by name and
+	// carried down the one circuit like everything else.
+	for code, addr := range opts.OperatorAddresses {
+		gw.AddPeer(&gateway.Peer{Name: code, Carrier: code, Format: store.FormatTypeB, TTYAddress: addr})
+	}
+	gw.Responder = &codeshareResponder{inv: inv, t: t}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
@@ -313,6 +334,15 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 				var g []avail.Key
 				for _, cls := range []string{"F", "J", "Y", "M"} {
 					g = append(g, avail.NewKey(f.Carrier, f.Number, day, f.From, f.To, cls))
+				}
+				groups = append(groups, g)
+			}
+			// The legs this carrier markets are its to advertise too, under
+			// its own code and number.
+			for _, f := range t.marketed {
+				var g []avail.Key
+				for _, cls := range []string{"F", "J", "Y", "M"} {
+					g = append(g, avail.NewKey(f.Marketing, f.MarketingNumber, day, f.From, f.To, cls))
 				}
 				groups = append(groups, g)
 			}
@@ -573,7 +603,10 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 // capacityFor is the carrier's schedule as the inventory asks it: the seats
 // each leg offers per cabin, from the fleet's cabin layout for the type the
 // leg flies, or the schedule's seat count in one economy cabin when the
-// type is unknown. An override puts the same number in every cabin.
+// type is unknown. An override puts the same number in every cabin. A leg
+// the carrier markets but does not fly is registered under the marketing
+// number with the operating aircraft's cabins: the marketing carrier sells
+// the whole aeroplane and the operator flies it.
 func capacityFor(carrier string, flights []world.Flight, override int) inventory.Capacity {
 	type leg struct{ num, board string }
 	byLeg := map[leg]map[string]int{}
@@ -597,6 +630,9 @@ func capacityFor(carrier string, flights []world.Flight, override int) inventory
 			comps["Y"] = f.Seats
 		}
 		num := strings.TrimLeft(f.Number, "0")
+		if f.Carrier != carrier && f.Marketing == carrier {
+			num = strings.TrimLeft(f.MarketingNumber, "0")
+		}
 		byLeg[leg{num, f.From}] = comps
 		if _, ok := first[num]; !ok {
 			first[num] = comps
@@ -615,6 +651,64 @@ func capacityFor(carrier string, flights []world.Flight, override int) inventory
 		return c, ok
 	}
 }
+
+// codeshareResponder answers sells from the carrier's inventory and, for a
+// leg the carrier markets but does not fly, forwards each confirmed sale to
+// the operating carrier: the interline sell a marketing carrier's system
+// makes so the operator's book, name list and check-in know the passenger.
+type codeshareResponder struct {
+	inv *inventory.Inventory
+	t   *Tenant
+}
+
+func (r *codeshareResponder) Decide(ctx context.Context, p *pnr.PNR, peer *gateway.Peer) (map[string]string, error) {
+	out, err := r.inv.Decide(ctx, p, peer)
+	if err != nil {
+		return out, err
+	}
+	for _, s := range p.Segments {
+		if out[s.Key()] != "KK" || s.Carrier != r.t.Carrier.Designator {
+			continue
+		}
+		op, ok := r.t.marketed[strings.TrimLeft(s.FlightNum, "0")+"/"+s.Board]
+		if !ok {
+			continue
+		}
+		go r.t.forwardCodeshare(p.RecordLocator, s, op)
+	}
+	return out, nil
+}
+
+func (r *codeshareResponder) Release(ctx context.Context, s pnr.Segment, was string) {
+	r.inv.Release(ctx, s, was)
+}
+
+// forwardCodeshare puts the operating leg on the record and requests it from
+// the operator. It runs after the decision has been written, so the record
+// it adds to already carries the confirmed marketed leg.
+func (t *Tenant) forwardCodeshare(locator string, sold pnr.Segment, op world.Flight) {
+	if locator == "" {
+		return
+	}
+	time.Sleep(300 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.bootCtx, 20*time.Second)
+	defer cancel()
+	seg := gateway.BookingSegment{
+		Carrier: op.Carrier, FlightNum: op.Number, Class: sold.Class, Date: sold.WireDate,
+		Board: sold.Board, Off: sold.Off, Seats: sold.Seats,
+		DepartTime: sold.DepartTime, ArriveTime: sold.ArriveTime,
+	}
+	if _, err := t.Gateway.AddSegment(ctx, locator, seg, "codeshare",
+		fmt.Sprintf("operating leg of %s%s", sold.Carrier, strings.TrimLeft(sold.FlightNum, "0"))); err != nil {
+		t.log.Debug("codeshare forward failed", "locator", locator, "marketed", sold.Carrier+sold.FlightNum, "operator", op.Carrier+op.Number, "err", err)
+		return
+	}
+	t.codeshares.Add(1)
+}
+
+// Codeshares reports how many marketed sales this carrier forwarded to the
+// operating carriers.
+func (t *Tenant) Codeshares() int64 { return t.codeshares.Load() }
 
 // RebuildInventory counts the carrier's book of record into its inventory:
 // every seat a live record holds on every flight, so the first sell after

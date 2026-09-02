@@ -99,16 +99,35 @@ func TestFillLoadsTheDay(t *testing.T) {
 	if channelled == 0 || channelled == len(all) {
 		t.Errorf("%d of %d records sold through a channel; expected a mix", channelled, len(all))
 	}
-	// The codeshare is on the record as a remark, under the operating flight.
+	// A codeshare leg is sold under the marketing carrier's code: Delta
+	// holds the booking the passenger made, under DL3991 operated by OO,
+	// and SkyWest holds the record the interline sell created, pointing
+	// back at Delta's locator. The few sold by SkyWest itself stay SkyWest's.
 	oo, _ := stores["OO"].FindPNRsByFlight(ctx, "OO3991", "26NOV", 10000)
-	remarked := 0
+	dl, _ := stores["DL"].FindPNRsByFlight(ctx, "DL3991", "26NOV", 10000)
+	if len(oo) == 0 || len(dl) == 0 || len(dl) > len(oo) || plan.Marketed != len(dl) {
+		t.Fatalf("codeshare records: %d at the operator, %d at the marketing carrier, plan says %d marketed", len(oo), len(dl), plan.Marketed)
+	}
+	viaDL := 0
 	for _, r := range oo {
-		if len(r.Remarks) > 0 {
-			remarked++
+		for _, l := range r.Locators {
+			if l.Owner == "DL" {
+				viaDL++
+				if got, err := stores["DL"].GetPNR(ctx, l.Value); err != nil || got.Passengers[0].Surname != r.Passengers[0].Surname {
+					t.Errorf("the operator's record should point at the marketing carrier's: %v %v", l, err)
+				}
+			}
 		}
 	}
-	if len(oo) == 0 || remarked == 0 {
-		t.Errorf("codeshare remarks on OO3991: %d of %d", remarked, len(oo))
+	if viaDL != len(dl) || viaDL == len(oo) {
+		t.Errorf("%d of %d operator records were sold by Delta; expected most but not all", viaDL, len(oo))
+	}
+	for _, r := range dl {
+		sg := r.Segments[0]
+		if sg.Carrier != "DL" || sg.FlightNum != "3991" || sg.OperatingCarrier != "OO" || len(r.Remarks) == 0 {
+			t.Errorf("the marketing carrier's segment should be DL3991 operated by OO: %+v", sg)
+			break
+		}
 	}
 	// Deterministic: fill again, same locators in the same order.
 	var first, second []string

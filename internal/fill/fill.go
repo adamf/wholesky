@@ -54,6 +54,10 @@ type Options struct {
 	Connecting float64
 	// Batch is how many records reach the sink at once. Default 2000.
 	Batch int
+	// Marketed is the share of a codeshare leg's parties sold under the
+	// marketing carrier's code rather than the operator's. Default nine in
+	// ten: a regional flying for a major sells almost nothing itself.
+	Marketed float64
 	// Cellos is the share of parties travelling with an instrument too
 	// precious for the hold. It rides in a seat of its own, booked as a
 	// name of its own -- SURNAME/CBBG -- with the SSR that tells the
@@ -77,6 +81,9 @@ type Plan struct {
 	Passengers int
 	Seats      int // seats offered on the flights filled
 	Connecting int // records with two legs
+	// Marketed counts the records sold under a marketing carrier's code on
+	// a leg another carrier flies: each is two records, one at each.
+	Marketed int
 }
 
 // Sink receives one carrier's records in batches, in a stable order.
@@ -101,6 +108,9 @@ func (o Options) defaults() Options {
 	}
 	if o.Cellos == 0 {
 		o.Cellos = 1.0 / 3000
+	}
+	if o.Marketed == 0 {
+		o.Marketed = 0.9
 	}
 	if o.Secret == nil {
 		o.Secret = func(code string) []byte { return []byte("wholesky-" + code) }
@@ -157,6 +167,7 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 		plan.Passengers += p.Passengers
 		plan.Seats += p.Seats
 		plan.Connecting += p.Connecting
+		plan.Marketed += p.Marketed
 	}
 	return plan, nil
 }
@@ -190,6 +201,23 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	own := &allocator{a: pnr.NewLocatorAllocator(opts.Secret(code)), next: counterBase}
 	acct := opts.Accounting(code)
 	var ticketSeq uint64 = 2_000_000_000
+	// The marketing carriers' records go to their own books; each marketing
+	// carrier allocates its own locators, from a range no live sale reaches.
+	others := map[string]*allocator{}
+	marketedOut := map[string][]*pnr.PNR{}
+	ownerFor := func(cr string) *allocator {
+		a, ok := others[cr]
+		if !ok {
+			// The same base for every carrier would repeat itself across
+			// books; offset by the operating carrier so the marketing
+			// carrier's records from different operators do not collide.
+			h := fnv.New32a()
+			h.Write([]byte(code))
+			a = &allocator{a: pnr.NewLocatorAllocator(opts.Secret(cr)), next: counterBase + uint64(h.Sum32()%1000)*100000}
+			others[cr] = a
+		}
+		return a
+	}
 
 	// Targets per flight, and what connections have already put on each.
 	target := make([]int, len(flights))
@@ -256,6 +284,23 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 			rec := record(rng, code, acct, legs, size, opts, own, channels, &ticketSeq)
 			plan.Records++
 			plan.Passengers += len(rec.Passengers)
+			// A codeshare leg sold under the marketing carrier's code: the
+			// marketing carrier holds the booking the passenger made, and
+			// the operator holds the record its interline sell created,
+			// each pointing at the other.
+			if m := legs[0]; len(legs) == 1 && m.Marketing != "" && m.Marketing != code && m.MarketingNumber != "" && rng.Float64() < opts.Marketed {
+				mrec := marketedCopy(rec, m, ownerFor(m.Marketing), opts.Accounting(m.Marketing), &ticketSeq)
+				rec.Locators = []pnr.ExternalLocator{{Owner: m.Marketing, Value: mrec.RecordLocator}}
+				rec.Origin = pnr.Origin{Party: m.Marketing, Agent: "interline", Channel: "codeshare"}
+				marketedOut[m.Marketing] = append(marketedOut[m.Marketing], mrec)
+				plan.Marketed++
+				if len(marketedOut[m.Marketing]) >= opts.Batch {
+					if err := sink(ctx, m.Marketing, marketedOut[m.Marketing]); err != nil {
+						return plan, err
+					}
+					marketedOut[m.Marketing] = nil
+				}
+			}
 			batch = append(batch, rec)
 			if len(batch) >= opts.Batch {
 				if err := flush(); err != nil {
@@ -264,7 +309,55 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 			}
 		}
 	}
-	return plan, flush()
+	if err := flush(); err != nil {
+		return plan, err
+	}
+	codes := make([]string, 0, len(marketedOut))
+	for cr := range marketedOut {
+		codes = append(codes, cr)
+	}
+	sort.Strings(codes)
+	for _, cr := range codes {
+		if len(marketedOut[cr]) == 0 {
+			continue
+		}
+		if err := sink(ctx, cr, marketedOut[cr]); err != nil {
+			return plan, err
+		}
+	}
+	return plan, nil
+}
+
+// marketedCopy is the marketing carrier's record of a sale on a leg it
+// does not fly: the same party, the segment under the marketing code with
+// the operator named, its own locator and tickets, and the channel's
+// locator where the operator's copy carries the marketing carrier's.
+func marketedCopy(op *pnr.PNR, leg world.Flight, owner *allocator, acct string, ticketSeq *uint64) *pnr.PNR {
+	m := *op
+	m.ID = ""
+	m.RecordLocator = owner.take()
+	m.Passengers = append([]pnr.Passenger(nil), op.Passengers...)
+	m.Segments = make([]pnr.Segment, len(op.Segments))
+	for i, sg := range op.Segments {
+		sg.Carrier, sg.FlightNum, sg.OperatingCarrier = leg.Marketing, leg.MarketingNumber, leg.Carrier
+		m.Segments[i] = sg
+	}
+	m.SSRs = append([]pnr.SSR(nil), op.SSRs...)
+	for i := range m.SSRs {
+		m.SSRs[i].Carrier = leg.Marketing
+	}
+	m.Remarks = []pnr.Remark{{Text: fmt.Sprintf("OPERATED BY %s AS %s%s", leg.Carrier, leg.Carrier, strings.TrimLeft(leg.Number, "0"))}}
+	m.Tickets = make([]pnr.Ticket, len(op.Tickets))
+	for i, t := range op.Tickets {
+		*ticketSeq++
+		t.Number = pnr.TicketNumber{AirlineCode: acct, Serial: fmt.Sprintf("%010d", *ticketSeq)}
+		t.Coupons = append([]pnr.Coupon(nil), t.Coupons...)
+		m.Tickets[i] = t
+	}
+	// The channel's locator stays on the record the passenger booked; the
+	// operator's copy carries this record's locator instead.
+	m.Locators = append([]pnr.ExternalLocator(nil), op.Locators...)
+	return &m
 }
 
 // loadFactor is one flight's share of seats sold before the day: the

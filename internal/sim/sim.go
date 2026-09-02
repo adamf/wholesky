@@ -401,6 +401,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 
 	capacity := opts.Capacity
 	partners := partnerAddresses(m.Carriers, flights)
+	marketed, operators := codeshares(m.Carriers, flights)
 	var distribution []string
 	for _, g := range gdses {
 		distribution = append(distribution, g.Address)
@@ -436,6 +437,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
+			Marketed:              marketed[c.Designator],
+			OperatorAddresses:     operators[c.Designator],
 			Capacity:              capacity,
 			BookingDate:           s.BookingDate,
 			MaxMessages:           tenantMaxMsgs,
@@ -1035,6 +1038,16 @@ func (s *Sim) FlyDay(ctx context.Context) {
 								f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
 							if err := t.SendSchedule(ctx, text); err != nil {
 								s.log.Debug("recorded cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+							}
+							// The marketing carrier tells distribution about the
+							// flight it sold: the bookings under its code are the
+							// ones the distribution systems hold.
+							if mt, ok := s.Tenants[f.Marketing]; ok && f.Marketing != "" && f.Marketing != f.Carrier {
+								mtext := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
+									f.Marketing, f.MarketingNumber, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
+								if err := mt.SendSchedule(ctx, mtext); err != nil {
+									s.log.Debug("marketing cancellation not sent", "flight", f.Marketing+f.MarketingNumber, "err", err)
+								}
 							}
 							if err := t.CancelFlight(ctx, f, day, "cancelled as recorded, code "+f.Actual.CancelCode); err != nil {
 								s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
@@ -1674,6 +1687,31 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 // it shares the most airports with, capped small the way a real partner list
 // is. Deterministic -- same manifest, same partners -- because the web the
 // map draws should be a property of the world, not of a map iteration.
+// codeshares lists, per marketing carrier, the legs it sells under its own
+// code but does not fly, and the teletype addresses of the carriers that
+// fly them.
+func codeshares(carriers []world.Carrier, flights map[string][]world.Flight) (map[string][]world.Flight, map[string]map[string]string) {
+	tty := map[string]string{}
+	for _, c := range carriers {
+		tty[c.Designator] = c.TTYAddress
+	}
+	marketed := map[string][]world.Flight{}
+	operators := map[string]map[string]string{}
+	for _, fs := range flights {
+		for _, f := range fs {
+			if f.Marketing == "" || f.Marketing == f.Carrier || f.MarketingNumber == "" {
+				continue
+			}
+			marketed[f.Marketing] = append(marketed[f.Marketing], f)
+			if operators[f.Marketing] == nil {
+				operators[f.Marketing] = map[string]string{}
+			}
+			operators[f.Marketing][f.Carrier] = tty[f.Carrier]
+		}
+	}
+	return marketed, operators
+}
+
 func partnerAddresses(carriers []world.Carrier, flights map[string][]world.Flight) map[string][]string {
 	const maxPartners = 4
 	touch := map[string]map[string]bool{}
