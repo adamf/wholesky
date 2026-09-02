@@ -327,13 +327,20 @@ async function showFlight(p){
     (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
     "<div class='sub'>fetching the souls on board…</div>";
   panel.style.display="block";
-  let recs=[];
-  try{ recs=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); }catch(e){}
+  let recs=[], dcs=null;
+  try{ const d=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; }catch(e){}
+  const c=dcs&&dcs.counts;
+  const ground=dcs? "<div class='sub' style='margin-top:4px;color:#e8eef4'>departure control · "+dcs.state.replace("_"," ")+
+    "</div><div class='sub'>"+(c.accepted+c.boarded)+" accepted · "+c.boarded+" boarded"+
+    (c.noshow?" · "+c.noshow+" no-show":"")+(c.standby?" · "+c.standby+" standby":"")+
+    " · "+c.bags+" bags "+c.bag_kilos+"kg · "+c.seats+" seats"+(dcs.alerts?" · ⚠ "+dcs.alerts:"")+
+    " · <a href='/node/"+p.flight.slice(0,2)+"/' target='_blank' style='color:#5fd38d'>departures board</a></div>" : "";
   const rows=recs.slice(0,14).map(r=>
     "<div class='sub'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
     "</a> "+r.surname+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+"</div>").join("");
   panel.innerHTML="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
     (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
+    ground+
     (recs.length? "<div class='sub' style='margin-top:4px'>"+recs.length+" records on board</div>"+rows
                 : "<div class='sub'>no records on this flight</div>");
 }

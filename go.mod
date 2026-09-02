@@ -2,7 +2,7 @@ module github.com/adamf/wholesky
 
 go 1.27.0
 
-require github.com/adamf/jetway v0.1.20
+require github.com/adamf/jetway v0.1.22
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

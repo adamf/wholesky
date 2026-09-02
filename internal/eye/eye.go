@@ -71,6 +71,10 @@ type Eye struct {
 	// the bookings riding on it: what the distribution world holds on a
 	// flight, straight from the stores.
 	FlightPNRs func(flight string) []FlightRecord
+	// FlightDCS answers the other half of the drill-through: what departure
+	// control says about the flight, or nil when this machine does not run
+	// the carrier.
+	FlightDCS func(flight string) any
 
 	// Chaos, when set, receives the map's control actions -- ("close","LHR"),
 	// ("reopen","LHR"). The Eye owns the page and the halos; what closing an
@@ -498,12 +502,17 @@ func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this world has no record hook", http.StatusNotImplemented)
 		return
 	}
-	recs := e.FlightPNRs(strings.ToUpper(strings.TrimSpace(r.PathValue("flight"))))
+	flight := strings.ToUpper(strings.TrimSpace(r.PathValue("flight")))
+	recs := e.FlightPNRs(flight)
 	if recs == nil {
 		recs = []FlightRecord{}
 	}
+	var d any
+	if e.FlightDCS != nil {
+		d = e.FlightDCS(flight)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(recs) //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]any{"records": recs, "dcs": d}) //nolint:errcheck
 }
 
 // chaos is the map's one control: close or reopen an airport.

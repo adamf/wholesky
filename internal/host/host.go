@@ -20,7 +20,7 @@ import (
 
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
-	"github.com/adamf/jetway/pkg/baggage"
+	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/matip"
 	"github.com/adamf/jetway/pkg/mvt"
@@ -56,7 +56,17 @@ type Tenant struct {
 	// pnlSent remembers what each flight's PNL said, keyed by flight/date,
 	// so the ADL can carry the diff rather than the world.
 	pnlMu   sync.Mutex
-	pnlSent map[string]map[string]pnl.Name
+	pnlSent map[string]map[string]nameItem
+
+	// DCS is this carrier's departure control, fed through the gateway's
+	// Ground seam; the rest of the ground side is in ground.go.
+	DCS          *dcs.Station
+	groundMu     sync.Mutex
+	sortation    map[string]map[string]bool // flight/date -> tags the sortation system holds
+	boarded      map[string]int             // flight/date -> boarded count at close
+	arrivals     map[dcs.Kind]int
+	flightsByNum map[string]world.Flight
+	inboundDelay func(world.Flight, time.Time) int
 
 	// The link runs under its own sub-context so chaos can cut it without
 	// touching the tenant. bootCtx is what a restored link derives from.
@@ -94,8 +104,15 @@ type Options struct {
 	// AVSInterval is how often availability is rebroadcast. Zero uses the
 	// default; a planet-sized deployment breathes slower than a demo.
 	AVSInterval time.Duration
-	Log         *slog.Logger
-	Bus         *gateway.Bus
+	// InboundDelay reports how late one of this carrier's arrivals runs on
+	// a day, so a connecting passenger can miss their onward flight for the
+	// reason people really do. Nil means every inbound is on time.
+	InboundDelay func(f world.Flight, day time.Time) int
+	// AccountingCode is the carrier's three-digit numeric code, which leads
+	// its bag tags. Empty derives a stable stand-in from the designator.
+	AccountingCode string
+	Log            *slog.Logger
+	Bus            *gateway.Bus
 }
 
 // Start brings one carrier up and dials its link.
@@ -173,8 +190,11 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		flights: flights, client: client, watch: opts.WatchAddress,
 		distribution: opts.DistributionAddresses,
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
-		pnlSent: map[string]map[string]pnl.Name{},
+		pnlSent:      map[string]map[string]nameItem{},
+		arrivals:     map[dcs.Kind]int{},
+		inboundDelay: opts.InboundDelay,
 	}
+	t.startGround(opts.AccountingCode)
 	linkCtx, linkCancel := context.WithCancel(ctx)
 	t.linkCancel = linkCancel
 	go t.runLink(linkCtx)
@@ -338,7 +358,7 @@ func (t *Tenant) Depart(ctx context.Context, f world.Flight, day time.Time, reg 
 		Station:      f.From,
 		AD:           &mvt.TimePair{First: dep.Format("1504"), Second: off.Format("1504")},
 		EA:           &mvt.ETA{Time: eta.Format("1504"), Airport: f.To},
-		Pax:          []int{f.Seats * 8 / 10},
+		Pax:          []int{t.boardedFor(f, day)},
 	}
 	if delayMin > 0 {
 		m.Delays = []mvt.Delay{{Code: "93", Duration: fmt.Sprintf("%02d%02d", delayMin/60, delayMin%60)}}
@@ -366,6 +386,9 @@ func (t *Tenant) Arrive(ctx context.Context, f world.Flight, day time.Time, reg 
 	if err != nil {
 		return err
 	}
+	// The flight has landed; departure control's record of it has done its
+	// work and the ledger holds every message it produced.
+	t.Forget(ctx, f, day)
 	return t.sendTypeB(ctx, text, "MVT")
 }
 
@@ -404,6 +427,13 @@ func (t *Tenant) sendTypeB(ctx context.Context, text, kind string) error {
 // address block carries them all, and the switch fans it out, which is what
 // the address block is for.
 func (t *Tenant) sendTypeBTo(ctx context.Context, addrs []string, text, kind string) error {
+	return t.sendTypeBFrom(ctx, t.Carrier.TTYAddress, addrs, text, kind)
+}
+
+// sendTypeBFrom is sendTypeBTo with the originating desk named: departure
+// control writes from its station address, not from reservations', and the
+// switch tells the two apart on the origin line.
+func (t *Tenant) sendTypeBFrom(ctx context.Context, from string, addrs []string, text, kind string) error {
 	dests := make([]typeb.Address, 0, len(addrs))
 	for _, a := range addrs {
 		d, err := typeb.ParseAddress(a)
@@ -412,7 +442,7 @@ func (t *Tenant) sendTypeBTo(ctx context.Context, addrs []string, text, kind str
 		}
 		dests = append(dests, d)
 	}
-	origin, err := typeb.ParseAddress(t.Carrier.TTYAddress)
+	origin, err := typeb.ParseAddress(from)
 	if err != nil {
 		return fmt.Errorf("host: own address: %w", err)
 	}
@@ -433,19 +463,34 @@ func (t *Tenant) sendTypeBTo(ctx context.Context, addrs []string, text, kind str
 	return err
 }
 
+// nameItem is one name item as the list will carry it, with the booking
+// class that decides which group heading it sits under.
+type nameItem struct {
+	name  pnl.Name
+	class string
+}
+
 // nameItems lists the flight's booked parties from the tenant's own store:
 // what this carrier believes it is boarding, which is exactly what a name
-// list asserts. Keyed by locator so the ADL can say what changed.
-func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (map[string]pnl.Name, string, error) {
+// list asserts. Keyed by locator so the ADL can say what changed. Each item
+// carries the elements check-in reads forward: the locator, the service
+// requests, and the ticket number as a TKNE.
+func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (map[string]nameItem, string, error) {
 	wireDate := strings.ToUpper(day.Format("02Jan"))
 	recs, err := t.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wireDate, 5000)
 	if err != nil {
 		return nil, wireDate, err
 	}
-	items := map[string]pnl.Name{}
+	items := map[string]nameItem{}
 	for _, r := range recs {
 		if len(r.Passengers) == 0 {
 			continue
+		}
+		class := "Y"
+		for _, sg := range r.Segments {
+			if sg.Carrier == f.Carrier && sg.FlightNum == f.Number && sg.Class != "" {
+				class = sg.Class
+			}
 		}
 		n := pnl.Name{
 			Party:   len(r.Passengers),
@@ -457,9 +502,43 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 		if r.RecordLocator != "" {
 			n.Elements = append(n.Elements, ".L/"+r.RecordLocator)
 		}
-		items[r.RecordLocator+"/"+n.Surname] = n
+		for _, ssr := range r.SSRs {
+			if ssr.Code == "" || ssr.Sensitive {
+				continue
+			}
+			n.Elements = append(n.Elements, fmt.Sprintf(".R/%s HK%d", ssr.Code, max(1, ssr.Count)))
+		}
+		for _, tk := range r.Tickets {
+			if tk.Type != "" {
+				continue // an EMD is not the document they fly on
+			}
+			n.Elements = append(n.Elements, ".R/TKNE HK1 "+tk.Number.String()+"C1")
+			break
+		}
+		items[r.RecordLocator+"/"+n.Surname] = nameItem{name: n, class: class}
 	}
 	return items, wireDate, nil
+}
+
+// airportAddresses is where a name list goes: the carrier's check-in at the
+// departure airport, and the operations watch that sees everything.
+func (t *Tenant) airportAddresses(f world.Flight) []string {
+	return []string{t.stationAddress(f.From, deptCheckIn), t.watch}
+}
+
+// classesOf lists the booking classes present, in list order.
+func classesOf(items map[string]nameItem) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range sortedKeys(items) {
+		c := items[k].class
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SendPNL builds the passenger name list for one departure from the store
@@ -469,19 +548,29 @@ func (t *Tenant) SendPNL(ctx context.Context, f world.Flight, day time.Time) err
 	if err != nil {
 		return err
 	}
-	var names []pnl.Name
-	count := 0
-	for _, k := range sortedKeys(items) {
-		names = append(names, items[k])
-		count += items[k].Party
+	var groups []pnl.Group
+	for _, class := range classesOf(items) {
+		g := pnl.Group{Dest: f.To, Class: class}
+		for _, k := range sortedKeys(items) {
+			if items[k].class != class {
+				continue
+			}
+			g.Names = append(g.Names, items[k].name)
+			g.Count += items[k].name.Party
+		}
+		groups = append(groups, g)
 	}
-	parts, err := pnl.BuildParts(pnl.KindPNL, f.Carrier+f.Number, wireDate, f.From,
-		[]pnl.Group{{Dest: f.To, Count: count, Class: "Y", Names: names}})
+	if len(groups) == 0 {
+		// An empty list is still a list: it tells the airport the flight
+		// exists and nobody is booked on it.
+		groups = []pnl.Group{{Dest: f.To, Class: "Y"}}
+	}
+	parts, err := pnl.BuildParts(pnl.KindPNL, f.Carrier+f.Number, wireDate, f.From, groups)
 	if err != nil {
 		return err
 	}
 	for _, part := range parts {
-		if err := t.sendTypeB(ctx, part, "PNL"); err != nil {
+		if err := t.sendTypeBTo(ctx, t.airportAddresses(f), part, "PNL"); err != nil {
 			return err
 		}
 	}
@@ -504,37 +593,52 @@ func (t *Tenant) SendADL(ctx context.Context, f world.Flight, day time.Time) err
 	if before == nil {
 		return nil // no PNL went out; there is nothing to amend
 	}
-	var del, add []pnl.Name
+	del, add := map[string][]pnl.Name{}, map[string][]pnl.Name{}
+	changed := false
 	for _, k := range sortedKeys(before) {
 		if _, ok := items[k]; !ok {
-			del = append(del, before[k])
+			del[before[k].class] = append(del[before[k].class], before[k].name)
+			changed = true
 		}
 	}
 	for _, k := range sortedKeys(items) {
 		if _, ok := before[k]; !ok {
-			add = append(add, items[k])
+			add[items[k].class] = append(add[items[k].class], items[k].name)
+			changed = true
 		}
 	}
-	if len(del) == 0 && len(add) == 0 {
+	if !changed {
 		return nil
 	}
-	count := 0
-	for _, n := range items {
-		count += n.Party
+	classes := map[string]bool{}
+	for c := range del {
+		classes[c] = true
 	}
-	g := pnl.Group{Dest: f.To, Count: count, Class: "Y"}
-	if len(del) > 0 {
-		g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeDEL, Names: del})
+	for c := range add {
+		classes[c] = true
 	}
-	if len(add) > 0 {
-		g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeADD, Names: add})
+	var groups []pnl.Group
+	for _, class := range sortedKeys(classes) {
+		g := pnl.Group{Dest: f.To, Class: class}
+		for _, it := range items {
+			if it.class == class {
+				g.Count += it.name.Party
+			}
+		}
+		if len(del[class]) > 0 {
+			g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeDEL, Names: del[class]})
+		}
+		if len(add[class]) > 0 {
+			g.Sections = append(g.Sections, pnl.Section{Change: pnl.ChangeADD, Names: add[class]})
+		}
+		groups = append(groups, g)
 	}
-	parts, err := pnl.BuildParts(pnl.KindADL, f.Carrier+f.Number, wireDate, f.From, []pnl.Group{g})
+	parts, err := pnl.BuildParts(pnl.KindADL, f.Carrier+f.Number, wireDate, f.From, groups)
 	if err != nil {
 		return err
 	}
 	for _, part := range parts {
-		if err := t.sendTypeB(ctx, part, "ADL"); err != nil {
+		if err := t.sendTypeBTo(ctx, t.airportAddresses(f), part, "ADL"); err != nil {
 			return err
 		}
 	}
@@ -542,69 +646,6 @@ func (t *Tenant) SendADL(ctx context.Context, f world.Flight, day time.Time) err
 	t.pnlSent[f.Carrier+f.Number+"/"+wireDate] = items
 	t.pnlMu.Unlock()
 	return nil
-}
-
-// SendBaggage emits the bag messages for one departure: a BSM per party
-// that checked bags -- deterministically about six in ten -- and one BPM at
-// departure confirming what was loaded.
-func (t *Tenant) SendBaggage(ctx context.Context, f world.Flight, day time.Time, processed bool) error {
-	items, wireDate, err := t.nameItems(ctx, f, day)
-	if err != nil {
-		return err
-	}
-	var loaded []baggage.Tag
-	for _, k := range sortedKeys(items) {
-		n := items[k]
-		h := hashOf(k + f.Carrier + f.Number + wireDate)
-		if h%10 >= 6 {
-			continue // travelling light
-		}
-		bags := 1 + h/10%2
-		tag := baggage.Tag{
-			Number: fmt.Sprintf("0%03d%06d", 100+hashOf(f.Carrier)%900, h%1000000),
-			Count:  bags,
-		}
-		loaded = append(loaded, tag)
-		if processed {
-			continue
-		}
-		m := &baggage.Message{
-			Kind:     baggage.KindBSM,
-			Version:  "1L" + f.From,
-			Outbound: &baggage.FlightLeg{Flight: f.Carrier + f.Number, Date: wireDate, City: f.To, Class: "Y"},
-			Tags:     []baggage.Tag{tag},
-			Surname:  n.Surname,
-		}
-		if len(n.Givens) > 0 {
-			m.Givens = []string{n.Givens[0]}
-		}
-		text, err := baggage.Build(m)
-		if err != nil {
-			return err
-		}
-		if err := t.sendTypeB(ctx, text, "BSM"); err != nil {
-			return err
-		}
-	}
-	if !processed || len(loaded) == 0 {
-		return nil
-	}
-	// The loading report: every tag on one message, the sortation system's
-	// word that the bags this flight owns are on board.
-	if len(loaded) > 40 {
-		loaded = loaded[:40]
-	}
-	m := &baggage.Message{
-		Kind:     baggage.KindBPM,
-		Version:  "1L" + f.From,
-		Outbound: &baggage.FlightLeg{Flight: f.Carrier + f.Number, Date: wireDate, City: f.To},
-		Tags:     loaded,
-	}
-	text, err := baggage.Build(m)
-	if err != nil {
-		return err
-	}
-	return t.sendTypeB(ctx, text, "BPM")
 }
 
 func sortedKeys[V any](m map[string]V) []string {

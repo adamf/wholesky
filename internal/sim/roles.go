@@ -142,6 +142,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		}
 	}
 	s.Eye.FlightPNRs = c.federatedFlightRecords
+	s.Eye.FlightDCS = c.federatedFlightDCS
 
 	fed := http.NewServeMux()
 	c.Routes(fed)
@@ -377,6 +378,36 @@ func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
 	return out
 }
 
+// federatedFlightDCS asks the machine that runs a flight's carrier what its
+// departure control says about the flight. The ownership map the fleet
+// board discovers is what says which machine that is.
+func (c *Core) federatedFlightDCS(flight string) any {
+	if len(flight) < 3 {
+		return nil
+	}
+	owner := c.ownerOf(flight[:2])
+	if owner == "" {
+		return nil
+	}
+	c.mu.Lock()
+	reg, ok := c.peers[owner]
+	c.mu.Unlock()
+	if !ok || reg.URL == "" {
+		return nil
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(reg.URL + "/shard/dcs/" + flight)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out any
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // federate registers with the core and heartbeats forever, applying the
 // warp and closed-airport state each beat carries. One mechanism is the
 // whole control plane: liveness, time control and chaos propagate on the
@@ -512,6 +543,10 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings func() int64) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(recs) //nolint:errcheck
+	})
+	mux.HandleFunc("GET /shard/dcs/{flight}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s.flightDCS(strings.ToUpper(r.PathValue("flight")))) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok")) //nolint:errcheck
@@ -677,6 +712,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			MaxMessages:           tenantMaxMsgs,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
+			InboundDelay:          inboundDelay,
 			Bus:                   tenantBus,
 			Log:                   s.log,
 		})
@@ -687,10 +723,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
 			c.Format, c.Transport, c.Hub, len(s.Flights[c.Designator]), t.Store, tenantBus)
-		s.mountConsole(c.Designator, &api.Server{
-			Gateway: t.Gateway, Store: t.Store, Bus: tenantBus,
-			Log: s.log.With("console", c.Designator), Console: true,
-		})
+		s.mountConsole(c.Designator, tenantConsole(t, tenantBus, s.log.With("console", c.Designator)))
 	}
 	// The board's link dots and sever buttons for this shard's rows come
 	// from the tenants themselves: a region has no switch to count sessions,

@@ -8,6 +8,7 @@ package sim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -22,6 +23,7 @@ import (
 	"github.com/adamf/jetway/pkg/api"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/config"
+	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/node"
 	"github.com/adamf/jetway/pkg/queue"
@@ -261,6 +263,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	}
 	s.Eye.Chaos = s.chaos
 	s.Eye.FlightPNRs = s.flightRecords
+	s.Eye.FlightDCS = s.flightDCS
 	s.Eye.WarpNow = s.clock.Warp
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp
@@ -367,6 +370,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxMessages:           tenantMaxMsgs,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
+			InboundDelay:          inboundDelay,
 			Bus:                   tenantBus,
 			Log:                   log,
 		})
@@ -377,10 +381,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Tenants[c.Designator] = t
 		s.Fleet.Add(ctx, c.Designator, c.Name, fleet.KindCarrier,
 			c.Format, c.Transport, c.Hub, len(flights[c.Designator]), t.Store, tenantBus)
-		s.mountConsole(c.Designator, &api.Server{
-			Gateway: t.Gateway, Store: t.Store, Bus: tenantBus,
-			Log: log.With("console", c.Designator), Console: true,
-		})
+		s.mountConsole(c.Designator, tenantConsole(t, tenantBus, log.With("console", c.Designator)))
 	}
 
 	for i, g := range s.GDSes {
@@ -598,7 +599,11 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	const maxCatchUp = 120
 
 	pos := func(at time.Time) int { return int(s.clock.Pos(at)) }
-	day := time.Now().UTC().Truncate(24 * time.Hour)
+	// The day the world flies is the day it sold: bookings are for the
+	// selling date, so that is the date the name lists ask the stores about
+	// and the date on every message. Flying the calendar day instead sent
+	// the airport empty lists.
+	day := s.BookingDate
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -626,38 +631,36 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				}
 				depDelay, arrDelay := delayFor(f, day)
 				// The ground story of a departure, at the hours it really
-				// happens: the name list for check-in, the bags as they are
-				// checked, the amendments as the door nears.
-				if w := f.DepMin - 180; w > prev && w <= cur {
-					go func(f world.Flight) {
-						if err := t.SendPNL(ctx, f, day); err != nil {
-							s.log.Debug("pnl not sent", "flight", f.Carrier+f.Number, "err", err)
-						}
-					}(f)
+				// happens: reservations sends the airport the name list,
+				// the counter fills in waves, the amendments follow, the
+				// counter closes, the gate boards, the sortation system
+				// reports the hold, and the door closes. The events due
+				// this tick run in order in one goroutine: at high warp
+				// several fall in one tick, and a door that closed before
+				// the counter opened would be a different story.
+				var due []groundEvent
+				for _, g := range groundEvents {
+					if w := f.DepMin - g.before; w > prev && w <= cur {
+						due = append(due, g)
+					}
 				}
-				if w := f.DepMin - 90; w > prev && w <= cur {
-					go func(f world.Flight) {
-						if err := t.SendBaggage(ctx, f, day, false); err != nil {
-							s.log.Debug("bsm not sent", "flight", f.Carrier+f.Number, "err", err)
+				if len(due) > 0 {
+					go func(f world.Flight, due []groundEvent) {
+						for _, g := range due {
+							err := g.do(ctx, t, f, day)
+							if err == nil || errors.Is(err, dcs.ErrFlightNotFound) {
+								// Not under control: the flight's list went out
+								// before this process started. Nothing to say.
+								continue
+							}
+							s.log.Debug(g.what+" failed", "flight", f.Carrier+f.Number, "err", err)
 						}
-					}(f)
-				}
-				if w := f.DepMin - 60; w > prev && w <= cur {
-					go func(f world.Flight) {
-						if err := t.SendADL(ctx, f, day); err != nil {
-							s.log.Debug("adl not sent", "flight", f.Carrier+f.Number, "err", err)
-						}
-					}(f)
+					}(f, due)
 				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
 					if err := t.Depart(ctx, f, day, reg, depDelay); err != nil {
 						s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
 					}
-					go func(f world.Flight) {
-						if err := t.SendBaggage(ctx, f, day, true); err != nil {
-							s.log.Debug("bpm not sent", "flight", f.Carrier+f.Number, "err", err)
-						}
-					}(f)
 				}
 				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
 					if err := t.Arrive(ctx, f, day, reg, arrDelay); err != nil {
@@ -668,6 +671,59 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		}
 		prev = cur
 	}
+}
+
+// groundEvent is one step of a departure's ground story, at a number of
+// minutes before scheduled departure.
+type groundEvent struct {
+	before int
+	what   string
+	do     func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error
+}
+
+// groundEvents is the timetable every departure follows. Check-in opens
+// three hours out and closes at forty-five minutes; boarding runs from
+// thirty; the door closes at ten.
+var groundEvents = []groundEvent{
+	{180, "pnl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.SendPNL(ctx, f, day)
+	}},
+	{150, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CheckIn(ctx, f, day, 150)
+	}},
+	{120, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CheckIn(ctx, f, day, 120)
+	}},
+	{90, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CheckIn(ctx, f, day, 90)
+	}},
+	{60, "adl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.SendADL(ctx, f, day)
+	}},
+	{60, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CheckIn(ctx, f, day, 60)
+	}},
+	{46, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CheckIn(ctx, f, day, 46)
+	}},
+	{45, "close check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.CloseCheckIn(ctx, f, day)
+	}},
+	{30, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.Board(ctx, f, day, 30)
+	}},
+	{20, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.Board(ctx, f, day, 20)
+	}},
+	{14, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.Board(ctx, f, day, 14)
+	}},
+	{12, "bag report", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.ReportBags(ctx, f, day)
+	}},
+	{10, "close", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		return t.Close(ctx, f, day)
+	}},
 }
 
 func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend func(*http.ServeMux), log *slog.Logger) (*node.Node, error) {
@@ -1002,6 +1058,39 @@ func (s *Sim) mountConsole(code string, srv *api.Server) {
 	s.consolesMu.Lock()
 	s.consoles[strings.ToUpper(code)] = h
 	s.consolesMu.Unlock()
+}
+
+// tenantConsole is a carrier's console: the gateway's pages plus the
+// departures board, with the agent's actions wired to the wire.
+func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Server {
+	return &api.Server{
+		Gateway: t.Gateway, Store: t.Store, Bus: bus, Log: log, Console: true,
+		Ground: t.DCS, OnAccept: t.OnAccept, OnOffload: t.OnOffload, OnClose: t.SendClosure,
+	}
+}
+
+// inboundDelay is the arrival delay the flight day will give a flight, for
+// the connecting passengers who depend on it.
+func inboundDelay(f world.Flight, day time.Time) int {
+	_, arr := delayFor(f, day)
+	return arr
+}
+
+// flightDCS is the globe's other drill-through: what departure control
+// says about the aircraft, if this machine runs the carrier.
+func (s *Sim) flightDCS(flight string) any {
+	if len(flight) < 3 {
+		return nil
+	}
+	t, ok := s.Tenants[flight[:2]]
+	if !ok {
+		return nil
+	}
+	sum, ok := t.Summarise(flight)
+	if !ok {
+		return nil
+	}
+	return sum
 }
 
 // serveNodeConsole dispatches /node/{code}/... to that node's own console,

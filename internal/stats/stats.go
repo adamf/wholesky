@@ -51,14 +51,14 @@ type Collector struct {
 	total, typeb, edifact         int64
 	kindAVS, kindMVT, kindRES     int64
 	kindASM, kindPNL, kindBag     int64
-	kindOther                     int64
+	kindDCS, kindOther            int64
 	undeliverable, bookings, mvts int64
 	queuePlaced                   int64
 
 	// series, per second
 	sTotal, sTypeb, sEdifact        ring
 	sAVS, sMVT, sRES, sASM, sOther  ring
-	sPNL, sBag                      ring
+	sPNL, sBag, sDCS                ring
 	sUndeliv, sBookings, sMovements ring
 	sAirborne, sQueued              ring
 
@@ -123,7 +123,7 @@ func (c *Collector) SetSnapshotPath(path string) {
 
 // ringNames is every series in the panel, which is also the persisted set.
 var ringNames = []string{"total", "typeb", "edifact", "avs", "mvt", "res",
-	"asm", "pnl", "bag", "other", "undeliverable", "bookings", "movements",
+	"asm", "pnl", "bag", "dcs", "other", "undeliverable", "bookings", "movements",
 	"airborne", "queued"}
 
 func (c *Collector) ringByName(name string) *ring {
@@ -146,6 +146,8 @@ func (c *Collector) ringByName(name string) *ring {
 		return &c.sPNL
 	case "bag":
 		return &c.sBag
+	case "dcs":
+		return &c.sDCS
 	case "other":
 		return &c.sOther
 	case "undeliverable":
@@ -214,12 +216,16 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		c.sMVT.push(per(c.kindMVT))
 		c.sRES.push(per(c.kindRES))
 		c.sASM.push(per(c.kindASM))
+		c.sPNL.push(per(c.kindPNL))
+		c.sBag.push(per(c.kindBag))
+		c.sDCS.push(per(c.kindDCS))
 		c.sOther.push(per(c.kindOther))
 		c.sUndeliv.push(per(c.undeliverable))
 		c.sBookings.push(per(c.bookings))
 		c.sMovements.push(per(c.mvts))
 		c.total, c.typeb, c.edifact = 0, 0, 0
 		c.kindAVS, c.kindMVT, c.kindRES, c.kindASM, c.kindOther = 0, 0, 0, 0, 0
+		c.kindPNL, c.kindBag, c.kindDCS = 0, 0, 0
 		c.undeliverable, c.bookings, c.mvts, c.queuePlaced = 0, 0, 0, 0
 		if c.Airborne != nil {
 			c.sAirborne.push(float64(c.Airborne()))
@@ -270,6 +276,8 @@ func (c *Collector) OnMessage(payload map[string]any) {
 		c.kindPNL++
 	case "BSM", "BPM":
 		c.kindBag++
+	case "PFS", "PTM", "PSM", "ETL", "LDM", "CPM":
+		c.kindDCS++
 	default:
 		c.kindOther++
 	}
@@ -331,7 +339,7 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 			"total": c.sTotal.slice(), "typeb": c.sTypeb.slice(), "edifact": c.sEdifact.slice(),
 			"avs": c.sAVS.slice(), "mvt": c.sMVT.slice(), "res": c.sRES.slice(),
 			"asm": c.sASM.slice(), "other": c.sOther.slice(),
-			"pnl": c.sPNL.slice(), "bag": c.sBag.slice(),
+			"pnl": c.sPNL.slice(), "bag": c.sBag.slice(), "dcs": c.sDCS.slice(),
 
 			"undeliverable": c.sUndeliv.slice(),
 			"bookings":      c.sBookings.slice(), "movements": c.sMovements.slice(),

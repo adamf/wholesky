@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/store"
 
@@ -543,7 +544,7 @@ func TestDelaysAreDeterministicAndShaped(t *testing.T) {
 // store believes it is boarding, the ADL carries exactly the diff after a
 // cancellation, and the bag messages tag real parties. All of it crosses
 // the switch to the watcher like any other traffic.
-func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
+func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	m := smallWorld(t)
@@ -558,7 +559,7 @@ func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
 	day := s.BookingDate
 
 	var locs []string
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 12; i++ {
 		res, err := s.Book(ctx, f, "Y", 0, fmt.Sprintf("GROUND%d", i))
 		if err != nil {
 			t.Fatal(err)
@@ -579,11 +580,14 @@ func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
 	}
 
 	tn := s.Tenants[c.Designator]
-	findAtWatcher := func(kind string) *store.Message {
-		msgs, _ := s.GDSStore.ListMessages(ctx, store.MessageFilter{Limit: 10000})
+	// findAt looks for an inbound message of a kind in a store: the GDS
+	// watcher's for what operations sees, the tenant's own for what came
+	// back down its circuit to its airport desks.
+	findAt := func(st store.Store, kind string) *store.Message {
+		msgs, _ := st.ListMessages(ctx, store.MessageFilter{Limit: 10000})
 		for _, msg := range msgs {
 			if strings.HasPrefix(msg.Kind, kind) && msg.Direction == store.Inbound {
-				full, err := s.GDSStore.GetMessage(ctx, msg.ID)
+				full, err := st.GetMessage(ctx, msg.ID)
 				if err == nil {
 					return full
 				}
@@ -591,43 +595,65 @@ func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
 		}
 		return nil
 	}
-	waitAtWatcher := func(kind string) *store.Message {
+	waitAt := func(st store.Store, kind string) *store.Message {
 		t.Helper()
 		deadline := time.Now().Add(15 * time.Second)
 		for {
-			if m := findAtWatcher(kind); m != nil {
+			if m := findAt(st, kind); m != nil {
 				return m
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("no %s message ever reached the watcher", kind)
+				t.Fatalf("no %s message ever arrived", kind)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	key := dcs.Key{Flight: f.Carrier + f.Number, Date: strings.ToUpper(day.Format("02Jan")), Board: f.From}
+	waitDCS := func(cond func(*dcs.Flight) bool, what string) *dcs.Flight {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			if fl, err := tn.DCS.Flight(key); err == nil && cond(fl) {
+				return fl
+			}
+			if time.Now().After(deadline) {
+				fl, _ := tn.DCS.Flight(key)
+				t.Fatalf("departure control never reached %s: %+v", what, fl)
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
+	// Reservations sends the list to the airport; the switch carries it
+	// back down the carrier's own circuit to its check-in address, and the
+	// operations watch sees a copy. Departure control opens the flight.
 	if err := tn.SendPNL(ctx, f, day); err != nil {
 		t.Fatalf("SendPNL: %v", err)
 	}
-	pnlMsg := waitAtWatcher("PNL/")
+	pnlMsg := waitAt(s.GDSStore, "PNL/")
 	text := string(pnlMsg.Raw)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 12; i++ {
 		if !strings.Contains(text, fmt.Sprintf("GROUND%d", i)) {
 			t.Errorf("the PNL is missing GROUND%d:\n%s", i, text)
 		}
 	}
-	if !strings.Contains(text, "ENDPNL") {
-		t.Errorf("the PNL has no END line:\n%s", text)
+	if !strings.Contains(text, f.From+"KP"+c.Designator) {
+		t.Errorf("the PNL is not addressed to the carrier's check-in at %s:\n%s", f.From, text)
+	}
+	fl := waitDCS(func(fl *dcs.Flight) bool { return fl.Counts().Listed == 12 }, "twelve listed")
+	if fl.Equipment != f.Equipment || fl.Dest != f.To {
+		t.Errorf("the flight opened with the wrong aircraft or destination: %+v", fl.Key)
 	}
 
-	// One traveller cancels; the ADL must carry exactly that.
+	// One traveller cancels; the ADL must carry exactly that, and departure
+	// control must drop them from the list.
 	if _, err := s.GDS.Cancel(ctx, locs[0], gateway.CancelOptions{By: "test"}); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 	deadline = time.Now().Add(15 * time.Second)
 	for {
-		recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number,
-			strings.ToUpper(day.Format("02Jan")), 100)
-		if len(recs) == 4 {
+		recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, key.Date, 100)
+		if len(recs) == 11 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -638,28 +664,106 @@ func TestNameListAndBaggageTellTheGroundStory(t *testing.T) {
 	if err := tn.SendADL(ctx, f, day); err != nil {
 		t.Fatalf("SendADL: %v", err)
 	}
-	adlMsg := waitAtWatcher("ADL/")
-	adl := string(adlMsg.Raw)
+	adl := string(waitAt(s.GDSStore, "ADL/").Raw)
 	if !strings.Contains(adl, "DEL") || !strings.Contains(adl, "GROUND0") {
 		t.Errorf("the ADL does not delete the cancelled party:\n%s", adl)
 	}
 	if strings.Contains(adl, "ADD") {
 		t.Errorf("the ADL invents an addition nobody made:\n%s", adl)
 	}
+	waitDCS(func(fl *dcs.Flight) bool { return fl.Counts().Listed == 11 }, "eleven listed after the ADL")
 
-	// Bags: source messages at check-in, the processed report at departure.
-	if err := tn.SendBaggage(ctx, f, day, false); err != nil {
-		t.Fatalf("SendBaggage: %v", err)
+	// The counter: everyone who is going to turn up has, by the last wave.
+	// Their bags go to the sortation system as BSMs, down the same circuit.
+	if err := tn.CheckIn(ctx, f, day, 46); err != nil {
+		t.Fatalf("CheckIn: %v", err)
 	}
-	if err := tn.SendBaggage(ctx, f, day, true); err != nil {
-		t.Fatalf("SendBaggage processed: %v", err)
+	fl, _ = tn.DCS.Flight(key)
+	cnt := fl.Counts()
+	if cnt.Accepted == 0 || cnt.Accepted+cnt.Listed != 11 {
+		t.Fatalf("after the last wave: %+v", cnt)
 	}
-	bsm := waitAtWatcher("BSM/")
-	if !strings.Contains(string(bsm.Raw), ".N/0") {
-		t.Errorf("the BSM carries no licence plate:\n%s", bsm.Raw)
+	if cnt.Bags > 0 {
+		bsm := waitAt(tn.Store, "BSM/")
+		if !strings.Contains(string(bsm.Raw), ".N/0") || !strings.Contains(string(bsm.Raw), f.From+"KB"+c.Designator) {
+			t.Errorf("the BSM carries no licence plate or went to the wrong desk:\n%s", bsm.Raw)
+		}
 	}
-	if waitAtWatcher("BPM") == nil {
-		t.Error("no BPM reached the watcher")
+	if err := tn.CloseCheckIn(ctx, f, day); err != nil {
+		t.Fatalf("CloseCheckIn: %v", err)
+	}
+	if err := tn.Board(ctx, f, day, 14); err != nil {
+		t.Fatalf("Board: %v", err)
+	}
+	if err := tn.ReportBags(ctx, f, day); err != nil {
+		t.Fatalf("ReportBags: %v", err)
+	}
+	if err := tn.Close(ctx, f, day); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	fl, _ = tn.DCS.Flight(key)
+	if fl.State != dcs.StateClosed || fl.Loadsheet == "" || fl.Load == nil {
+		t.Fatalf("the flight did not close with a loadsheet: %s", fl.State)
+	}
+	cnt = fl.Counts()
+	if cnt.Boarded == 0 || cnt.Boarded+cnt.NoShow+cnt.Offload != 11 {
+		t.Errorf("close accounts for %+v of eleven", cnt)
+	}
+	if cnt.Bags > 0 {
+		for _, p := range fl.Passengers {
+			for _, b := range p.Bags {
+				if p.Status == dcs.StatusBoarded && !b.Loaded {
+					t.Errorf("the sortation system never reported %s loaded", b.Tag)
+				}
+			}
+		}
+	}
+
+	// The closure's messages reach their desks: final sales home to
+	// reservations, the load to the arrival station and the watch.
+	pfs := waitAt(tn.Store, "PFS/")
+	if !strings.Contains(string(pfs.Raw), "ENDPFS") {
+		t.Errorf("PFS:\n%s", pfs.Raw)
+	}
+	ldm := waitAt(s.GDSStore, "LDM/")
+	if !strings.Contains(string(ldm.Raw), f.To+"KL"+c.Designator) || !strings.Contains(string(ldm.Raw), fmt.Sprintf(".PAX/%d", cnt.Boarded)) {
+		t.Errorf("the LDM did not report %d boarded to the arrival station:\n%s", cnt.Boarded, ldm.Raw)
+	}
+	// A no-show is written back onto the booking, which is the point of
+	// telling reservations at all.
+	if cnt.NoShow > 0 {
+		deadline = time.Now().Add(10 * time.Second)
+		for {
+			marked := 0
+			recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, key.Date, 100)
+			for _, r := range recs {
+				for _, rm := range r.Remarks {
+					if strings.HasPrefix(rm.Text, "NOSHO") {
+						marked++
+					}
+				}
+			}
+			if marked == cnt.NoShow {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d no-shows, %d records marked", cnt.NoShow, marked)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	// The movement message carries the boarded count, not a guess.
+	if err := tn.Depart(ctx, f, day, "SKY001", 0); err != nil {
+		t.Fatalf("Depart: %v", err)
+	}
+	mvt := waitAt(s.GDSStore, "MVT/")
+	if !strings.Contains(string(mvt.Raw), fmt.Sprintf("PX%d", cnt.Boarded)) {
+		t.Errorf("the MVT does not carry the boarded count %d:\n%s", cnt.Boarded, mvt.Raw)
+	}
+	// The globe's drill-through sees the same story.
+	if sum, ok := tn.Summarise(f.Carrier + strings.TrimLeft(f.Number, "0")); !ok || sum.Counts.Boarded != cnt.Boarded {
+		t.Errorf("Summarise: %+v %v", sum, ok)
 	}
 }
 

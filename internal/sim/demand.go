@@ -116,8 +116,17 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 			Surname: surname, Given: fmt.Sprintf("PAX%d", p+1), Title: "MR",
 		})
 	}
+	// A few travellers in every hundred need something at the airport --
+	// a wheelchair, an unaccompanied child, a medical case -- and the
+	// request rides the booking so the name list can carry it to check-in
+	// and the PSM can carry it to the arrival station.
+	var ssrs []gateway.BookingSSR
+	if r := rng.Intn(100); r < 3 {
+		codes := []string{"WCHR", "WCHR", "UMNR", "MEDA", "BLND", "DEAF", "MAAS"}
+		ssrs = append(ssrs, gateway.BookingSSR{Code: codes[rng.Intn(len(codes))], Carrier: itin[0].Carrier})
+	}
 	res, err := g.GW.Book(ctx, &gateway.BookingRequest{
-		Passengers: pax, Segments: segs, Agent: "wholesky", Channel: "sim",
+		Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky", Channel: "sim",
 	})
 	if err != nil {
 		s.DemFailed.Add(1)

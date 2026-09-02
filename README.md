@@ -120,8 +120,11 @@ The deployed shape splits along the world's real seams:
   reservations volume. Bookings happen at the GDS, so that is where the
   load lives.
 - **region0 / region1** — the 518 carriers, sharded by stable hash, each
-  region flying its slice of the flight day and telling its own ground
-  story (PNL, ADL, BSM, BPM).
+  region flying its slice of the flight day and running its carriers'
+  airports: every tenant is a reservations system *and* a departure
+  control system, and the two talk over the network like the separate
+  systems they usually are (PNL, ADL, BSM, BPM in; PFS, PTM, PSM, ETL,
+  LDM, CPM out).
 
 Federation is deliberately dumb: peers register with the core and heartbeat
 every few seconds; the reply carries the switch's link addresses, the
@@ -160,8 +163,8 @@ flowchart TB
       G[gateway + store + queues + avail cache, each]
     end
     subgraph host [carrier host — 518 tenants]
-      T1[FR gateway + store + inventory]
-      T2[BA gateway + store + inventory]
+      T1[FR gateway + store + inventory + departure control]
+      T2[BA gateway + store + inventory + departure control]
       TN[... 516 more]
     end
     OBS[Eye · Fleet · Stats\nbus taps only]
@@ -225,8 +228,18 @@ dialects** -- AIRIMP over Type B and PADIS over EDIFACT -- and over MATIP
 for the share of the teletype world that dials in on the airline transport;
 a demand model that lives with its bookings (connections, interline,
 parties, ticketing, cancellations, divides, a slice arriving as NDC
-orders); the ground story per departure (PNL at T−180, bags at T−90, the
-ADL diff at T−60, BPM at departure); tail rotations and a deterministic
+orders); the whole ground story per departure — reservations sends the
+name list at T−180, departure control (Jetway's `pkg/dcs`) opens the
+flight, the counter fills in waves with real seat assignments and bag tags
+sent to the sortation system as BSMs, the ADL diff lands at T−60, check-in
+closes at T−45 and standbys clear, boarding runs from T−30, the sortation
+system reports the hold as a BPM, and the door closes at T−10 producing
+the final sales back to reservations (no-shows written onto the bookings),
+the transfer and service lists to the arrival station, the ticket list to
+revenue, and the load and container messages with an AHM 560-method
+loadsheet — so the MVT's passenger count is who boarded, not a guess; a
+connecting passenger misses the flight when the inbound is late enough;
+tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across
 selling channels — message conservation, interline convergence,
