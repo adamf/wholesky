@@ -143,9 +143,11 @@ type Options struct {
 	// day wraps, so the database is one day deep. A value starting with
 	// "$" names an environment variable holding the DSN.
 	TenantDSN string
-	// GDSDSN, when set, backs the first distribution system with Postgres
-	// instead of memory: the durable store jetway ships, exercised by the
-	// world instead of only by its own tests.
+	// GDSDSN, when set, backs every distribution system's records with
+	// Postgres, each as its own node view of one database (the message log
+	// stays in bounded memory, like the tenants'). Purged with the tenants
+	// when the day wraps. A value starting with "$" names an environment
+	// variable holding the DSN.
 	GDSDSN string
 	// LinkBind is the host the switch's subscriber listeners bind on. Empty
 	// binds loopback, which is the single-box world; a core machine binds
@@ -167,6 +169,7 @@ type Sim struct {
 	// the deployment has one; dayStarted is the wall moment the current
 	// simulated day began, which is what the end-of-day purge cuts at.
 	tenantDB   *store.Postgres
+	gdsDB      *store.Postgres
 	dayMu      sync.Mutex
 	dayStarted time.Time
 	sellDays   int
@@ -455,13 +458,14 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.mountConsole(c.Designator, tenantConsole(t, tenantBus, log.With("console", c.Designator)))
 	}
 
+	gdsStore, err := s.gdsStores(ctx, opts.GDSDSN, opts.MaxMessages)
+	if err != nil {
+		s.Stop()
+		return nil, err
+	}
 	for i, g := range s.GDSes {
-		dsn := ""
-		if i == 0 {
-			dsn = opts.GDSDSN
-		}
 		if err := s.buildGDSNode(ctx, m, g,
-			sw.Addr("link-net"), dsn, i == 0, log); err != nil {
+			sw.Addr("link-net"), gdsStore, i == 0, log); err != nil {
 			s.Stop()
 			return nil, err
 		}
@@ -521,6 +525,52 @@ func (s *Sim) Stop() {
 	if s.tenantDB != nil {
 		s.tenantDB.Close()
 	}
+	if s.gdsDB != nil {
+		s.gdsDB.Close()
+	}
+}
+
+// gdsStores opens the distribution systems' shared database, when there
+// is one, and hands out a node view per system with a bounded in-memory
+// message log, the same shape the tenants take.
+func (s *Sim) gdsStores(ctx context.Context, dsn string, maxMsgs int) (func(code string) store.Store, error) {
+	if strings.HasPrefix(dsn, "$") {
+		dsn = os.Getenv(strings.TrimPrefix(dsn, "$"))
+	}
+	if dsn == "" {
+		return func(string) store.Store { return nil }, nil
+	}
+	pg, err := store.OpenPostgres(ctx, poolDSN(dsn))
+	if err != nil {
+		return nil, fmt.Errorf("gds database: %w", err)
+	}
+	if err := store.MigrateSchema(ctx, pg); err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("gds database: migrate: %w", err)
+	}
+	s.gdsDB = pg
+	return func(code string) store.Store {
+		mem := store.NewMem()
+		mem.MaxMessages = maxMsgs
+		return store.Split{Messages: mem, Records: pg.Node(code)}
+	}, nil
+}
+
+// poolDSN adds the pool settings a transaction-pooling proxy needs, unless
+// the DSN already sets them.
+func poolDSN(dsn string) string {
+	for _, kv := range []string{"pool_max_conns=24", "default_query_exec_mode=cache_describe"} {
+		key := strings.SplitN(kv, "=", 2)[0]
+		if strings.Contains(dsn, key) {
+			continue
+		}
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + kv
+	}
+	return dsn
 }
 
 // tenantStores opens the shared tenant database named by the options and
@@ -540,18 +590,7 @@ func (s *Sim) tenantStores(ctx context.Context, opts Options, maxMsgs int) (func
 	// database is usually reached through a transaction-pooling proxy,
 	// which cannot carry a cached prepared statement from one transaction
 	// to the next, so statement descriptions are cached client-side and no statement is prepared on the server.
-	for _, kv := range []string{"pool_max_conns=24", "default_query_exec_mode=cache_describe"} {
-		key := strings.SplitN(kv, "=", 2)[0]
-		if strings.Contains(dsn, key) {
-			continue
-		}
-		sep := "?"
-		if strings.Contains(dsn, "?") {
-			sep = "&"
-		}
-		dsn += sep + kv
-	}
-	pg, err := store.OpenPostgres(ctx, dsn)
+	pg, err := store.OpenPostgres(ctx, poolDSN(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("tenant database: %w", err)
 	}
@@ -579,13 +618,25 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
+	stores := map[string]store.Store{}
+	for _, code := range codes {
+		stores[code] = s.Tenants[code].Store
+	}
+	// The distribution systems' books go with the day too, when they are
+	// on the database; in memory they are bounded and forget on their own.
+	if s.gdsDB != nil {
+		for _, g := range s.GDSes {
+			codes = append(codes, g.Designator)
+			stores[g.Designator] = g.Store
+		}
+	}
 	for _, code := range codes {
 		if ctx.Err() != nil {
 			return
 		}
-		got, err := s.Tenants[code].Store.Purge(ctx, before)
+		got, err := stores[code].Purge(ctx, before)
 		if err != nil {
-			s.log.Warn("end-of-day purge failed", "carrier", code, "err", err)
+			s.log.Warn("end-of-day purge failed", "node", code, "err", err)
 			continue
 		}
 		msgs += got.Messages
@@ -1188,20 +1239,11 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 // traffic is copied to its address, and only its movement events reach the
 // Eye, so each flight is flown once.
 func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
-	switchAddr, dsn string, watcher bool, log *slog.Logger) error {
+	switchAddr string, backing func(code string) store.Store, watcher bool, log *slog.Logger) error {
 
 	log = log.With("node", strings.ToLower(g.Designator))
-	var st store.Store
-	if dsn != "" {
-		pg, err := store.OpenPostgres(ctx, dsn)
-		if err != nil {
-			return fmt.Errorf("gds %s: %w", g.Designator, err)
-		}
-		if err := store.MigrateSchema(ctx, pg); err != nil {
-			return fmt.Errorf("gds %s: migrate: %w", g.Designator, err)
-		}
-		st = pg
-	} else {
+	st := backing(g.Designator)
+	if st == nil {
 		mem := store.NewMem()
 		mem.MaxMessages, mem.MaxRecords = s.maxMessages, s.maxRecords
 		st = mem

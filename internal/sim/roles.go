@@ -648,7 +648,11 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	g := &GDSNode{Designator: slot.Designator, Address: gdsAddress(*slot), Name: slot.Name}
 	s.GDSes = []*GDSNode{g}
 	s.Eye.Hubs = []string{designator}
-	if err := s.buildGDSNode(ctx, m, g, wl.SwitchAddr, opts.GDSDSN, false, s.log); err != nil {
+	gdsStore, err := s.gdsStores(ctx, opts.GDSDSN, opts.MaxMessages)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.buildGDSNode(ctx, m, g, wl.SwitchAddr, gdsStore, false, s.log); err != nil {
 		s.Stop()
 		return nil, err
 	}
