@@ -912,3 +912,21 @@ func TestEndOfDayPurgeClearsTenantBooks(t *testing.T) {
 		t.Errorf("the GDS lost the record: %v", err)
 	}
 }
+
+// A peer syncs to the core's clock: position and rate, from now.
+func TestSimClockSyncFollowsAnotherClock(t *testing.T) {
+	core := newSimClock(6)
+	peer := newSimClock(60)
+	now := time.Now()
+	if math.Abs(core.Pos(now)-peer.Pos(now)) < 1 {
+		t.Skip("the two boot anchors happen to agree; nothing to sync")
+	}
+	peer.Sync(now, core.Pos(now), core.Warp())
+	later := now.Add(90 * time.Second)
+	if d := math.Abs(core.Pos(later) - peer.Pos(later)); d > 0.01 {
+		t.Fatalf("after sync the clocks differ by %.3f sim-minutes", d)
+	}
+	if peer.Warp() != 6 {
+		t.Fatalf("warp %d", peer.Warp())
+	}
+}

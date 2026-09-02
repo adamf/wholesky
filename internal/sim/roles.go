@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"sort"
@@ -79,7 +80,10 @@ type welcome struct {
 	// MATIPAddrs maps each MATIP carrier to its own listener.
 	MATIPAddrs map[string]string `json:"matip_addrs"`
 	Warp       int               `json:"warp"`
-	Closed     []string          `json:"closed"`
+	// Pos is the core's clock, in sim minutes into the day, at the moment
+	// of the reply. Peers set theirs to it: one world, one clock.
+	Pos    float64  `json:"pos"`
+	Closed []string `json:"closed"`
 }
 
 // shardSummary is the compact state a peer serves at /shard/summary.json for
@@ -206,6 +210,7 @@ func (c *Core) register(w http.ResponseWriter, r *http.Request) {
 		SwitchAddr: rehost(c.Sim.Switch.Addr("link-net"), c.advertise),
 		MATIPAddrs: map[string]string{},
 		Warp:       c.Sim.clock.Warp(),
+		Pos:        c.Sim.clock.Pos(time.Now()),
 		Closed:     closed,
 	}
 	for _, cr := range c.Sim.Manifest.Carriers {
@@ -456,8 +461,17 @@ func federate(ctx context.Context, s *Sim, coreURL string, reg registration,
 		}
 	}
 	apply := func(wl welcome) {
-		if s.clock.Warp() != wl.Warp {
-			s.clock.SetWarp(time.Now(), wl.Warp)
+		// Follow the core's clock: its rate always, and its position when
+		// this machine has drifted more than a sim-minute from it. Small
+		// differences are the beat's own latency and re-anchoring on them
+		// would make the day jitter.
+		now := time.Now()
+		drift := math.Abs(s.clock.Pos(now) - wl.Pos)
+		if drift > 12*60 {
+			drift = 24*60 - drift // across midnight
+		}
+		if s.clock.Warp() != wl.Warp || drift > 1 {
+			s.clock.Sync(now, wl.Pos, wl.Warp)
 		}
 		nowClosed := map[string]bool{}
 		for _, a := range wl.Closed {

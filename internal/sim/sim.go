@@ -633,6 +633,19 @@ func (c *simClock) SetWarp(now time.Time, w int) {
 	c.warp = w
 }
 
+// Sync sets the clock to a position and rate somebody else holds -- the
+// core's, over federation -- from this instant. A world across machines has
+// one clock, and it is the core's: every peer booted at its own default
+// warp, anchored its own day from the wall, and drifted hours from the
+// switch's before this existed.
+func (c *simClock) Sync(now time.Time, pos float64, w int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.anchorPos = math.Mod(pos, 24*60)
+	c.anchorWall = now.Round(0)
+	c.warp = w
+}
+
 // SetWarp is the time control: how many sim minutes pass per wall minute.
 // Zero pauses the day -- aircraft hold, departures wait -- while the
 // reservations world keeps moving, because bookings do not stop when
@@ -751,7 +764,15 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				// the counter opened would be a different story.
 				var due []groundEvent
 				for _, g := range groundEvents {
-					if w := f.DepMin - g.before; w > prev && w <= cur {
+					w := f.DepMin - g.before
+					if w < 0 {
+						// A departure in the first hours after midnight
+						// opens its counter the evening before. Left
+						// negative, these windows never came and the
+						// flights before 03:00 flew with no ground story.
+						w += 24 * 60
+					}
+					if w > prev && w <= cur {
 						due = append(due, g)
 					}
 				}
