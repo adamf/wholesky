@@ -139,6 +139,9 @@ type Options struct {
 	// records. FillSeed makes the fill reproducible.
 	Fill     float64
 	FillSeed int64
+	// Refill purges and refills the day at boot even when the books already
+	// hold it: the way to change the load factor on a running world.
+	Refill bool
 	// TenantDSN, when set, backs every carrier tenant's records with one
 	// shared Postgres: each tenant is a node view of it, and its message
 	// log stays in bounded memory. Records are purged when the simulated
@@ -186,6 +189,7 @@ type Sim struct {
 	sellDays   int
 	fill       float64
 	fillSeed   int64
+	refill     bool
 	Manifest   *world.Manifest
 	Switch     *node.Node
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
@@ -320,6 +324,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		marketedBy:      marketedIndex(m),
 		fill:            opts.Fill,
 		fillSeed:        opts.FillSeed,
+		refill:          opts.Refill,
 		flightsByOrigin: byOrigin,
 		BookingDate:     sellingDate(m),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
@@ -1148,7 +1153,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		// A restart in the middle of a filled day keeps the day: the books
 		// already hold it, and refilling would cost the first departures
 		// their name lists while a million records were rewritten.
-		if s.dayFilled(ctx) {
+		if !s.refill && s.dayFilled(ctx) {
 			s.log.Info("day already filled; keeping the books", "date", day.Format("2006-01-02"))
 		} else {
 			s.purgeTenants(ctx, time.Now())
