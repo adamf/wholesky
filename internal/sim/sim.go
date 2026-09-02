@@ -1389,6 +1389,10 @@ var groundEvents = []groundEvent{
 func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend func(*http.ServeMux), log *slog.Logger) (*node.Node, error) {
 	console := opts.Console
 	cfg := config.Default()
+	// jetway spools every inbound message to disk by default, which is
+	// right for a carrier and wrong for a switch relaying sixteen thousand a
+	// second on a machine that forgets its day at midnight anyway.
+	cfg.Spool.Enabled = false
 	cfg.Identity = config.Identity{Designator: "1X", TTYAddress: "XCHDD1X", Name: "wholesky switch"}
 	cfg.HTTP.Addr = console
 	if console == "" {
