@@ -330,7 +330,8 @@ async function showFlight(p){
   let recs=[], dcs=null;
   try{ const d=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; }catch(e){}
   const c=dcs&&dcs.counts;
-  const ground=dcs? "<div class='sub' style='margin-top:4px;color:#e8eef4'>departure control · "+dcs.state.replace("_"," ")+
+  const ground=dcs? "<div class='sub' style='margin-top:4px;color:#e8eef4'>"+(dcs.equipment||"")+" "+(dcs.version||"")+
+    " · departure control · "+dcs.state.replace("_"," ")+
     "</div><div class='sub'>"+(c.accepted+c.boarded)+" accepted · "+c.boarded+" boarded"+
     (c.noshow?" · "+c.noshow+" no-show":"")+(c.standby?" · "+c.standby+" standby":"")+
     " · "+c.bags+" bags "+c.bag_kilos+"kg · "+c.seats+" seats"+(dcs.alerts?" · ⚠ "+dcs.alerts:"")+

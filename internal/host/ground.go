@@ -615,6 +615,10 @@ type Summary struct {
 	Alerts int        `json:"alerts"`
 	Dest   string     `json:"dest"`
 	Board  string     `json:"board"`
+	// Equipment and Version name the aircraft and its cabin: 321, Y220.
+	Equipment    string `json:"equipment"`
+	Version      string `json:"version"`
+	Registration string `json:"registration,omitempty"`
 }
 
 // Summarise reports a flight under departure control, by flight number in
@@ -631,7 +635,8 @@ func (t *Tenant) Summarise(flight string) (*Summary, bool) {
 	if !ok {
 		return nil, false
 	}
-	return &Summary{State: fl.State, Counts: fl.Counts(), Alerts: len(fl.Alerts), Dest: fl.Dest, Board: fl.Board}, true
+	return &Summary{State: fl.State, Counts: fl.Counts(), Alerts: len(fl.Alerts), Dest: fl.Dest, Board: fl.Board,
+		Equipment: fl.Equipment, Version: fl.Version, Registration: fl.Registration}, true
 }
 
 func sortStrings(s []string) {
