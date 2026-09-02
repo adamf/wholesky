@@ -1308,6 +1308,13 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	if rec.Pricing == nil || rec.Pricing.Currency != "USD" || rec.Pricing.Total <= 0 || rec.Segments[0].FareBasis != "YOW" {
 		t.Fatalf("a booking at the GDS should be priced at full fare: %+v basis=%q", rec.Pricing, rec.Segments[0].FareBasis)
 	}
+	// The instrument panel counts the price when the record is first written.
+	for wait := time.Now().Add(5 * time.Second); s.Stats.RevenueTotal() == 0 && time.Now().Before(wait); {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := s.Stats.RevenueTotal(); got != rec.Pricing.Total {
+		t.Errorf("revenue counted %d, want the booking's %d", got, rec.Pricing.Total)
+	}
 	// The synthetic world sells thirty days out; a 45-day advance purchase
 	// fare cannot be sold that close and the rules refuse it.
 	if _, err := s.Book(ctx, f, "N", 0, "TOOLATE"); err == nil {

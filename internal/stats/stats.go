@@ -418,7 +418,7 @@ func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
 			"airborne": c.sAirborne.slice(), "queued": c.sQueued.slice(),
 		},
 		"totals": map[string]int64{
-			"messages": c.tTotal, "bookings": c.tBookings,
+			"messages": c.tTotal, "bookings": c.tBookings, "revenue": c.tRevenue,
 			"movements": c.tMovements, "undeliverable": c.tUndeliv, "rebooked": c.tRebooked,
 		},
 		"queues": c.latestQueues,
