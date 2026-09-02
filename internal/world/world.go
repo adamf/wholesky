@@ -81,8 +81,15 @@ type Flight struct {
 	// The compiler chains each carrier's flights into rotations -- a tail
 	// departs where it last arrived, after a turnaround -- so the movement
 	// stream is coherent: the same registration works its way around the
-	// network instead of teleporting.
+	// network instead of teleporting. On a replay it is the real one.
 	Tail string `json:"tail,omitempty"`
+	// Marketing and MarketingNumber name the codeshare the flight was sold
+	// as, when that differs from who flew it: AS3000 operated by OO.
+	Marketing       string `json:"marketing,omitempty"`
+	MarketingNumber string `json:"marketing_number,omitempty"`
+	// Actual is what really happened, on a replayed day. Nil on a synthetic
+	// one, whose delays the flight day invents.
+	Actual *Actual `json:"actual,omitempty"`
 }
 
 // Manifest is a compiled world.
@@ -96,6 +103,8 @@ type Manifest struct {
 	Airports []Airport `json:"airports"`
 	Carriers []Carrier `json:"carriers"`
 	Flights  []Flight  `json:"flights"`
+	// Replay is set when the manifest is a recording of a real day.
+	Replay *Replay `json:"replay,omitempty"`
 
 	GeneratedAt time.Time `json:"generated_at"`
 }

@@ -58,11 +58,37 @@ func registrationOf(f world.Flight) string {
 	return fmt.Sprintf("SKY%03d", hashOf(f.Carrier+f.Number)%1000)
 }
 
+// fleetData is jetway's representative fleet plus the two types a replayed
+// US day is mostly made of: the 76-seat regional jet and the 737-800.
+// Representative figures, like the rest -- not an operator's AHM 560.
+func fleetData() *dcs.FleetData {
+	fl := dcs.DefaultFleet()
+	fl.Types["E75"] = &dcs.AircraftType{
+		Code: "E75", Name: "Embraer 175",
+		Cabin: dcs.CabinLayout{Sections: []dcs.Section{{Compartment: "Y", FromRow: 1, ToRow: 19, Letters: "AB CD"}}},
+		DOW:   21500, DOWArm: 15.4, MZFW: 31700, MTOW: 38790, MLW: 34000,
+		RefArm: 15.2, C: 500, K: 50, LEMAC: 14.6, MAC: 2.6, FwdMAC: 14, AftMAC: 36, FuelArm: 15.3,
+		Compartments: []dcs.Compartment{{Name: "1", Max: 1200, Arm: 9.8}, {Name: "3", Max: 1600, Arm: 21.9}},
+		Zones:        []dcs.Zone{{Name: "OA", FromRow: 1, ToRow: 7, Arm: 11.5}, {Name: "OB", FromRow: 8, ToRow: 13, Arm: 15.3}, {Name: "OC", FromRow: 14, ToRow: 19, Arm: 19.2}},
+	}
+	fl.Types["73H"] = &dcs.AircraftType{
+		Code: "73H", Name: "Boeing 737-800",
+		Cabin: dcs.CabinLayout{Sections: []dcs.Section{{Compartment: "Y", FromRow: 1, ToRow: 29, Letters: "ABC DEF"}}},
+		DOW:   41400, DOWArm: 18.9, MZFW: 62700, MTOW: 79000, MLW: 66300,
+		RefArm: 18.6, C: 1000, K: 50, LEMAC: 17.5, MAC: 3.96, FwdMAC: 15, AftMAC: 33, FuelArm: 18.7,
+		Compartments: []dcs.Compartment{{Name: "1", Max: 3600, Arm: 12.0}, {Name: "3", Max: 2500, Arm: 25.4}, {Name: "4", Max: 1900, Arm: 28.6}},
+		Zones:        []dcs.Zone{{Name: "OA", FromRow: 1, ToRow: 10, Arm: 13.2}, {Name: "OB", FromRow: 11, ToRow: 20, Arm: 18.7}, {Name: "OC", FromRow: 21, ToRow: 29, Arm: 24.3}},
+	}
+	return fl
+}
+
 // crewFor is the cockpit/cabin complement the LDM reports, by type.
 func crewFor(equipment string) string {
 	switch equipment {
-	case "AT7":
+	case "AT7", "E75":
 		return "2/2"
+	case "73H":
+		return "2/4"
 	case "320":
 		return "2/4"
 	case "321":
@@ -101,6 +127,7 @@ func (t *Tenant) startGround(accountingCode string) {
 	st := dcs.NewStation(t.Carrier.Designator)
 	st.AccountingCode = accountingCode
 	st.Store = nopStore{}
+	st.Fleet = fleetData()
 	st.Log = t.log
 	st.Equipment = func(k dcs.Key) (dcs.Equipment, bool) {
 		f, ok := t.flightsByNum[k.Flight]

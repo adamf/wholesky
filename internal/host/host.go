@@ -369,7 +369,17 @@ func (t *Tenant) Depart(ctx context.Context, f world.Flight, day time.Time, reg 
 		Pax:          []int{t.boardedFor(f, day)},
 	}
 	if delayMin > 0 {
-		m.Delays = []mvt.Delay{{Code: "93", Duration: fmt.Sprintf("%02d%02d", delayMin/60, delayMin%60)}}
+		// A recorded flight says why it was late, in the record's five
+		// causes; a synthetic one blames the inbound aircraft, which is the
+		// commonest reason on any real day.
+		if f.Actual != nil {
+			for _, c := range f.Actual.DelayCodes() {
+				m.Delays = append(m.Delays, mvt.Delay{Code: c.Code, Duration: fmt.Sprintf("%02d%02d", c.Minutes/60, c.Minutes%60)})
+			}
+		}
+		if len(m.Delays) == 0 {
+			m.Delays = []mvt.Delay{{Code: "93", Duration: fmt.Sprintf("%02d%02d", delayMin/60, delayMin%60)}}
+		}
 	}
 	text, err := m.Build()
 	if err != nil {

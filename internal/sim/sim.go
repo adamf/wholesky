@@ -269,7 +269,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		Manifest: m, GDSes: gdses, Tenants: map[string]*host.Tenant{}, Flights: flights,
 		dayStarted:      time.Now(),
 		flightsByOrigin: byOrigin,
-		BookingDate:     time.Now().UTC().AddDate(0, 0, 30),
+		BookingDate:     sellingDate(m),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
 		clock: newSimClock(warp), Eye: eye.New(m, warp),
 		closed:   map[string]bool{},
@@ -753,7 +753,8 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				if reg == "" {
 					reg = fmt.Sprintf("SKY%03d", regHash(f)%1000)
 				}
-				depDelay, arrDelay := delayFor(f, day)
+				depDelay, arrDelay := flightDelays(f, day)
+				cancelled := f.Actual != nil && f.Actual.Cancelled
 				// The ground story of a departure, at the hours it really
 				// happens: reservations sends the airport the name list,
 				// the counter fills in waves, the amendments follow, the
@@ -762,8 +763,29 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				// this tick run in order in one goroutine: at high warp
 				// several fall in one tick, and a door that closed before
 				// the counter opened would be a different story.
+				if cancelled {
+					// The record says this one never went. The airport
+					// hears it two hours out, after the counter opened;
+					// nothing departs or arrives, and the manifest is let
+					// go at the hour it would have landed.
+					if w := wrapMin(f.DepMin - cancelledBefore); w > prev && w <= cur {
+						go func(f world.Flight) {
+							text := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
+								f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
+							if err := t.SendSchedule(ctx, text); err != nil {
+								s.log.Debug("recorded cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+							}
+						}(f)
+					}
+					if a := f.ArrMin; a > prev && a <= cur {
+						t.Forget(ctx, f, day)
+					}
+				}
 				var due []groundEvent
 				for _, g := range groundEvents {
+					if cancelled && g.before < cancelledBefore {
+						continue
+					}
 					w := f.DepMin - g.before
 					if w < 0 {
 						// A departure in the first hours after midnight
@@ -789,9 +811,20 @@ func (s *Sim) FlyDay(ctx context.Context) {
 						}
 					}(f, due)
 				}
+				if cancelled {
+					continue
+				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
 					if err := t.Depart(ctx, f, day, reg, depDelay); err != nil {
 						s.log.Debug("departure not sent", "flight", f.Carrier+f.Number, "err", err)
+					}
+				}
+				if f.Actual != nil && f.Actual.Diverted && f.Actual.DivertedTo != "" {
+					// The record says the aircraft landed somewhere else
+					// first. Seven tenths of the way there is where a
+					// diversion is usually decided; the record does not say.
+					if w := f.DepMin + depDelay + f.BlockMin*7/10; w > prev && w <= cur {
+						go s.recordedDiversion(ctx, t, f, day, reg)
 					}
 				}
 				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
@@ -804,6 +837,29 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		prev = cur
 	}
 }
+
+// sellingDate is the day the world sells and flies: the recorded day on a
+// replay, thirty days out on a synthetic one.
+func sellingDate(m *world.Manifest) time.Time {
+	if m.Replay != nil && !m.Replay.Date.IsZero() {
+		return m.Replay.Date
+	}
+	return time.Now().UTC().AddDate(0, 0, 30)
+}
+
+// flightDelays is what the day will do to a flight: the record's delays on
+// a replay, the deterministic model's on a synthetic day.
+func flightDelays(f world.Flight, day time.Time) (dep, arr int) {
+	if d, a, ok := f.RecordedDelay(); ok {
+		return d, a
+	}
+	return delayFor(f, day)
+}
+
+// cancelledBefore is when a recorded cancellation is announced: two hours
+// before the scheduled departure, which is a typical notice and, unlike
+// the record, a moment -- BTS says a flight was cancelled, not when.
+const cancelledBefore = 120
 
 // groundEvent is one step of a departure's ground story, at a number of
 // minutes before scheduled departure.
@@ -1192,6 +1248,30 @@ func (s *Sim) mountConsole(code string, srv *api.Server) {
 	s.consolesMu.Unlock()
 }
 
+// wrapMin folds a minute of the day into 0..1440.
+func wrapMin(m int) int {
+	m %= 24 * 60
+	if m < 0 {
+		m += 24 * 60
+	}
+	return m
+}
+
+// recordedDiversion sends the DIV a replayed flight really made, to the
+// airport the record names.
+func (s *Sim) recordedDiversion(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time, reg string) {
+	now := time.Now().UTC()
+	m := &mvt.Message{
+		Kind: mvt.KindDIV, Flight: f.Carrier + strings.TrimLeft(f.Number, "0"),
+		Day: fmt.Sprintf("%02d", day.Day()), Registration: reg, Station: f.To,
+		EA: &mvt.ETA{Time: now.Add(25 * time.Minute).Format("1504"), Airport: f.Actual.DivertedTo},
+		SI: "DIVERSION AS RECORDED BTS",
+	}
+	if err := t.SendOps(ctx, m); err != nil {
+		s.log.Debug("recorded diversion not sent", "flight", f.Carrier+f.Number, "err", err)
+	}
+}
+
 // tenantConsole is a carrier's console: the gateway's pages plus the
 // departures board, with the agent's actions wired to the wire.
 func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Server {
@@ -1204,7 +1284,7 @@ func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Serv
 // inboundDelay is the arrival delay the flight day will give a flight, for
 // the connecting passengers who depend on it.
 func inboundDelay(f world.Flight, day time.Time) int {
-	_, arr := delayFor(f, day)
+	_, arr := flightDelays(f, day)
 	return arr
 }
 
