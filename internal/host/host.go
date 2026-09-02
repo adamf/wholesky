@@ -591,24 +591,38 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 			Party:   len(r.Passengers),
 			Surname: r.Passengers[0].Surname,
 		}
+		nameOf := map[int]string{}
 		for _, p := range r.Passengers {
 			n.Givens = append(n.Givens, p.Given+p.Title)
+			nameOf[p.Ref] = p.Surname + "/" + p.Given + p.Title
 		}
 		if r.RecordLocator != "" {
 			n.Elements = append(n.Elements, ".L/"+r.RecordLocator)
 		}
+		// An element that belongs to one passenger of the party names them
+		// at the end -- the child's CHLD, the wheelchair's WCHR -- so the
+		// airport attaches it to that name and not to the whole item. One
+		// with no passenger reference is the party's.
 		for _, ssr := range r.SSRs {
 			if ssr.Code == "" || ssr.Sensitive {
 				continue
 			}
-			n.Elements = append(n.Elements, fmt.Sprintf(".R/%s HK%d", ssr.Code, max(1, ssr.Count)))
+			el := fmt.Sprintf(".R/%s HK%d", ssr.Code, max(1, ssr.Count))
+			if who, ok := nameOf[ssr.PaxRef]; ok && len(r.Passengers) > 1 {
+				el += " " + who
+			}
+			n.Elements = append(n.Elements, el)
 		}
+		// Each name flies on its own ticket.
 		for _, tk := range r.Tickets {
 			if tk.Type != "" {
 				continue // an EMD is not the document they fly on
 			}
-			n.Elements = append(n.Elements, ".R/TKNE HK1 "+tk.Number.String()+"C1")
-			break
+			el := ".R/TKNE HK1 " + tk.Number.String() + "C1"
+			if who, ok := nameOf[tk.PaxRef]; ok && len(r.Passengers) > 1 {
+				el += " " + who
+			}
+			n.Elements = append(n.Elements, el)
 		}
 		items[r.RecordLocator+"/"+n.Surname] = nameItem{name: n, class: class}
 	}

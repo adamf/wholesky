@@ -1245,6 +1245,37 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 		}
 		t.Fatalf("departure control should hold every filled name: held=%v total=%d records=%d", ok, total, len(recs))
 	}
+	// Elements belong to their passenger: a child on a filled record is a
+	// child at the airport, and the adult beside them is not.
+	{
+		fl, ok := tn.DCS.Find(f.Carrier+f.Number, "")
+		if !ok {
+			t.Fatal("no flight under control")
+		}
+		checked := false
+		for _, p := range fl.Passengers {
+			if p.Type != dcs.PaxChild {
+				continue
+			}
+			for _, q := range fl.Passengers {
+				if q.Party == p.Party && q.ID != p.ID && q.Type == dcs.PaxChild {
+					// two children in one party is fine; an adult marked child is not
+					if !strings.HasSuffix(q.Given, "MSTR") && !strings.HasSuffix(q.Given, "MISS") {
+						t.Errorf("%s/%s carries a child's type from a sibling's element", q.Surname, q.Given)
+					}
+				}
+			}
+			checked = true
+		}
+		if !checked {
+			t.Log("no child on the flight to check")
+		}
+		for _, p := range fl.Passengers {
+			if (strings.HasSuffix(p.Given, "MR") || strings.HasSuffix(p.Given, "MRS") || strings.HasSuffix(p.Given, "MS")) && p.Type == dcs.PaxChild {
+				t.Errorf("%s/%s is an adult listed as a child", p.Surname, p.Given)
+			}
+		}
+	}
 	// The inventory is rebuilt from the book: the seats the fill sold are
 	// gone, availability says how many are left, and a party larger than
 	// what is left waitlists instead of overselling the aircraft.
