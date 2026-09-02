@@ -329,6 +329,12 @@ runs on is derived from it rather than asserted; operations files an ICAO
 flight plan with the towers at both ends over the AFTN an hour before
 departure, and the towers send their DEP and ARR back over it when the
 aircraft moves, addressed by the airline's ICAO designator;
+codeshares — 7,157 of the recorded day's flights are sold under a major's
+code and flown by a regional, and the marketing carrier sells them: it
+answers for the seats from the operating leg's cabin, forwards each sale
+to the operator as an interline sell, and relays a cancellation under its
+own number; the globe's bar prices the sky, what every ticket on an
+aircraft now in the air was sold for and what the day's purchases came to;
 irregular operations — when a flight is cancelled, by chaos or by the
 record, the distribution systems' irops engines work the schedule-change
 queue the way a desk does: the next flights over the same city pair, own
