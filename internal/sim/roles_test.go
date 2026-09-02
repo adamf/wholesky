@@ -225,6 +225,11 @@ func TestRegionFliesItsDay(t *testing.T) {
 	if r.Sim.DSP == nil {
 		t.Fatal("the region runs no datalink provider")
 	}
+	// The clocks anchor to the wall, so the sim hour is whatever hour this
+	// test runs at -- and a small European world has no departures at three
+	// in the morning. Put both machines at ten o'clock.
+	core.Sim.clock.Sync(time.Now(), 600, 60)
+	r.Sim.clock.Sync(time.Now(), 600, 60)
 	// The run log's line must not need a switch: a region has none, and a
 	// nil dereference here took both deployed regions down every 30s.
 	if line := r.Sim.RunStats(); len(line) == 0 {

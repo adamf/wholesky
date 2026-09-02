@@ -544,6 +544,7 @@ func (s *Sim) gdsStores(ctx context.Context, dsn string, maxMsgs int) (func(code
 	if err != nil {
 		return nil, fmt.Errorf("gds database: %w", err)
 	}
+	pg.RetireGrace = time.Second
 	if err := store.MigrateSchema(ctx, pg); err != nil {
 		pg.Close()
 		return nil, fmt.Errorf("gds database: migrate: %w", err)
@@ -594,6 +595,9 @@ func (s *Sim) tenantStores(ctx context.Context, opts Options, maxMsgs int) (func
 	if err != nil {
 		return nil, fmt.Errorf("tenant database: %w", err)
 	}
+	// A simulated day retires the moment it has flown: a record's
+	// retirement day is its flight day, not three days on.
+	pg.RetireGrace = time.Second
 	if err := store.MigrateSchema(ctx, pg); err != nil {
 		pg.Close()
 		return nil, fmt.Errorf("tenant database: migrate: %w", err)
@@ -612,7 +616,7 @@ func (s *Sim) tenantStores(ctx context.Context, opts Options, maxMsgs int) (func
 // Sequential and paced, because hundreds of deletes at once on the shared
 // database is a stampede on the day's first departures.
 func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
-	var msgs, recs int
+	var msgs, recs, parts int
 	codes := make([]string, 0, len(s.Tenants))
 	for code := range s.Tenants {
 		codes = append(codes, code)
@@ -630,11 +634,31 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 			stores[g.Designator] = g.Store
 		}
 	}
+	// On a database the day's records leave as partitions: one call per
+	// database, whatever the cutoff, for the day the world flew. The
+	// in-memory message logs are purged node by node as before.
+	cutoff := s.BookingDate.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	for _, db := range []*store.Postgres{s.tenantDB, s.gdsDB} {
+		if db == nil {
+			continue
+		}
+		got, err := db.RetireBefore(ctx, cutoff)
+		if err != nil {
+			s.log.Warn("end-of-day retirement failed", "err", err)
+			continue
+		}
+		parts += got.Partitions
+		recs += got.Records
+	}
 	for _, code := range codes {
 		if ctx.Err() != nil {
 			return
 		}
-		got, err := stores[code].Purge(ctx, before)
+		st := stores[code]
+		if sp, ok := st.(store.Split); ok && (s.tenantDB != nil || s.gdsDB != nil) {
+			st = sp.Messages // the records were retired above
+		}
+		got, err := st.Purge(ctx, before)
 		if err != nil {
 			s.log.Warn("end-of-day purge failed", "node", code, "err", err)
 			continue
@@ -643,7 +667,8 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 		recs += got.Records
 		time.Sleep(20 * time.Millisecond)
 	}
-	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "records", recs, "messages", msgs)
+	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "retired_through", cutoff.Format("2006-01-02"),
+		"partitions", parts, "records", recs, "messages", msgs)
 }
 
 // Warp is the sim clock's current rate; Pos its position in the day, in
