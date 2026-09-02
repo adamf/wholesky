@@ -766,9 +766,25 @@ func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 	if !strings.Contains(string(mvt.Raw), fmt.Sprintf("PX%d", cnt.Boarded)) {
 		t.Errorf("the MVT does not carry the boarded count %d:\n%s", cnt.Boarded, mvt.Raw)
 	}
-	// The globe's drill-through sees the same story.
-	if sum, ok := tn.Summarise(f.Carrier + strings.TrimLeft(f.Number, "0")); !ok || sum.Counts.Boarded != cnt.Boarded {
-		t.Errorf("Summarise: %+v %v", sum, ok)
+	// The globe's drill-through sees the same story, and everything else the
+	// station holds: the seat map by cabin, the manifest itself, the load
+	// the closure produced, and the ops desk's side of the flight.
+	sum, ok := tn.Summarise(f.Carrier + strings.TrimLeft(f.Number, "0"))
+	if !ok || sum.Counts.Boarded != cnt.Boarded {
+		t.Fatalf("Summarise: %+v %v", sum, ok)
+	}
+	if len(sum.Cabins) == 0 || sum.Cabins[0].Seats == 0 {
+		t.Errorf("summary has no seat map: %+v", sum.Cabins)
+	}
+	// Total counts every name the list ever carried, deleted ones included.
+	if sum.Total < cnt.Listed+cnt.Accepted+cnt.Boarded+cnt.Standby+cnt.NoShow+cnt.Offload || len(sum.Passengers) != sum.Total {
+		t.Errorf("summary manifest: total %d rows %d counts %+v", sum.Total, len(sum.Passengers), cnt)
+	}
+	if sum.Load == nil || sum.Loadsheet == "" || sum.ClosedAt == nil {
+		t.Errorf("a closed flight's summary should carry the load and loadsheet: load=%v sheet=%d", sum.Load != nil, len(sum.Loadsheet))
+	}
+	if sum.Ops.Callsign == "" {
+		t.Errorf("summary has no callsign: %+v", sum.Ops)
 	}
 }
 

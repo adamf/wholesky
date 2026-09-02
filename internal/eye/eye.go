@@ -550,8 +550,14 @@ func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
 	if e.FlightDCS != nil {
 		d = e.FlightDCS(flight)
 	}
+	// The schedule is the world's to tell: the leg as compiled, with the
+	// recorded outcome on a replayed day.
+	var sched any
+	if f, ok := e.lookup(flight); ok {
+		sched = f
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"records": recs, "dcs": d}) //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]any{"records": recs, "dcs": d, "flight": sched}) //nolint:errcheck
 }
 
 // chaos is the map's one control: close or reopen an airport.

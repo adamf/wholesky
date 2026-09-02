@@ -74,6 +74,10 @@ type Tenant struct {
 	day     time.Time
 	icao    func(iata string) string
 	atsSeen map[ats.Type]int
+	// atsByFlight is what air traffic services said about each flight, and
+	// filed which flights had a plan lodged: the ops desk's own record.
+	atsByFlight map[string]map[ats.Type]int
+	filed       map[string]bool
 
 	// The link runs under its own sub-context so chaos can cut it without
 	// touching the tenant. bootCtx is what a restored link derives from.
@@ -211,6 +215,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		pnlSent:      map[string]map[string]nameItem{},
 		arrivals:     map[dcs.Kind]int{},
 		atsSeen:      map[ats.Type]int{},
+		atsByFlight:  map[string]map[ats.Type]int{},
+		filed:        map[string]bool{},
 		inboundDelay: opts.InboundDelay,
 		icao:         opts.ICAO,
 	}

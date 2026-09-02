@@ -41,7 +41,14 @@ const pageHTML = `<!doctype html>
   canvas { display:block; width:100vw; height:100vh; cursor:grab; }
   canvas.drag { cursor:grabbing; }
   #panel { position:fixed; left:16px; bottom:16px; background:#0b1118ee; border:1px solid #1d2836;
-    border-radius:6px; padding:12px 14px; z-index:3; display:none; min-width:210px; }
+    border-radius:6px; padding:12px 14px; z-index:3; display:none; min-width:210px; max-width:min(440px,calc(100vw - 32px));
+    max-height:min(72vh,calc(100vh - 100px)); overflow:auto; }
+  #panel h4 { margin:10px 0 3px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:#5b6b7d; font-weight:600; }
+  #panel .row { color:var(--ink); margin:1px 0; }
+  #panel .pax { font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--dim); white-space:pre; overflow-x:auto; margin:2px 0; }
+  #panel .pax i { color:var(--ink); font-style:normal; }
+  #panel pre { font-size:10px; color:var(--dim); background:#0a0f15; border:1px solid #1d2836; padding:6px; margin:4px 0; overflow:auto; max-height:200px; }
+  #panel a.tog { color:#5fd38d; cursor:pointer; }
   #panel b { color:var(--plane); font-size:15px; }
   #panel .sub { color:var(--dim); margin:2px 0 10px; }
   #panel button { font:inherit; padding:5px 14px; border-radius:4px; border:1px solid #2a3a4e;
@@ -322,28 +329,78 @@ function planeAt(x,y){
   }
   return best;
 }
+const hhmm=m=>{ m=((m%1440)+1440)%1440; return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); };
+const tclock=t=>{ if(!t) return ""; const d=new Date(t); return isNaN(d)?"":String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+"z"; };
+const kg=n=>(n||0).toLocaleString()+" kg";
+function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 async function showFlight(p){
-  panel.innerHTML="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
-    (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
-    "<div class='sub'>fetching the souls on board…</div>";
+  const head="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
+    (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>";
+  panel.innerHTML=head+"<div class='sub'>asking the carrier…</div>";
   panel.style.display="block";
-  let recs=[], dcs=null;
-  try{ const d=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; }catch(e){}
-  const c=dcs&&dcs.counts;
-  const ground=dcs? "<div class='sub' style='margin-top:4px;color:#e8eef4'>"+(dcs.equipment||"")+" "+(dcs.version||"")+
-    " · departure control · "+dcs.state.replace("_"," ")+
-    "</div><div class='sub'>"+(c.accepted+c.boarded)+" accepted · "+c.boarded+" boarded"+
-    (c.noshow?" · "+c.noshow+" no-show":"")+(c.standby?" · "+c.standby+" standby":"")+
-    " · "+c.bags+" bags "+c.bag_kilos+"kg · "+c.seats+" seats"+(dcs.alerts?" · ⚠ "+dcs.alerts:"")+
-    " · <a href='/node/"+p.flight.slice(0,2)+"/' target='_blank' style='color:#5fd38d'>departures board</a></div>" : "";
-  const rows=recs.slice(0,14).map(r=>
-    "<div class='sub'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
-    "</a> "+r.surname+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+"</div>").join("");
-  panel.innerHTML="<b>"+p.flight+"</b><div class='sub'>"+p.reg+" · "+p.from+" → "+p.to+
-    (p.diverted?" · <span style='color:#e0b93c'>DIVERTED</span>":"")+"</div>"+
-    ground+
-    (recs.length? "<div class='sub' style='margin-top:4px'>"+recs.length+" records on board</div>"+rows
-                : "<div class='sub'>no records on this flight</div>");
+  let recs=[], dcs=null, fl=null;
+  try{ const d=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; fl=d.flight||null; }catch(e){}
+  const cc=p.flight.slice(0,2);
+  let h=head;
+  // -- the schedule, and what the day recorded
+  if(fl){
+    h+="<h4>schedule</h4><div class='row'>STD "+hhmm(fl.dep_min)+" → STA "+hhmm(fl.arr_min)+" · block "+Math.floor(fl.block_min/60)+"h"+String(fl.block_min%60).padStart(2,"0")+" · "+fl.km.toLocaleString()+" km</div>"+
+      "<div class='row'>"+esc(fl.equipment)+(dcs&&dcs.version?" "+esc(dcs.version):"")+" · "+fl.seats+" seats"+(fl.tail?" · "+esc(fl.tail):"")+(dcs&&dcs.crew?" · crew "+esc(dcs.crew):"")+"</div>"+
+      (fl.marketing?"<div class='row'>sold as "+esc(fl.marketing)+esc((fl.marketing_number||"").replace(/^0+/,""))+", operated by "+cc+"</div>":"");
+    const a=fl.actual;
+    if(a){
+      const codes=[["carrier",a.carrier],["weather",a.weather],["NAS",a.nas],["security",a.security],["late aircraft",a.late_aircraft]].filter(x=>x[1]).map(x=>x[0]+" "+x[1]+"m");
+      h+="<h4>recorded</h4><div class='row'>"+(a.cancelled?"<span style='color:#e08a8a'>cancelled</span>"+(a.cancel_code?" ("+({A:"carrier",B:"weather",C:"NAS",D:"security"}[a.cancel_code]||a.cancel_code)+")":"")
+        :"departed "+(a.dep_delay>0?"+"+a.dep_delay+"m":a.dep_delay<0?a.dep_delay+"m":"on time")+" · arrived "+(a.arr_delay>0?"+"+a.arr_delay+"m":a.arr_delay<0?a.arr_delay+"m":"on time"))+
+        (a.diverted?" · <span style='color:#e0b93c'>diverted"+(a.diverted_to?" to "+esc(a.diverted_to):"")+"</span>":"")+"</div>"+
+        (codes.length?"<div class='sub' style='margin:0'>delay attributed: "+codes.join(", ")+"</div>":"");
+    }
+  }
+  // -- departure control
+  if(dcs){
+    const c=dcs.counts;
+    h+="<h4>departure control · <a href='/node/"+cc+"/' target='_blank' style='color:#5fd38d'>"+cc+" board</a></h4>";
+    h+="<div class='row'>"+(dcs.cancelled?"<span style='color:#e08a8a'>cancelled</span>"+(dcs.cancel_reason?" · "+esc(dcs.cancel_reason):""):esc(dcs.state.replace("_"," ")))+
+      " · opened "+tclock(dcs.opened_at)+(dcs.checkin_closed_at?" · check-in closed "+tclock(dcs.checkin_closed_at):"")+(dcs.closed_at?" · closed "+tclock(dcs.closed_at):"")+"</div>";
+    h+="<div class='row'>PNL "+dcs.parts+" part"+(dcs.parts==1?"":"s")+(dcs.complete?"":" (incomplete)")+" · "+dcs.adls+" ADL"+(dcs.adls==1?"":"s")+" · "+dcs.total+" names</div>";
+    h+="<div class='row'>"+(c.listed?c.listed+" listed · ":"")+c.accepted+" accepted · "+c.boarded+" boarded"+
+      (c.standby?" · "+c.standby+" standby":"")+(c.noshow?" · "+c.noshow+" no-show":"")+(c.offloaded?" · "+c.offloaded+" offloaded":"")+"</div>";
+    h+="<div class='row'>"+c.bags+" bags "+kg(c.bag_kilos)+(dcs.infants?" · "+dcs.infants+" inf":"")+(dcs.children?" · "+dcs.children+" chd":"")+
+      (dcs.inbound?" · "+dcs.inbound+" connecting in":"")+(dcs.onward?" · "+dcs.onward+" onward":"")+"</div>";
+    if(dcs.cabins&&dcs.cabins.length) h+=dcs.cabins.map(k=>"<div class='row'>"+k.compartment+" · "+k.seats+" seats · "+k.listed+" listed · "+k.flying+" holding seats · rows "+esc(k.rows)+"</div>").join("");
+    if(dcs.ssrs) h+="<div class='row'>SSR "+Object.entries(dcs.ssrs).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+" "+v).join(" · ")+"</div>";
+    if(dcs.alert_list&&dcs.alert_list.length) h+=dcs.alert_list.slice(0,6).map(a=>"<div class='row' style='color:#e0b93c'>⚠ "+esc(a.code)+" "+esc(a.detail)+"</div>").join("");
+    const L=dcs.load;
+    if(L){
+      h+="<h4>load</h4><div class='row'>"+L.adults+"/"+L.children+"/"+L.infants+" pax "+kg(L.pax_weight)+
+        (L.by_compartment?" ("+Object.entries(L.by_compartment).map(([k,v])=>k+v).join(" "):"")+") · bags "+kg(L.bag_kilos)+" · cargo "+kg(L.cargo)+" · mail "+kg(L.mail)+"</div>"+
+        "<div class='row'>DOW "+kg(L.dow)+" · traffic "+kg(L.traffic_load)+" · ZFW "+kg(L.zfw)+"</div>"+
+        "<div class='row'>fuel "+kg(L.takeoff_fuel)+" (trip "+kg(L.trip_fuel)+") · TOW "+kg(L.tow)+" · LAW "+kg(L.law)+"</div>"+
+        (L.holds?"<div class='row'>holds "+Object.entries(L.holds).map(([k,v])=>k+" "+v).join(" · ")+(L.ulds?" · "+L.ulds.filter(u=>u.id).length+" ULDs":"")+"</div>":"");
+      if(dcs.loadsheet) h+="<div class='row'><a class='tog' onclick=\"const x=this.parentNode.nextSibling;x.style.display=x.style.display==='none'?'block':'none'\">loadsheet</a></div><pre style='display:none'>"+esc(dcs.loadsheet)+"</pre>";
+    }
+    const o=dcs.ops;
+    if(o&&(o.callsign||o.flight_plan||o.ats)){
+      h+="<h4>operations</h4><div class='row'>"+esc(o.callsign||"")+(o.icao_type?" · "+esc(o.icao_type):"")+(o.aftn?" · "+esc(o.aftn):"")+"</div>"+
+        "<div class='row'>flight plan "+(o.flight_plan?"filed":"not filed")+(o.ats?" · from ATS: "+Object.entries(o.ats).map(([k,v])=>k+(v>1?" ×"+v:"")).join(", "):" · nothing from ATS yet")+"</div>";
+    }
+    if(dcs.passengers&&dcs.passengers.length){
+      h+="<h4>manifest · "+dcs.total+" names</h4>";
+      h+=dcs.passengers.slice(0,40).map(x=>"<div class='pax'><i>"+esc(x.name).padEnd(22).slice(0,22)+"</i> "+esc(x.class)+" "+esc((x.seat||"—").padEnd(4))+" "+
+        esc(x.status.padEnd(9))+(x.sequence?" #"+String(x.sequence).padStart(3):"     ")+(x.bags?" "+x.bags+"bag"+(x.bags>1?"s":""):"")+
+        (x.category?" "+x.category:"")+(x.ssrs?" "+esc(x.ssrs):"")+(x.inbound?" ex "+esc(x.inbound):"")+(x.onward?" → "+esc(x.onward):"")+(x.reason?" ("+esc(x.reason)+")":"")+"</div>").join("");
+      if(dcs.total>40) h+="<div class='sub'>… and "+(dcs.total-40)+" more on the <a href='/node/"+cc+"/' target='_blank' style='color:#5fd38d'>departures board</a></div>";
+    }
+  } else {
+    h+="<div class='sub' style='margin-top:6px'>"+(fl?"not under departure control here":"not a scheduled flight in this world")+"</div>";
+  }
+  // -- the bookings behind the names
+  h+="<h4>bookings</h4>";
+  h+=recs.length? "<div class='sub' style='margin:0 0 2px'>"+recs.length+" records</div>"+recs.slice(0,14).map(r=>
+    "<div class='sub' style='margin:1px 0'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
+    "</a> "+esc(r.surname)+(r.party>1?" ×"+r.party:"")+" · "+r.status+" · "+r.gds+"</div>").join("")
+    : "<div class='sub'>no bookings held on this flight</div>";
+  panel.innerHTML=h;
 }
 function pick(x,y){
   if(!world) return;

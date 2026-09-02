@@ -97,7 +97,13 @@ func (t *Tenant) FileFlightPlan(ctx context.Context, f world.Flight, day time.Ti
 	if err != nil {
 		return err
 	}
-	return t.sendAFTN(ctx, aftn.PrioritySafety, []string{dep + "ZPZX", dest + "ZPZX"}, t.AFTNAddress(f.From), text, "ATS/FPL/"+m.AircraftID)
+	if err := t.sendAFTN(ctx, aftn.PrioritySafety, []string{dep + "ZPZX", dest + "ZPZX"}, t.AFTNAddress(f.From), text, "ATS/FPL/"+m.AircraftID); err != nil {
+		return err
+	}
+	t.groundMu.Lock()
+	t.filed[f.Carrier+f.Number] = true
+	t.groundMu.Unlock()
+	return nil
 }
 
 // sendAFTN puts an ATS message in an AFTN envelope and sends it down the
@@ -203,8 +209,23 @@ func minutesBetween(scheduled, actual string) int {
 func (t *Tenant) ATS(ctx context.Context, m *ats.Message, env *aftn.Message) error {
 	t.groundMu.Lock()
 	t.atsSeen[m.Type]++
+	if fl := t.flightFromCallsign(m.AircraftID); fl != "" {
+		if t.atsByFlight[fl] == nil {
+			t.atsByFlight[fl] = map[ats.Type]int{}
+		}
+		t.atsByFlight[fl][m.Type]++
+	}
 	t.groundMu.Unlock()
 	return nil
+}
+
+// flightFromCallsign turns the callsign air traffic services use (BAW117)
+// back into the carrier's flight (BA0117), or "" when it is not ours.
+func (t *Tenant) flightFromCallsign(callsign string) string {
+	if t.Carrier.ICAO == "" || !strings.HasPrefix(callsign, t.Carrier.ICAO) {
+		return ""
+	}
+	return normaliseFlight(t.Carrier.Designator + strings.TrimPrefix(callsign, t.Carrier.ICAO))
 }
 
 // ATSMessages reports how many of each ATS message type reached this

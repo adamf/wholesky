@@ -698,24 +698,170 @@ type Summary struct {
 	Equipment    string `json:"equipment"`
 	Version      string `json:"version"`
 	Registration string `json:"registration,omitempty"`
+	Crew         string `json:"crew,omitempty"`
+
+	// The departure's clock: when control opened, when check-in closed,
+	// when the flight closed. Sim time, as the station saw it.
+	OpenedAt        time.Time  `json:"opened_at"`
+	CheckInClosedAt *time.Time `json:"checkin_closed_at,omitempty"`
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	Cancelled       bool       `json:"cancelled,omitempty"`
+	CancelReason    string     `json:"cancel_reason,omitempty"`
+
+	// What reservations sent: how many PNL parts, whether the last arrived,
+	// and how many ADLs followed.
+	Parts    int  `json:"parts"`
+	Complete bool `json:"complete"`
+	ADLs     int  `json:"adls"`
+
+	// Cabins is the seat map by compartment, with who holds it.
+	Cabins []CabinSummary `json:"cabins"`
+	// SSRs counts special service requests across the manifest, by code.
+	SSRs map[string]int `json:"ssrs,omitempty"`
+	// Inbound and Onward count passengers connecting onto and off this
+	// flight; Infants and Children the passenger types on the list.
+	Inbound  int `json:"inbound"`
+	Onward   int `json:"onward"`
+	Infants  int `json:"infants"`
+	Children int `json:"children"`
+
+	AlertList []dcs.Alert `json:"alert_list,omitempty"`
+
+	// Load and Loadsheet exist once the flight has closed.
+	Load      *dcs.Load `json:"load,omitempty"`
+	Loadsheet string    `json:"loadsheet,omitempty"`
+
+	// Passengers is the manifest as departure control holds it, first
+	// names first; Total says how long the whole list is.
+	Passengers []PassengerRow `json:"passengers"`
+	Total      int            `json:"total"`
+
+	// Ops is the operations desk's side of the same flight.
+	Ops OpsSummary `json:"ops"`
+}
+
+// CabinSummary is one compartment of the seat map.
+type CabinSummary struct {
+	Compartment string `json:"compartment"`
+	Seats       int    `json:"seats"`
+	Listed      int    `json:"listed"`
+	Flying      int    `json:"flying"`
+	Rows        string `json:"rows"` // e.g. "1-30 ABC DEF"
+}
+
+// PassengerRow is one line of the manifest.
+type PassengerRow struct {
+	Name     string `json:"name"` // as the wire writes it: SMITH/JOHNMR
+	Class    string `json:"class"`
+	Cabin    string `json:"cabin"`
+	Seat     string `json:"seat,omitempty"`
+	Status   string `json:"status"`
+	Category string `json:"category,omitempty"`
+	Sequence int    `json:"sequence,omitempty"`
+	Bags     int    `json:"bags"`
+	Locator  string `json:"locator,omitempty"`
+	Onward   string `json:"onward,omitempty"`
+	Inbound  string `json:"inbound,omitempty"`
+	SSRs     string `json:"ssrs,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// OpsSummary is what the operations desk knows: the callsign it filed
+// under, the type on the plan, whether the plan went, and what the towers
+// have said back.
+type OpsSummary struct {
+	Callsign   string         `json:"callsign,omitempty"`
+	ICAOType   string         `json:"icao_type,omitempty"`
+	AFTN       string         `json:"aftn,omitempty"`
+	FlightPlan bool           `json:"flight_plan"`
+	ATS        map[string]int `json:"ats,omitempty"`
 }
 
 // Summarise reports a flight under departure control, by flight number in
-// wire form (BA0117) or as the movement messages abbreviate it (BA117).
+// wire form (BA0117) or as the movement messages abbreviate it (BA117):
+// everything the station and the ops desk hold on it.
 func (t *Tenant) Summarise(flight string) (*Summary, bool) {
-	if len(flight) > 2 {
-		num := strings.TrimLeft(flight[2:], "0")
-		for len(num) < 4 {
-			num = "0" + num
-		}
-		flight = flight[:2] + num
-	}
+	flight = normaliseFlight(flight)
 	fl, ok := t.DCS.Find(flight, "")
 	if !ok {
 		return nil, false
 	}
-	return &Summary{State: fl.State, Counts: fl.Counts(), Alerts: len(fl.Alerts), Dest: fl.Dest, Board: fl.Board,
-		Equipment: fl.Equipment, Version: fl.Version, Registration: fl.Registration}, true
+	sum := &Summary{State: fl.State, Counts: fl.Counts(), Alerts: len(fl.Alerts), Dest: fl.Dest, Board: fl.Board,
+		Equipment: fl.Equipment, Version: fl.Version, Registration: fl.Registration, Crew: fl.Crew,
+		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
+		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
+		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Total: len(fl.Passengers),
+		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
+	listed, flying := map[string]int{}, map[string]int{}
+	for _, p := range fl.Passengers {
+		if p.Active() {
+			listed[p.Compartment]++
+		}
+		if p.Flying() {
+			flying[p.Compartment]++
+		}
+		for _, r := range p.SSRs {
+			sum.SSRs[r.Code]++
+		}
+		if p.Inbound != nil {
+			sum.Inbound++
+		}
+		if p.Onward != nil {
+			sum.Onward++
+		}
+		switch p.Type {
+		case dcs.PaxInfant:
+			sum.Infants++
+		case dcs.PaxChild:
+			sum.Children++
+		}
+		if len(sum.Passengers) < 60 {
+			row := PassengerRow{Name: p.Display(), Class: p.Class, Cabin: p.Compartment, Seat: p.Seat,
+				Status: string(p.Status), Category: string(p.Category), Sequence: p.Sequence,
+				Bags: len(p.Bags), Locator: p.Locator, Reason: p.OffloadReason}
+			if p.Onward != nil {
+				row.Onward = p.Onward.Flight + " " + p.Onward.Dest
+			}
+			if p.Inbound != nil {
+				row.Inbound = p.Inbound.Flight
+			}
+			var codes []string
+			for _, r := range p.SSRs {
+				codes = append(codes, r.Code)
+			}
+			row.SSRs = strings.Join(codes, " ")
+			sum.Passengers = append(sum.Passengers, row)
+		}
+	}
+	if fl.Cabin != nil {
+		for _, sec := range fl.Cabin.Layout.Sections {
+			perRow := len(strings.ReplaceAll(sec.Letters, " ", ""))
+			sum.Cabins = append(sum.Cabins, CabinSummary{Compartment: sec.Compartment,
+				Seats: perRow * (sec.ToRow - sec.FromRow + 1), Listed: listed[sec.Compartment], Flying: flying[sec.Compartment],
+				Rows: fmt.Sprintf("%d-%d %s", sec.FromRow, sec.ToRow, sec.Letters)})
+		}
+	}
+	if len(sum.SSRs) == 0 {
+		sum.SSRs = nil
+	}
+	if wf, ok := t.flightsByNum[flight]; ok {
+		sum.Ops.Callsign = Callsign(t.Carrier, wf)
+		if typ, ok := icaoTypes[wf.Equipment]; ok {
+			sum.Ops.ICAOType = typ.code
+		}
+		sum.Ops.AFTN = t.AFTNAddress(wf.From)
+	}
+	t.groundMu.Lock()
+	sum.Ops.FlightPlan = t.filed[flight]
+	if seen := t.atsByFlight[flight]; len(seen) > 0 {
+		sum.Ops.ATS = map[string]int{}
+		for k, v := range seen {
+			sum.Ops.ATS[string(k)] = v
+		}
+	}
+	t.groundMu.Unlock()
+	return sum, true
 }
 
 func sortStrings(s []string) {
