@@ -356,13 +356,15 @@ func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
 	return true
 }
 
-// federatedFlightRecords fans the globe's drill-through out to every GDS
-// machine and merges what they hold.
+// federatedFlightRecords fans the globe's drill-through out to the machines
+// that hold bookings -- the carrier's own on its region, and the
+// distribution systems' -- and merges what they hold, one row per locator.
 func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
 	client := &http.Client{Timeout: 2 * time.Second}
 	var out []eye.FlightRecord
+	seen := map[string]bool{}
 	for _, p := range c.livePeers() {
-		if p.Role != "gds" {
+		if p.Role != "gds" && p.Role != "region" {
 			continue
 		}
 		resp, err := client.Get(p.URL + "/shard/flight/" + flight)
@@ -375,7 +377,13 @@ func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
 		if err != nil {
 			continue
 		}
-		out = append(out, recs...)
+		for _, r := range recs {
+			if seen[r.Locator] {
+				continue
+			}
+			seen[r.Locator] = true
+			out = append(out, r)
+		}
 		if len(out) >= 200 {
 			break
 		}
