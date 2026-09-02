@@ -336,7 +336,13 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Eye.FlightPNRs = s.flightRecords
 	s.Eye.FlightDCS = s.flightDCS
 	s.Eye.Aloft = s.Ledger.Sum
-	s.Eye.Sold = s.Stats.RevenueTotal
+	// Bound late: the stats collector is built after the Eye's hooks are.
+	s.Eye.Sold = func() int64 {
+		if s.Stats == nil {
+			return 0
+		}
+		return s.Stats.RevenueTotal()
+	}
 	s.Eye.WarpNow = s.clock.Warp
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp

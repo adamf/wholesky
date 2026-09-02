@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1350,4 +1351,50 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	if got := ask("Y", 1); got != "KK" {
 		t.Errorf("Y should still be open: %s", got)
 	}
+}
+
+// The globe's stream carries the money: a stats event names what is aloft
+// and what has been sold, and the handler survives being asked before
+// anything has flown. The core's version of this panicked on a nil stats
+// collector and took every viewer's bar with it.
+func TestEyeStreamCarriesTheMoney(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	mux := http.NewServeMux()
+	s.Eye.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	rctx, rcancel := context.WithTimeout(ctx, 6*time.Second)
+	defer rcancel()
+	req, _ := http.NewRequestWithContext(rctx, "GET", srv.URL+"/eye/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "data: ") || !strings.Contains(line, `"t":"stats"`) {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := ev["aloft"]; !ok {
+			t.Errorf("stats event without aloft: %v", ev)
+		}
+		if _, ok := ev["sold"]; !ok {
+			t.Errorf("stats event without sold: %v", ev)
+		}
+		return
+	}
+	t.Fatal("no stats event arrived on the stream")
 }
