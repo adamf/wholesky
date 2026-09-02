@@ -73,18 +73,22 @@ var regionalCarriers = map[string]bool{
 	"CP": true, "AX": true,
 }
 
+// hawaii is where the domestic record's wide bodies go. Distance cannot
+// tell Honolulu from Newark: SFO-EWR and LAX-HNL are both 4,100 km, and
+// one is flown by a narrow body and the other is not.
+var hawaii = map[string]bool{"HNL": true, "OGG": true, "KOA": true, "LIH": true, "ITO": true}
+
 // replayEquipment infers a type from what BTS does not record: the
 // regionals fly 76-seat jets, Southwest flies 737s, the majors fly narrow
 // bodies domestically -- the longest transcontinental legs on the larger
-// one -- and wide bodies beyond that, which in the domestic record means
-// Hawaii.
-func replayEquipment(carrier string, km float64) (string, int) {
+// one -- and wide bodies to Hawaii.
+func replayEquipment(carrier, from, to string, km float64) (string, int) {
 	switch {
 	case regionalCarriers[carrier]:
 		return "E75", 76
 	case carrier == "WN":
 		return "73H", 174
-	case km > 4000:
+	case hawaii[from] || hawaii[to]:
 		return "789", 290
 	case km > 3000:
 		return "321", 220
@@ -214,7 +218,7 @@ func CompileReplay(opts ReplayOptions) (*Manifest, error) {
 		}
 		miles := num(rec, "Distance")
 		km := float64(miles) * 1.609
-		equip, seats := replayEquipment(carrier, km)
+		equip, seats := replayEquipment(carrier, from, to, km)
 		number := fmt.Sprintf("%04d", num(rec, "Flight_Number_Operating_Airline"))
 		f := Flight{
 			Carrier: carrier, Number: number, From: from, To: to,
