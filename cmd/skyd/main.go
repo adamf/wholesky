@@ -74,6 +74,7 @@ func run() error {
 		fillLF    = flag.Float64("fill", 0, "load factor the day's flights already carry at 00:00, written into the carriers' books before the day runs and after each purge; 0 fills nothing (use with -tenant-dsn on a big world)")
 		refill    = flag.Bool("refill", false, "purge and refill the day at boot even if the books already hold it (to change -fill on a running world)")
 		sellDays  = flag.Int("sell-days", 1, "how many dates demand books for, from the day before the flown one; 1 sells only the day the world flies")
+		gdsDSN    = flag.String("gds-dsn", "", "all/gds: Postgres DSN backing every distribution system's records (one database, one node per system; $ENV names a variable)")
 		tenantDSN = flag.String("tenant-dsn", "", "all/region: Postgres DSN backing every carrier tenant's records (one database, one node per carrier, purged each sim day); $NAME reads the environment")
 	)
 	flag.Parse()
@@ -120,6 +121,7 @@ func run() error {
 		StatsSnapshot: *statsSnap,
 		LinkBind:      *linkBind,
 		TenantDSN:     *tenantDSN,
+		GDSDSN:        *gdsDSN,
 		SellDays:      *sellDays,
 		Fill:          *fillLF,
 		FillSeed:      *seed,
