@@ -185,7 +185,7 @@ func TestMultiMachineWorld(t *testing.T) {
 	// And the drill-through finds the booking from the core, via the GDS
 	// machine's shard endpoint.
 	waitFor("the federated drill-through to find the booking", func() bool {
-		recs := core.Sim.Eye.FlightPNRs(f.Carrier + f.Number)
+		recs := core.Sim.Eye.FlightPNRs(f.Carrier+f.Number, f.From)
 		for _, rec := range recs {
 			if rec.Locator == res.PNR.RecordLocator {
 				return true

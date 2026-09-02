@@ -54,8 +54,10 @@ type Plane struct {
 type Eye struct {
 	manifest *world.Manifest
 	airports map[string]*world.Airport
-	// byFlight resolves "U2"+"0123" to its scheduled leg.
+	// byFlight resolves "U2"+"0123" to a scheduled leg; byLeg adds the
+	// boarding point, because a number flies several legs in a day.
 	byFlight map[string]world.Flight
+	byLeg    map[string]world.Flight
 	warp     int
 
 	// WarpNow, when set, reads the world's current time rate; SimPos reads
@@ -70,11 +72,11 @@ type Eye struct {
 	// FlightPNRs, when set, answers the drill-through from an aircraft to
 	// the bookings riding on it: what the distribution world holds on a
 	// flight, straight from the stores.
-	FlightPNRs func(flight string) []FlightRecord
+	FlightPNRs func(flight, board string) []FlightRecord
 	// FlightDCS answers the other half of the drill-through: what departure
 	// control says about the flight, or nil when this machine does not run
 	// the carrier.
-	FlightDCS func(flight string) any
+	FlightDCS func(flight, board string) any
 
 	// Chaos, when set, receives the map's control actions -- ("close","LHR"),
 	// ("reopen","LHR"). The Eye owns the page and the halos; what closing an
@@ -135,6 +137,7 @@ func New(m *world.Manifest, warp int) *Eye {
 		manifest: m, warp: warp,
 		airports:   map[string]*world.Airport{},
 		byFlight:   map[string]world.Flight{},
+		byLeg:      map[string]world.Flight{},
 		planes:     map[string]*Plane{},
 		subs:       map[chan []byte]struct{}{},
 		closed:     map[string]bool{},
@@ -148,6 +151,7 @@ func New(m *world.Manifest, warp int) *Eye {
 	}
 	for _, f := range m.Flights {
 		e.byFlight[f.Carrier+f.Number] = f
+		e.byLeg[f.Carrier+f.Number+"/"+f.From] = f
 	}
 	return e
 }
@@ -490,6 +494,20 @@ func (e *Eye) lookup(flight string) (world.Flight, bool) {
 	return f, ok
 }
 
+// leg is lookup narrowed to the boarding point, falling back to any leg.
+func (e *Eye) leg(flight, board string) (world.Flight, bool) {
+	if len(flight) >= 3 && board != "" {
+		carrier, num := flight[:2], flight[2:]
+		for len(num) < 4 {
+			num = "0" + num
+		}
+		if f, ok := e.byLeg[carrier+num+"/"+board]; ok {
+			return f, true
+		}
+	}
+	return e.lookup(flight)
+}
+
 // coastlineJSON is the Natural Earth 1:110m coastline (public domain),
 // vendored the same way the OpenFlights data is: polylines of rounded
 // lon/lat pairs, 76KB of planet. The traffic draws the cities; this draws
@@ -542,18 +560,19 @@ func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flight := strings.ToUpper(strings.TrimSpace(r.PathValue("flight")))
-	recs := e.FlightPNRs(flight)
+	board := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("from")))
+	recs := e.FlightPNRs(flight, board)
 	if recs == nil {
 		recs = []FlightRecord{}
 	}
 	var d any
 	if e.FlightDCS != nil {
-		d = e.FlightDCS(flight)
+		d = e.FlightDCS(flight, board)
 	}
 	// The schedule is the world's to tell: the leg as compiled, with the
 	// recorded outcome on a replayed day.
 	var sched any
-	if f, ok := e.lookup(flight); ok {
+	if f, ok := e.leg(flight, board); ok {
 		sched = f
 	}
 	w.Header().Set("Content-Type", "application/json")

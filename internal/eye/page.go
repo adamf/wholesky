@@ -339,7 +339,7 @@ async function showFlight(p){
   panel.innerHTML=head+"<div class='sub'>asking the carrier…</div>";
   panel.style.display="block";
   let recs=[], dcs=null, fl=null;
-  try{ const d=await fetch("/eye/flight/"+p.flight).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; fl=d.flight||null; }catch(e){}
+  try{ const d=await fetch("/eye/flight/"+p.flight+"?from="+encodeURIComponent(p.from)).then(r=>r.json()); recs=d.records||[]; dcs=d.dcs||null; fl=d.flight||null; }catch(e){}
   const cc=p.flight.slice(0,2);
   let h=head;
   // -- the schedule, and what the day recorded

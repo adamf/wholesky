@@ -28,6 +28,7 @@ import (
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/node"
+	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/queue"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
@@ -580,7 +581,7 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 // flightRecords is the globe's drill-through: every booking any channel
 // holds on a flight, straight from the stores. A plane on the map becomes
 // the people on it in one click, which is the whole point of drawing it.
-func (s *Sim) flightRecords(flight string) []eye.FlightRecord {
+func (s *Sim) flightRecords(flight, board string) []eye.FlightRecord {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var out []eye.FlightRecord
@@ -593,15 +594,31 @@ func (s *Sim) flightRecords(flight string) []eye.FlightRecord {
 		out = append(out, fr)
 		return len(out) < 200
 	}
+	// A number flies several legs a day; a booking rides this one only if
+	// one of its segments boards here.
+	onLeg := func(r *pnr.PNR) bool {
+		if board == "" {
+			return true
+		}
+		for _, sg := range r.Segments {
+			if sg.Board == board && sg.Carrier+strings.TrimLeft(sg.FlightNum, "0") == flight[:2]+strings.TrimLeft(flight[2:], "0") {
+				return true
+			}
+		}
+		return false
+	}
 	// The carrier's own system is the book of record for its flight, and it
 	// keeps every booking for the day. A distribution system's ledger is
 	// bounded and turns over in minutes at real volume, so asking only the
 	// GDSes said "no records" about flights that were full.
 	if len(flight) >= 3 {
 		if t, ok := s.Tenants[flight[:2]]; ok {
-			recs, err := t.Store.FindPNRsByFlight(ctx, flight, "", 200)
+			recs, err := t.Store.FindPNRsByFlight(ctx, flight, "", 400)
 			if err == nil {
 				for _, r := range recs {
+					if !onLeg(r) {
+						continue
+					}
 					fr := eye.FlightRecord{Locator: r.RecordLocator, Party: len(r.Passengers),
 						Status: string(r.Status), GDS: t.Carrier.Designator}
 					// Shown under the locator the passenger was given, which
@@ -624,11 +641,14 @@ func (s *Sim) flightRecords(flight string) []eye.FlightRecord {
 		}
 	}
 	for _, g := range s.GDSes {
-		recs, err := g.Store.FindPNRsByFlight(ctx, flight, "", 100)
+		recs, err := g.Store.FindPNRsByFlight(ctx, flight, "", 200)
 		if err != nil {
 			continue
 		}
 		for _, r := range recs {
+			if !onLeg(r) {
+				continue
+			}
 			fr := eye.FlightRecord{
 				Locator: r.RecordLocator, Party: len(r.Passengers),
 				Status: string(r.Status), GDS: g.Designator,
@@ -1431,7 +1451,7 @@ func inboundDelay(f world.Flight, day time.Time) int {
 
 // flightDCS is the globe's other drill-through: what departure control
 // says about the aircraft, if this machine runs the carrier.
-func (s *Sim) flightDCS(flight string) any {
+func (s *Sim) flightDCS(flight, board string) any {
 	if len(flight) < 3 {
 		return nil
 	}
@@ -1439,7 +1459,7 @@ func (s *Sim) flightDCS(flight string) any {
 	if !ok {
 		return nil
 	}
-	sum, ok := t.Summarise(flight)
+	sum, ok := t.Summarise(flight, board)
 	if !ok {
 		return nil
 	}

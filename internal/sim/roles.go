@@ -32,6 +32,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -359,7 +360,7 @@ func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
 // federatedFlightRecords fans the globe's drill-through out to the machines
 // that hold bookings -- the carrier's own on its region, and the
 // distribution systems' -- and merges what they hold, one row per locator.
-func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
+func (c *Core) federatedFlightRecords(flight, board string) []eye.FlightRecord {
 	client := &http.Client{Timeout: 2 * time.Second}
 	var out []eye.FlightRecord
 	seen := map[string]bool{}
@@ -367,7 +368,7 @@ func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
 		if p.Role != "gds" && p.Role != "region" {
 			continue
 		}
-		resp, err := client.Get(p.URL + "/shard/flight/" + flight)
+		resp, err := client.Get(p.URL + "/shard/flight/" + flight + "?from=" + url.QueryEscape(board))
 		if err != nil {
 			continue
 		}
@@ -394,7 +395,7 @@ func (c *Core) federatedFlightRecords(flight string) []eye.FlightRecord {
 // federatedFlightDCS asks the machine that runs a flight's carrier what its
 // departure control says about the flight. The ownership map the fleet
 // board discovers is what says which machine that is.
-func (c *Core) federatedFlightDCS(flight string) any {
+func (c *Core) federatedFlightDCS(flight, board string) any {
 	if len(flight) < 3 {
 		return nil
 	}
@@ -409,7 +410,7 @@ func (c *Core) federatedFlightDCS(flight string) any {
 		return nil
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(reg.URL + "/shard/dcs/" + flight)
+	resp, err := client.Get(reg.URL + "/shard/dcs/" + flight + "?from=" + url.QueryEscape(board))
 	if err != nil {
 		return nil
 	}
@@ -559,7 +560,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings func() int64) {
 		json.NewEncoder(w).Encode(sum) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /shard/flight/{flight}", func(w http.ResponseWriter, r *http.Request) {
-		recs := s.flightRecords(strings.ToUpper(r.PathValue("flight")))
+		recs := s.flightRecords(strings.ToUpper(r.PathValue("flight")), strings.ToUpper(r.URL.Query().Get("from")))
 		if recs == nil {
 			recs = []eye.FlightRecord{}
 		}
@@ -568,7 +569,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings func() int64) {
 	})
 	mux.HandleFunc("GET /shard/dcs/{flight}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(s.flightDCS(strings.ToUpper(r.PathValue("flight")))) //nolint:errcheck
+		json.NewEncoder(w).Encode(s.flightDCS(strings.ToUpper(r.PathValue("flight")), strings.ToUpper(r.URL.Query().Get("from")))) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok")) //nolint:errcheck

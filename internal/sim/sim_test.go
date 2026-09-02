@@ -769,7 +769,7 @@ func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 	// The globe's drill-through sees the same story, and everything else the
 	// station holds: the seat map by cabin, the manifest itself, the load
 	// the closure produced, and the ops desk's side of the flight.
-	sum, ok := tn.Summarise(f.Carrier + strings.TrimLeft(f.Number, "0"))
+	sum, ok := tn.Summarise(f.Carrier+strings.TrimLeft(f.Number, "0"), f.From)
 	if !ok || sum.Counts.Boarded != cnt.Boarded {
 		t.Fatalf("Summarise: %+v %v", sum, ok)
 	}
@@ -814,7 +814,7 @@ func TestFlightDrillThroughFindsTheBookings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recs := s.flightRecords(f.Carrier + f.Number)
+	recs := s.flightRecords(f.Carrier+f.Number, f.From)
 	found := false
 	for _, r := range recs {
 		if r.Locator == res.PNR.RecordLocator {

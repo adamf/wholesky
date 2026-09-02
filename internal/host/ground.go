@@ -779,11 +779,19 @@ type OpsSummary struct {
 
 // Summarise reports a flight under departure control, by flight number in
 // wire form (BA0117) or as the movement messages abbreviate it (BA117):
-// everything the station and the ops desk hold on it.
-func (t *Tenant) Summarise(flight string) (*Summary, bool) {
+// everything the station and the ops desk hold on it. A carrier flies the
+// same number over several legs in a day, so the boarding point picks the
+// leg; "" takes whichever the station holds.
+func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 	flight = normaliseFlight(flight)
-	fl, ok := t.DCS.Find(flight, "")
-	if !ok {
+	var fl *dcs.Flight
+	for _, f := range t.DCS.Flights() {
+		if f.Flight == flight && (board == "" || f.Board == board) {
+			fl = f
+			break
+		}
+	}
+	if fl == nil {
 		return nil, false
 	}
 	sum := &Summary{State: fl.State, Counts: fl.Counts(), Alerts: len(fl.Alerts), Dest: fl.Dest, Board: fl.Board,
@@ -845,7 +853,7 @@ func (t *Tenant) Summarise(flight string) (*Summary, bool) {
 	if len(sum.SSRs) == 0 {
 		sum.SSRs = nil
 	}
-	if wf, ok := t.flightsByNum[flight]; ok {
+	if wf, ok := t.legOf(flight, fl.Board); ok {
 		sum.Ops.Callsign = Callsign(t.Carrier, wf)
 		if typ, ok := icaoTypes[wf.Equipment]; ok {
 			sum.Ops.ICAOType = typ.code
@@ -862,6 +870,17 @@ func (t *Tenant) Summarise(flight string) (*Summary, bool) {
 	}
 	t.groundMu.Unlock()
 	return sum, true
+}
+
+// legOf finds the scheduled leg of a flight number that boards at a station.
+func (t *Tenant) legOf(flight, board string) (world.Flight, bool) {
+	for _, f := range t.flights {
+		if f.Carrier+f.Number == flight && f.From == board {
+			return f, true
+		}
+	}
+	f, ok := t.flightsByNum[flight]
+	return f, ok
 }
 
 func sortStrings(s []string) {
