@@ -248,9 +248,12 @@ carrier circuits; an invariant suite (no oversell — including across
 selling channels — message conservation, interline convergence,
 cancelled-flight-queues-everyone); and a multi-machine test that boots
 core, GDS and region in one process and proves a booking crosses three
-machines and settles. At full sky — some 15,700 aircraft airborne — the
-departure banks peak above 16,000 messages a second through the six-machine
-fabric.
+machines and settles. At warp 60 — a day every twenty-four minutes, some
+17,000 aircraft airborne — the departure banks peaked above 16,000 messages
+a second through the six-machine fabric; the demo now runs at warp 6, a
+four-hour day, so a departure's ground story unfolds at a pace a person can
+watch and each flight carries ten times the bookings. What it would take
+to fly real loads is worked out in [docs/full-throttle.md](docs/full-throttle.md).
 
 The pattern that keeps paying: every time the world gets bigger, it finds
 real bugs in Jetway — twenty releases so far, each fix landed upstream with
