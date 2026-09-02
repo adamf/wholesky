@@ -23,9 +23,11 @@ import (
 	"github.com/adamf/jetway/pkg/avs"
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/inventory"
 	"github.com/adamf/jetway/pkg/matip"
 	"github.com/adamf/jetway/pkg/mvt"
 	"github.com/adamf/jetway/pkg/pnl"
+	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/jetway/pkg/typeb"
@@ -45,7 +47,7 @@ type Tenant struct {
 	Carrier   world.Carrier
 	Gateway   *gateway.Gateway
 	Store     store.Store
-	Inventory *gateway.Inventory
+	Inventory *inventory.Inventory
 
 	flights      []world.Flight
 	client       link
@@ -104,8 +106,9 @@ type Options struct {
 	// free sale between partners is the whole point of AVS, and a partner who
 	// never hears your availability is not a partner.
 	PartnerAddresses []string
-	// Capacity is seats per class per flight. The load-suite lesson applies:
-	// a demonstration wants single digits, a simulation wants headroom.
+	// Capacity, when positive, overrides every cabin's seats: a harness that
+	// wants headroom or a demonstration that wants single digits. Zero
+	// means the aircraft's own cabins, from the fleet data and the schedule.
 	Capacity int
 	// BookingDate is the date the world sells, for availability broadcasts.
 	BookingDate time.Time
@@ -159,11 +162,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		Name:       c.Name,
 	}, st, bus, log.With("carrier", c.Designator), []byte("wholesky-"+c.Designator))
 
-	inv := gateway.NewInventory()
-	inv.Carrier = c.Designator
-	if opts.Capacity > 0 {
-		inv.Capacity = opts.Capacity
-	}
+	inv := inventory.New(c.Designator, capacityFor(c.Designator, flights, opts.Capacity))
 	gw.Responder = inv
 
 	// The switch identifies this tenant by the listener it dialled, the way
@@ -569,6 +568,70 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 		items[r.RecordLocator+"/"+n.Surname] = nameItem{name: n, class: class}
 	}
 	return items, wireDate, nil
+}
+
+// capacityFor is the carrier's schedule as the inventory asks it: the seats
+// each leg offers per cabin, from the fleet's cabin layout for the type the
+// leg flies, or the schedule's seat count in one economy cabin when the
+// type is unknown. An override puts the same number in every cabin.
+func capacityFor(carrier string, flights []world.Flight, override int) inventory.Capacity {
+	type leg struct{ num, board string }
+	byLeg := map[leg]map[string]int{}
+	first := map[string]map[string]int{}
+	fleet := fleetData()
+	for _, f := range flights {
+		comps := map[string]int{}
+		if override > 0 {
+			comps["Y"] = override
+			if t, ok := fleet.Type(f.Equipment); ok {
+				for _, sec := range t.Cabin.Sections {
+					comps[sec.Compartment] = override
+				}
+			}
+		} else if t, ok := fleet.Type(f.Equipment); ok {
+			for _, sec := range t.Cabin.Sections {
+				perRow := len(strings.ReplaceAll(sec.Letters, " ", ""))
+				comps[sec.Compartment] += perRow * (sec.ToRow - sec.FromRow + 1)
+			}
+		} else {
+			comps["Y"] = f.Seats
+		}
+		num := strings.TrimLeft(f.Number, "0")
+		byLeg[leg{num, f.From}] = comps
+		if _, ok := first[num]; !ok {
+			first[num] = comps
+		}
+	}
+	return func(cr, flightNum, wireDate, board string) (map[string]int, bool) {
+		if cr != carrier {
+			return nil, false
+		}
+		num := strings.TrimLeft(flightNum, "0")
+		if board != "" {
+			c, ok := byLeg[leg{num, board}]
+			return c, ok
+		}
+		c, ok := first[num]
+		return c, ok
+	}
+}
+
+// RebuildInventory counts the carrier's book of record into its inventory:
+// every seat a live record holds on every flight, so the first sell after
+// a start is answered from what was already sold, not from an empty cabin.
+func (t *Tenant) RebuildInventory(ctx context.Context) (int, error) {
+	rows, err := t.Store.SoldSeats(ctx, t.Carrier.Designator, "")
+	if err != nil {
+		return 0, err
+	}
+	t.Inventory.Reset()
+	seats := 0
+	for _, r := range rows {
+		t.Inventory.Seed(pnr.Segment{Type: pnr.SegmentAir, Carrier: r.Carrier, FlightNum: r.FlightNum, WireDate: r.WireDate,
+			Board: r.Board, Class: r.Class, Status: r.Status, Seats: r.Seats})
+		seats += r.Seats
+	}
+	return seats, nil
 }
 
 // airportAddresses is where a name list goes: the carrier's check-in at the

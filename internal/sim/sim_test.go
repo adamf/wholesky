@@ -1231,6 +1231,30 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 		}
 		t.Fatalf("departure control should hold every filled name: held=%v total=%d records=%d", ok, total, len(recs))
 	}
+	// The inventory is rebuilt from the book: the seats the fill sold are
+	// gone, availability says how many are left, and a party larger than
+	// what is left waitlists instead of overselling the aircraft.
+	s.rebuildInventories(ctx)
+	ak := avail.NewKey(f.Carrier, f.Number, day, f.From, f.To, "Y")
+	av := tn.Inventory.Availability([]avail.Key{ak}, time.Now())
+	if len(av) != 1 || !av[0].SeatsKnown || av[0].Seats != f.Seats-seats {
+		t.Fatalf("availability after fill: %+v (seats %d, filled %d)", av, f.Seats, seats)
+	}
+	ask := func(n int) string {
+		p := &pnr.PNR{Segments: []pnr.Segment{{Ref: 1, Type: pnr.SegmentAir, Carrier: f.Carrier, FlightNum: f.Number,
+			WireDate: strings.ToUpper(day.Format("02Jan")), Board: f.From, Off: f.To, Class: "Y", Status: "HN", Seats: n}}}
+		out, err := tn.Inventory.Decide(ctx, p, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out[p.Segments[0].Key()]
+	}
+	if got := ask(f.Seats - seats); got != "KK" {
+		t.Errorf("exactly the seats left should confirm: %s", got)
+	}
+	if got := ask(1); got != "US" {
+		t.Errorf("the next seat on a full aircraft should waitlist: %s", got)
+	}
 	// Filling twice is a duplicate: the same books already exist.
 	before := len(recs)
 	s.fillDay(ctx)

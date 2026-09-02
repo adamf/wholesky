@@ -86,7 +86,9 @@ type Options struct {
 	Carriers int
 	// Console is the switch console address; empty skips the console.
 	Console string
-	// Capacity is seats per class per flight at every tenant.
+	// Capacity, when positive, overrides every cabin's seats at every
+	// tenant. Zero means the aircraft's own cabins: a 737 has 174 seats
+	// whatever the fare letter, and a full one waitlists, then refuses.
 	Capacity int
 	// AVSInterval is how often tenants rebroadcast availability; zero uses
 	// the host default.
@@ -395,9 +397,6 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	flights := s.Flights
 
 	capacity := opts.Capacity
-	if capacity <= 0 {
-		capacity = 100000
-	}
 	partners := partnerAddresses(m.Carriers, flights)
 	var distribution []string
 	for _, g := range gdses {
@@ -606,6 +605,27 @@ func (s *Sim) RunStats() []any {
 	return []any{"links", len(s.Switch.LivePeers()), "movements", s.Movements.Load(),
 		"departures", s.Departures.Load(), "report_failures", s.reportErrs.Load(),
 		"pos", int(s.clock.Pos(time.Now())), "warp", s.clock.Warp()}
+}
+
+// rebuildInventories counts every tenant's book of record into its seat
+// inventory, after a fill or a purge and at boot: what is sold is what the
+// store says is sold.
+func (s *Sim) rebuildInventories(ctx context.Context) {
+	started := time.Now()
+	seats, failed := 0, 0
+	for code, t := range s.Tenants {
+		if ctx.Err() != nil {
+			return
+		}
+		n, err := t.RebuildInventory(ctx)
+		if err != nil {
+			failed++
+			s.log.Warn("inventory rebuild failed", "carrier", code, "err", err)
+			continue
+		}
+		seats += n
+	}
+	s.log.Info("inventories rebuilt", "carriers", len(s.Tenants), "seats_held", seats, "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
 }
 
 // fillDay writes the day's pre-sold bookings into this machine's tenants'
@@ -875,6 +895,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		s.purgeTenants(ctx, time.Now())
 		s.fillDay(ctx)
 	}
+	s.rebuildInventories(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -896,6 +917,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			go func() {
 				s.purgeTenants(ctx, before)
 				s.fillDay(ctx)
+				s.rebuildInventories(ctx)
 			}()
 		}
 		if cur-prev > maxCatchUp {
