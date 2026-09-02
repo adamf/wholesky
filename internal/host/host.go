@@ -25,6 +25,7 @@ import (
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/inventory"
+	"github.com/adamf/jetway/pkg/metrics"
 	"github.com/adamf/jetway/pkg/matip"
 	"github.com/adamf/jetway/pkg/mvt"
 	"github.com/adamf/jetway/pkg/pnl"
@@ -177,6 +178,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 
 	capacity := capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity)
 	inv := inventory.New(c.Designator, capacity)
+	inv.Publish(metrics.Default)
 	// Revenue management, leg-based: each cabin sells its classes under
 	// nested authorisations, so the last seats go at the higher fares.
 	inv.Levels = func(carrier, flightNum, wireDate, board, compartment string) []inventory.Level {
