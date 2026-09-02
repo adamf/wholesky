@@ -203,6 +203,9 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	fed := http.NewServeMux()
 	c.Routes(fed)
 	s.SetFederationHandler(fed)
+	s.fedMu.Lock()
+	s.invHandler = c.federatedInvariants
+	s.fedMu.Unlock()
 
 	s.Stats.Airborne = s.Eye.Airborne
 	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
@@ -651,6 +654,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(s.flightDCS(strings.ToUpper(r.PathValue("flight")), strings.ToUpper(r.URL.Query().Get("from")))) //nolint:errcheck
 	})
+	mux.HandleFunc("GET /shard/invariants.json", s.serveInvariants)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok")) //nolint:errcheck
 	})

@@ -348,7 +348,10 @@ tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across
 selling channels — message conservation, interline convergence,
-cancelled-flight-queues-everyone); and a multi-machine test that boots
+cancelled-flight-queues-everyone), with the no-oversell law also asked of
+the live sky by `go run ./cmd/skycheck <url>`, which federates every
+shard's inventory and exits non-zero on a cabin over capacity or a shard
+that did not answer; and a multi-machine test that boots
 core, GDS and region in one process and proves a booking crosses three
 machines and settles. At warp 60 — a day every twenty-four minutes, some
 17,000 aircraft airborne — the departure banks peaked above 16,000 messages

@@ -260,6 +260,7 @@ type Sim struct {
 
 	fedMu      sync.RWMutex
 	fedHandler http.Handler
+	invHandler http.HandlerFunc
 	// ConsoleProxy, when set, forwards a /node/{code}/ request to the
 	// machine that owns the node. It reports whether it handled it.
 	ConsoleProxy func(w http.ResponseWriter, r *http.Request, code string) bool
@@ -376,6 +377,18 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("/node/", s.serveNodeConsole)
 		// The federation surface is late-bound: a core installs its registry
 		// here after boot; every other shape 404s the path.
+		// The invariant check is federated the same way when a core is
+		// installed, and answers for this process's carriers otherwise.
+		mux.HandleFunc("GET /invariants.json", func(w http.ResponseWriter, r *http.Request) {
+			s.fedMu.RLock()
+			h := s.invHandler
+			s.fedMu.RUnlock()
+			if h != nil {
+				h(w, r)
+				return
+			}
+			s.serveInvariants(w, r)
+		})
 		mux.HandleFunc("/federation/", func(w http.ResponseWriter, r *http.Request) {
 			s.fedMu.RLock()
 			h := s.fedHandler
