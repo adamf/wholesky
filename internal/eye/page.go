@@ -381,6 +381,7 @@ async function showFlight(p){
         "<div class='row'>DOW "+kg(L.dow)+" · traffic "+kg(L.traffic_load)+" · ZFW "+kg(L.zfw)+"</div>"+
         "<div class='row'>fuel "+kg(L.takeoff_fuel)+" (trip "+kg(L.trip_fuel)+") · TOW "+kg(L.tow)+" · LAW "+kg(L.law)+"</div>"+
         (L.holds?"<div class='row'>holds "+Object.entries(L.holds).map(([k,v])=>k+" "+v).join(" · ")+(L.ulds?" · "+L.ulds.filter(u=>u.id).length+" ULDs":"")+"</div>":"");
+      if(dcs.bags){ const b=dcs.bags; h+="<div class='row'>bags at the door: "+b.loaded+" loaded"+((b.unaccompanied||[]).length?" · <span style='color:#e0b93c'>"+b.unaccompanied.length+" unaccompanied, pulled</span>":"")+((b.not_loaded||[]).length?" · "+b.not_loaded.length+" short-shipped, to follow":"")+"</div>"; }
       if(dcs.loadsheet) h+="<div class='row'><a class='tog' onclick=\"const x=this.parentNode.nextSibling;x.style.display=x.style.display==='none'?'block':'none'\">loadsheet</a></div><pre style='display:none'>"+esc(dcs.loadsheet)+"</pre>";
     }
     const o=dcs.ops;

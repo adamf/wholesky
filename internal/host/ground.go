@@ -620,7 +620,18 @@ func (t *Tenant) Close(ctx context.Context, f world.Flight, day time.Time) error
 	key := flightKey(f, day)
 	h := hashOf(f.Carrier + f.Number + day.Format("0102"))
 	cargo, mail := cargoFor(f, h)
-	cl, err := t.DCS.CloseFlight(ctx, key, dcs.CloseOptions{Fuel: fuelFor(f), Cargo: cargo, Mail: mail, Force: true})
+	// The door does not close over a loaded bag whose passenger is not on
+	// board: reconciliation names them, sortation is told to pull each
+	// (BSM DEL), and the door closes on the second try with the hold
+	// matching the cabin.
+	opts := dcs.CloseOptions{Fuel: fuelFor(f), Cargo: cargo, Mail: mail, Force: true, RequireReconciled: true}
+	cl, err := t.DCS.CloseFlight(ctx, key, opts)
+	var ue *dcs.UnreconciledError
+	if errors.As(err, &ue) {
+		t.pullBags(ctx, key, ue.Bags)
+		opts.RequireReconciled = false
+		cl, err = t.DCS.CloseFlight(ctx, key, opts)
+	}
 	if err != nil {
 		return err
 	}
@@ -730,6 +741,8 @@ type Summary struct {
 	// Load and Loadsheet exist once the flight has closed.
 	Load      *dcs.Load `json:"load,omitempty"`
 	Loadsheet string    `json:"loadsheet,omitempty"`
+	// Bags is the door's reconciliation of the hold against the cabin.
+	Bags *dcs.Reconciliation `json:"bags,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -799,7 +812,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {
@@ -889,4 +902,28 @@ func sortStrings(s []string) {
 			s[j], s[j-1] = s[j-1], s[j]
 		}
 	}
+}
+
+// pullBags tells the sortation system to take unaccompanied bags off the
+// aircraft, one BSM DEL per passenger whose bags are named.
+func (t *Tenant) pullBags(ctx context.Context, key dcs.Key, bags []dcs.BagRef) {
+	fl, err := t.DCS.Flight(key)
+	if err != nil {
+		return
+	}
+	pulled := map[int]bool{}
+	for _, b := range bags {
+		if pulled[b.PassengerID] {
+			continue
+		}
+		pulled[b.PassengerID] = true
+		for _, p := range fl.Passengers {
+			if p.ID == b.PassengerID {
+				if err := t.announceBags(ctx, fl, p, "DEL"); err != nil {
+					t.log.Debug("bag pull not announced", "flight", key.Flight, "tag", b.Tag, "err", err)
+				}
+			}
+		}
+	}
+	t.log.Info("unaccompanied bags pulled at the door", "flight", key.Flight, "board", key.Board, "bags", len(bags))
 }
