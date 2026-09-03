@@ -257,9 +257,46 @@ generator then rides on top as what it is on the day of travel: the late
 trickle. Southwest's day alone is 260,000 records and 530,000 passengers,
 written in 24 seconds; a filled 737 sends a three-part name list, and the
 first real family folded a Type B line, which is how jetway v0.1.33 and
-v0.1.35 came to exist. The recorded day runs at `-fill 0.6` while the
-database's headroom over its own purge is measured; what full load costs
-is worked out in [docs/full-throttle.md](docs/full-throttle.md).
+v0.1.35 came to exist. The recorded day runs at `-fill 0.85`, a holiday
+load: 1,400,987 records and 3.1 million seats held before the first
+flight, 3.5 GB in Postgres, the distribution systems' own books beside
+them. The filler knows each aircraft's cabins -- the same computation the
+inventory uses -- and puts a party in a cabin with room for it on every
+leg, because nine per cent business of a widebody's seats is not the
+business cabin's size. What full load costs is worked out in
+[docs/full-throttle.md](docs/full-throttle.md).
+
+Every one of those records was sold at a fare. jetway's `pkg/fare` is the
+structure of a filing -- fare basis, rules for advance purchase, stay,
+season, change and refund, taxes by kind, passenger types at their
+discounts -- and carries no fare of its own, because ATPCO's are licensed;
+`internal/tariff` files a synthetic one from the schedule's distances,
+fourteen booking classes to a market with US-shaped taxes, and every
+booking prices against it as of its purchase date. The bar at the top of
+the globe says what the aircraft in the air were sold for and what has
+been bought since boot; the ledger behind it is rebuilt from the books at
+every start. The recorded day comes to $719M across 29,967 legs, an
+average of $255 a passenger-leg, median $204, taxes 15%: full-fare Y
+around $341, business $750 to $785, the deep discount buckets $93 to
+$160. The shape of a real Thanksgiving Wednesday, every cent of it
+labelled synthetic.
+
+The world also answers for its laws while it flies. Every shard reports
+its inventories at `/shard/invariants.json`, the core federates them at
+`/invariants.json`, and `go run ./cmd/skycheck <url>` exits non-zero on a
+cabin holding more than it has or a shard that did not answer:
+
+```
+$ go run ./cmd/skycheck https://wholesky-demo.fly.dev
+6 shards, 8074 cabins, 126321 seats sold, 0 oversold
+```
+
+Its first run against the recorded day found 88 oversold cabins, 83 of
+them business cabins on Hawaii legs holding up to 54 passengers in 32
+seats -- the filler had drawn booking classes without looking at the
+aircraft. The gate paid for itself on its first run; the in-process suite
+(`internal/sim/invariants_test.go`) keeps the laws that need the wire
+quiet, message conservation and interline convergence.
 
 ## Building it
 
