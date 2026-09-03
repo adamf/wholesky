@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Everything jetway does — the airline messaging gateway under wholesky</title>
+<meta name="description" content="jetway is an open-source Go gateway for airline and GDS reservation traffic: Type B/AIRIMP, EDIFACT/PADIS, NDC, MATIP, availability, PNRs, ticketing, departure control, movement and datalink messages, fares, inventory, IROPS, and a switch.">
+<meta property="og:title" content="Everything jetway does">
+<meta property="og:description" content="The airline messaging gateway, GDS, DCS and switch under wholesky, feature by feature.">
+<meta property="og:url" content="https://wholesky.io/jetway.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230b0f14' stroke='%235f96be' stroke-width='2'/%3E%3Cpath d='M8 20 L24 12' stroke='%23e8eef4' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0b0f14; --panel:#11161d; --panel2:#161c25; --line:#1f2732;
+  --text:#e8eef4; --muted:#8794a3; --dim:#5a6675;
+  --green:#5fd38d; --amber:#e0b93c; --red:#e05a5a; --blue:#5f96be; --violet:#b48fd9;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,.mono{font-family:var(--mono)}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.92em}
+pre{background:#080b10;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.5;color:#c9d3de}
+pre code{background:none;padding:0}
+h1,h2,h3,h4{line-height:1.2;text-wrap:balance;margin:0 0 .5em}
+h2{font-size:28px;letter-spacing:-.01em}
+h3{font-size:19px}
+h4{font-size:15px;font-family:var(--mono);color:var(--blue);letter-spacing:.02em;margin-top:18px}
+p{margin:0 0 1em}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.prose{max-width:70ch}
+.muted{color:var(--muted)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+nav.top{position:sticky;top:0;z-index:10;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:22px;height:52px;font-family:var(--mono);font-size:13px}
+nav.top .brand{font-weight:700;letter-spacing:.06em;color:var(--text)}
+nav.top a{color:var(--muted)}
+nav.top a:hover{color:var(--text);text-decoration:none}
+nav.top .live{margin-left:auto;color:var(--green)}
+@media (max-width:760px){nav.top .hide-sm{display:none}}
+.hero{padding:56px 0 30px;border-bottom:1px solid var(--line);background:radial-gradient(1200px 500px at 30% -10%,#12202b 0%,transparent 60%)}
+.hero h1{font-size:clamp(32px,4.6vw,52px);letter-spacing:-.02em;margin-bottom:14px}
+.hero .lede{font-size:19px;color:var(--muted);max-width:66ch}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0 10px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:var(--mono);font-size:14px}
+.btn:hover{border-color:var(--muted);text-decoration:none}
+.btn.primary{background:var(--blue);color:#06101a;border-color:var(--blue);font-weight:600}
+.btn.primary:hover{background:#7fb0d6}
+section{padding:52px 0;border-bottom:1px solid var(--line)}
+section .lead{font-size:18px;color:var(--muted);max-width:68ch;margin-bottom:22px}
+.toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin:28px 0 0}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:13px}
+.toc a span{display:block;color:var(--dim);font-family:var(--sans);font-size:13px;margin-top:2px}
+.toc a:hover{border-color:var(--muted);text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.card h3{margin-bottom:8px}
+.card p{color:var(--muted);margin-bottom:.6em}
+.card ul{margin:0;padding-left:18px;color:var(--muted)}
+.card li{margin:4px 0}
+.card li b{color:var(--text);font-weight:600}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.tag{font:12px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
+.tag.spec{border-color:#2a4a38;color:var(--green)}
+.tag.inf{border-color:#4a3f22;color:var(--amber)}
+.tag.none{border-color:#4a2a2a;color:var(--red)}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(--muted);margin:0 0 22px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+td.mono{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.table-wrap{overflow-x:auto}
+.shot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000;margin:18px 0 6px}
+.shot img{display:block;width:100%;height:auto}
+.caption{font-size:13px;color:var(--dim);margin-top:6px}
+footer{padding:34px 0 48px;color:var(--dim);font-size:13px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html">WHOLESKY</a>
+    <a href="index.html#system" class="hide-sm">the system</a>
+    <a href="jetway.html" style="color:var(--text)">jetway</a>
+    <a href="#wire" class="hide-sm">wire</a>
+    <a href="#records" class="hide-sm">records</a>
+    <a href="#airport" class="hide-sm">airport</a>
+    <a href="#operate" class="hide-sm">operating it</a>
+    <a class="live" href="https://jetway-demo.fly.dev">jetway demo</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">the engine · Go · MIT · github.com/adamf/jetway</div>
+    <h1>Everything jetway does.</h1>
+    <p class="lede">jetway is a messaging gateway for airline and GDS reservation traffic. It terminates carrier links, decodes what arrives on them, keeps passenger name records and answers. It is also a distribution system, a seat inventory, a departure-control system, a datalink and AFTN endpoint, a fare engine and a switch, because wholesky needed each of those to be real, and each is meant to be usable on its own.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
+      <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.58</a>
+      <a class="btn" href="index.html">← wholesky</a>
+    </div>
+    <div class="toc">
+      <a href="#inventory">The inventory<span>every message, function and endpoint, on one screen</span></a>
+      <a href="#wire">The wire<span>Type B, EDIFACT, AIRIMP, PADIS, MATIP, NDC, AVS, SSIM</span></a>
+      <a href="#records">Records and selling<span>PNRs, sells, tickets, EMDs, splits, queues, IROPS</span></a>
+      <a href="#money">Fares and inventory<span>filings, rules, taxes, pricing; cabins and nested classes</span></a>
+      <a href="#airport">The airport and the aircraft<span>PNL/ADL, check-in, bags, loadsheet, MVT, ACARS, AFTN</span></a>
+      <a href="#operate">Operating it<span>ingress, spool, store, lease, metrics, retention, console, CLI</span></a>
+      <a href="#standing">What is specified and what is inferred<span>the honest table</span></a>
+    </div>
+  </div>
+</header>
+
+<section id="inventory">
+  <div class="wrap">
+    <div class="eyebrow">the inventory</div>
+    <h2>The whole stack, in one Go module</h2>
+    <p class="lead">If you have run a reservations system, a GDS, a departure-control system or a Type B network, this is the list you would write on the whiteboard. Every row is implemented, tested, and exercised daily by a simulation of the world's schedule.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Messages it sends and receives</h3>
+        <div class="table-wrap"><table>
+          <tr><th>domain</th><th>messages</th></tr>
+          <tr><td>reservations · Type B</td><td class="mono">AIRIMP sell, reply, cancel, change · SSR · OSI · OSI/locator exchange · ticket numbers · remarks · received-from</td></tr>
+          <tr><td>reservations · EDIFACT</td><td class="mono">PAOREQ · PAORES · TKCREQ · TKCRES · CONTRL · PNRGOV</td></tr>
+          <tr><td>distribution · HTTP</td><td class="mono">NDC OrderCreateRQ · OrderRetrieveRQ · OrderCancelRQ · OrderViewRS</td></tr>
+          <tr><td>availability &amp; schedule</td><td class="mono">AVS · SSM · ASM · SSIM</td></tr>
+          <tr><td>reservations → airport</td><td class="mono">PNL (multi-part) · ADL</td></tr>
+          <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · loadsheet (AHM 560)</td></tr>
+          <tr><td>aircraft &amp; operations</td><td class="mono">MVT · MVA · DIV · ACARS OOOI (OUT OFF ON IN)</td></tr>
+          <tr><td>air traffic services</td><td class="mono">AFTN envelope · FPL · DEP · ARR · DLA · CNL · CHG</td></tr>
+          <tr><td>transports</td><td class="mono">Type B over framed TCP · MATIP (RFC 2351) · EDIFACT over TCP · HTTPS with mutual TLS · file drop</td></tr>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>What a reservations system does, and it does</h3>
+        <ul>
+          <li><b>Book</b> across carriers and dialects in one record; <b>free-sell</b> from the availability cache or <b>request</b> and await the answer.</li>
+          <li><b>Hold the statuses</b> the industry uses: <span class="mono">NN SS HK HL HN HX KK KL UC UN US UU TK TL NO XX</span>.</li>
+          <li><b>Price</b> at booking under filed rules and taxes; carry fare basis and amounts on the record.</li>
+          <li><b>Ticket</b> with coupons and check digits; <b>issue EMDs</b>; exchange <b>ticket control</b> with the operating carrier.</li>
+          <li><b>Divide</b> a booking; <b>cancel</b> and advise every holder; <b>add and drop segments</b>; sweep <b>ticketing time limits</b>.</li>
+          <li><b>Interline and codeshare</b>: marketing and operating carriers each hold their record and point at each other's locators.</li>
+          <li><b>Queues</b> for confirmations, waitlists, unables, schedule changes, ticketing and divergence; <b>IROPS</b> rebooking that asks and waits.</li>
+          <li><b>Availability</b> as claims with age and provenance, broadcast and consumed.</li>
+          <li><b>Special services</b> carried and honoured at the airport: <span class="mono">WCHR WCHS WCHC UMNR INFT CHLD CBBG VGML DOCS MEDA BLND DEAF</span> and more.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What a DCS does, and it does</h3>
+        <ul>
+          <li>Opens the flight from the name list; <b>checks in</b> with seat assignments by cabin and bag tags; applies <b>ADL</b> amendments.</li>
+          <li><b>Boards</b>, closes the counter and the door on the clock; produces <b>PFS, PTM, PSM, ETL, LDM, CPM</b> to their addresses.</li>
+          <li><b>Load control</b> by the AHM 560/565 index method, a legal <b>loadsheet</b> per departure.</li>
+          <li>Reconciles bags reported loaded (<b>BPM</b>) against tags issued (<b>BSM</b>); <b>offloads</b> on cancellation.</li>
+          <li>Derives <b>MVT</b> from the aircraft's OOOI reports; files the <b>flight plan</b> and hears the towers back.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What a switch does, and it does</h3>
+        <ul>
+          <li>Terminates hundreds of circuits; <b>relays by address line</b> and UNB recipient to every addressee named.</li>
+          <li><b>Captures before interpreting</b>; keeps possible duplicates marked; sequence gaps and repeats counted per peer.</li>
+          <li><b>Spools</b> before acknowledging; <b>redelivers</b> with backoff when a link comes back; a peer that stops reading is refused, never stalled behind.</li>
+          <li><b>Rate limits</b> per peer with a shared cap; a <b>lease</b> for standby takeover; hot reload of peers; retention by daily partition.</li>
+          <li>Peaks above <b>16,000 messages a second</b> on one 4-vCPU machine under the world's departure banks.</li>
+        </ul>
+      </div>
+    </div>
+    <h3 style="margin-top:28px">The API</h3>
+    <div class="table-wrap"><table>
+      <tr><th>records</th><td class="mono">POST /api/book · GET /api/pnrs · GET /api/pnr/{locator} · POST /api/pnr/{locator}/ticket · /emd · /split · /cancel</td></tr>
+      <tr><th>messages</th><td class="mono">GET /api/messages · GET /api/message/{id} · POST /api/message/{id}/replay · GET /api/stream</td></tr>
+      <tr><th>selling</th><td class="mono">GET /api/availability · GET /api/flights · GET /api/journeys · POST /ndc</td></tr>
+      <tr><th>work</th><td class="mono">GET /api/queues · GET /api/queue/{name} · POST /api/queue/item/{id}/work</td></tr>
+      <tr><th>carriers</th><td class="mono">GET /api/carrier/{designator}/pnrs · GET /api/carrier/{designator}/inventory · GET /api/insights</td></tr>
+      <tr><th>operating</th><td class="mono">GET /healthz · GET /readyz · GET /metrics · GET /api/status · POST /api/admin/retire</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section id="wire">
+  <div class="wrap">
+    <div class="eyebrow">the wire</div>
+    <h2>Speaks what the industry actually sends</h2>
+    <p class="lead">Wire syntax is exact; message grammar is a profile. The envelope layers are strict about what they validate, because ISO 9735 and the Type B envelope are universal. What sits above them varies by carrier and bilateral agreement, so those layers are ordered recognisers you replace per link without forking anything. An unknown message still decodes at the syntax layer, so it can be captured, routed and replayed even when nothing above knows what it means.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Type B and AIRIMP <span class="tag spec">envelope specified</span></h3>
+        <p>The teletype format the SITA and ARINC store-and-forward networks carry.</p>
+        <ul>
+          <li><b>Envelope</b>: priority and address lines, origin line, character repertoires, the 4 KB cap and possible-duplicate marking from IATA's public Type B whitepaper, edited textually so raw bytes are never regenerated.</li>
+          <li><b>AIRIMP grammar</b> as an extensible recogniser profile: sells, replies (KK, US, UC, UN, NO), cancels, name and segment changes, SSRs and OSIs, ticket numbers, locators exchanged both ways.</li>
+          <li><b>Long items fold</b> at 63 characters and parts paginate at 60 lines, because a family of four on a filled 737 overran both.</li>
+          <li><b>Relay by address line</b>: one message reaches every addressee it names.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>UN/EDIFACT and PADIS <span class="tag spec">syntax specified</span></h3>
+        <p>ISO 9735 interchanges carrying IATA PADIS messages such as PAOREQ and PAORES, with CONTRL sent and consumed.</p>
+        <ul>
+          <li><b>Syntax</b>: UNA service characters, release characters, repetitions, envelope validation, fuzzed round trips.</li>
+          <li><b>PADIS</b> as a segment-handler profile; the free PNRGOV implementation guide corrected four bugs whose tests had encoded the same guess as the code, and describes how a divided booking is represented (EQN, RCI).</li>
+          <li><b>Both dialects settle</b> the same booking: a carrier asked over EDIFACT and one over Type B, each answering separately and each returning its own locator.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>MATIP <span class="tag spec">RFC 2351</span></h3>
+        <p>The airline transport for teletype over IP: packet format and the Type B session handshake, for the share of the world that dials in that way.</p>
+      </div>
+      <div class="card">
+        <h3>NDC <span class="tag spec">schemas public</span></h3>
+        <p>IATA order messages over HTTP: create, retrieve, cancel and the order view, mapped onto the same record store as the teletype and EDIFACT traffic. Payloads carrying card numbers are refused before capture; there is no encryption at rest.</p>
+      </div>
+      <div class="card">
+        <h3>Availability <span class="tag inf">AVS inferred</span></h3>
+        <p>Availability Status messages as a per-link profile, feeding a cache in which every belief carries its age and where it came from. A status older than the trust window stops being evidence and the booking falls back to asking. Free sale where the cache offers it, a request to the carrier where it does not.</p>
+      </div>
+      <div class="card">
+        <h3>Schedules <span class="tag inf">SSIM inferred</span></h3>
+        <p>SSM and ASM schedule messages as an extensible profile; SSIM parsing. A cancellation as ASM reaches distribution and the airport, and the bookings under a marketing carrier's code are told under that code.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="records">
+  <div class="wrap">
+    <div class="eyebrow">records and selling</div>
+    <h2>Holds the record and does things to it</h2>
+    <p class="lead">The passenger name record is an event-sourced projection with optimistic concurrency: every change is an event naming the message that caused it, a write carries the version it read, and a stale write is refused rather than allowed to overwrite what it never saw. A gateway and a carrier can be modifying one record at the same instant; that is normal.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>The pipeline</h3>
+        <p><b>capture ▸ classify ▸ decode ▸ dedupe ▸ apply ▸ queue ▸ respond.</b> Raw bytes are made durable before anything interprets them, so a parser fix can be replayed onto traffic that already failed instead of asking a partner to retransmit. Unrecognised lines become fragments on the record; undecodable messages go to the dead-letter queue with bytes intact. Nothing leaves the system.</p>
+      </div>
+      <div class="card">
+        <h3>Booking</h3>
+        <ul>
+          <li><b>Sell</b> one or many segments across carriers, in either dialect, with SSRs, contacts, received-from and channel; the record carries every carrier's locator for the same booking.</li>
+          <li><b>Answers</b> are what the carriers said: HK held, HL waitlisted, UC refused and the record cancelled behind it, UN when the requester's schedule is wrong.</li>
+          <li><b>Locators</b> from a keyed permutation per system, so filled and live records cannot collide.</li>
+          <li><b>Pricing</b> at booking time against the gateway's tariff: fare basis per segment, amounts on the record.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Documents</h3>
+        <ul>
+          <li><b>Tickets</b> issued per passenger with coupons per segment, numbers with airline code and check digit (advisory, because public sources disagree), and ticket control exchanged with the carrier flying the passenger.</li>
+          <li><b>EMDs</b>, standalone and associated, with the coupon status vocabulary corrected by the free EMD guide.</li>
+          <li><b>Ticket-not-advised</b> and every other gap a partner leaves lands on the divergence queue, named.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Changing the record</h3>
+        <ul>
+          <li><b>Cancel</b> a booking and tell everyone holding it; a carrier that cannot be reached is a queue item, not silence.</li>
+          <li><b>Divide</b> one booking into two, seats going with the passengers, each carrier still holding one record until advised (the AIRIMP divide message itself is the most expensive missing document).</li>
+          <li><b>Add and drop segments</b>, including a marketing carrier forwarding a confirmed codeshare sell to the operator as the interline sell it is.</li>
+          <li><b>Ticketing deadlines</b> swept by time: an unticketed booking cancels when its limit passes.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Work queues</h3>
+        <p>Confirmation, waitlist, unable, schedule change, ticketing and divergence queues, with placement by the pipeline, a time-based sweeper for silence (a request nobody answered, a deadline that passed), counts per queue, and an external-publisher seam.</p>
+      </div>
+      <div class="card">
+        <h3>Irregular operations</h3>
+        <p>The IROPS engine works the schedule-change queue the way a desk does: the next flights over the same city pair, own metal first, free sale where the cache offers it and a request where it does not, each request awaited until the carrier answers. A confirmed seat drops the dead leg with a real sell and a real cancel on the wire; a waitlist is kept and named; what nothing can carry stays on the queue for a person.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="money">
+  <div class="wrap">
+    <div class="eyebrow">fares and inventory</div>
+    <h2>Prices the trip, controls the seats</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>pkg/fare <span class="tag inf">structure inferred · data none</span></h3>
+        <p>The structure of a filing, and no fare of its own: ATPCO's are licensed, so callers supply a tariff.</p>
+        <ul>
+          <li><b>Filings</b> per market and class with a fare basis; <b>rules</b> for advance purchase, minimum and maximum stay, seasons, change and refund fees.</li>
+          <li><b>Taxes</b> by kind: percentage, per segment, per ticket, per enplanement.</li>
+          <li><b>Passenger types</b> ADT, CHD and INF at their discounts.</li>
+          <li><b>Pricing</b> sells each segment under the cheapest fare whose rules the trip meets as of the purchase date, and says why when nothing does.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>pkg/inventory <span class="tag spec">method specified</span></h3>
+        <p>Leg-based seat control, the textbook kind; the numbers are the caller's.</p>
+        <ul>
+          <li><b>Cabins per leg</b> keyed by carrier, flight, date, boarding point and compartment, with booking classes mapped onto the cabins the aircraft has.</li>
+          <li><b>Nested class authorisations</b>: a full cabin waitlists, a closed class with seats still in the cabin refuses, the last seats go at the higher fares.</li>
+          <li><b>Waitlists</b> a tenth of the cabin deep, at least two; overrides per class.</li>
+          <li><b>Rebuilt from the book of record</b> at boot, because anything that remembers sold seats in memory oversells after a restart. Publishes per-carrier sold, waitlisted and full-cabin gauges and counts every answer by status.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="airport">
+  <div class="wrap">
+    <div class="eyebrow">the airport and the aircraft</div>
+    <h2>Closes the flight, and hears it fly</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Reservations to the airport <span class="tag inf">PNL/ADL inferred, closely</span></h3>
+        <p>The passenger name list at T−180 in as many parts as it takes, the additions and deletions list at T−60, per-passenger elements naming who they belong to (a child, a cabin bag with its own seat), hyphenated ticket numbers, and pagination by rendered lines rather than by item.</p>
+      </div>
+      <div class="card">
+        <h3>Departure control <span class="tag inf">practices inferred from worked examples</span></h3>
+        <ul>
+          <li><b>The manifest</b> opened from the name list; check-in in waves with real seat assignments by cabin and bag tags to sortation (BSM), then bags reported loaded from the hold (BPM).</li>
+          <li><b>Boarding and close</b>: the counter closes at 45, the gate boards from 30, the door closes at 10, and the airport says so: PFS final sales, PTM transfers, PSM special services, ETL the ticket list, LDM load and CPM container-pallet, to the addresses that receive them.</li>
+          <li><b>Load control</b>: the AHM 560/565 index method with a representative fleet, producing a legal loadsheet with fuel, trim and limits.</li>
+          <li><b>Cancellation</b> offloads whoever had checked in and pulls their bags; the manifest is let go at the hour it would have landed.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Movements and datalink <span class="tag inf">AHM 780 · ARINC 620, from published tables</span></h3>
+        <ul>
+          <li><b>ACARS OOOI</b> out, off, on, in, as a datalink provider forwards them to the airline.</li>
+          <li><b>MVT/MVA/DIV</b> derived from the reports rather than asserted: departures, arrivals, delays with their codes, diversions to the field really landed at.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Air traffic services <span class="tag spec">Annex 10 · Doc 4444 via FAA reproductions</span></h3>
+        <ul>
+          <li><b>AFTN envelope</b>: priority, eight-letter addressee indicators, origin, ZCZC and NNNN, tested against the Annex's own example.</li>
+          <li><b>ATS messages</b>: FPL, DEP, ARR, DLA, CNL, CHG, so a flight plan is filed with the towers and their DEP and ARR come back.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="shot"><img src="the-flight.jpg" alt="The flight panel in wholesky, showing what departure control produced for one flight: name list parts, seat map, load and loadsheet, flight plan and towers' replies, manifest"></div>
+    <p class="caption">What one departure's closure produced, as wholesky shows it: everything here came out of jetway's departure-control, movement and AFTN packages.</p>
+  </div>
+</section>
+
+<section id="operate">
+  <div class="wrap">
+    <div class="eyebrow">operating it</div>
+    <h2>Built to be run, not only read</h2>
+    <p class="lead">One assembly, <code>pkg/node</code>, built by both <code>jetwayd</code> and the scenario suite, so what the tests drive is what the binary runs. Everything under <code>pkg/</code> is importable, which is how wholesky hosts 518 gateways in one process.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Ingress and identity</h3>
+        <ul>
+          <li><b>Listeners</b>: framed TCP, MATIP, HTTPS with mutual TLS, and a file drop.</li>
+          <li><b>Identity</b> comes from the certificate presented or the circuit arrived on, never from a name asserted.</li>
+          <li><b>Rate limits</b> pace each peer's reader so the partner's own circuit pushes back, with a shared cap per ingress so one flooding peer cannot take the others' share.</li>
+          <li><b>Outbox per link</b>: a bounded queue and a writer goroutine, so a read loop never waits on a peer's window; a peer that stops reading gets refusals, not a stall. Frames sent in the same burst as a hello are kept.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Durability</h3>
+        <ul>
+          <li><b>Spool</b>: raw bytes fsynced locally before the partner is acknowledged; a drainer moves them into the store and retries for as long as it takes. Bounded; a full spool refuses rather than promises.</li>
+          <li><b>Store</b>: append-only message log and event-sourced records, in memory or Postgres. Records partitioned by retirement day; the day's partitions are dropped when it wraps; a partition that cannot be created never stops a write. Bulk load with COPY.</li>
+          <li><b>Egress</b> with backoff and restart recovery; redelivery when a link comes back.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Running it for real</h3>
+        <ul>
+          <li><b>A lease</b> so a standby node takes over when the holder stops renewing, and releases after a drain.</li>
+          <li><b>Readiness</b> that pings the store and fails while standing by; drains that wait for in-flight work.</li>
+          <li><b>Hot peer reload</b> on SIGHUP; peers keyed by name with format, transport and addresses.</li>
+          <li><b>Retention</b>: <code>POST /api/admin/retire</code> and <code>jetwayctl retire --before</code>.</li>
+          <li><b>Metrics</b> in Prometheus exposition with no client library; OpenTelemetry tracing with a hand-rolled OTLP/JSON exporter. A production plan for GCP is in <code>docs/production-gcp.md</code>.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>The console</h3>
+        <ul>
+          <li><b>Message flow</b>: every link, every message on the tape, opened and read field by field, raw bytes beside the decode.</li>
+          <li><b>Records</b>: found by who is travelling; interline marked; their locators; status as the carriers said it; the fare card with base, taxes, total and each passenger's fare bases.</li>
+          <li><b>Queues</b>: confirmations, refusals, waitlists, and the divergence queue naming each gap.</li>
+          <li><b>Insights</b>: selling, documents, records and traffic. <b>Departures</b>: a flight mid-check-in, its manifest and seat map, and the closure's messages.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>The command line</h3>
+        <ul>
+          <li><code>jetwayd</code> the gateway, with three simulated carriers and the console at :8080 by default; relay mode makes it a switch.</li>
+          <li><code>jetwayctl decode captured.tty</code> for any captured message; <code>jetwayctl retire</code> for retention.</li>
+          <li><code>jetwayload</code> runs the scenario suite concurrently and reports latency.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Tested how</h3>
+        <ul>
+          <li>Fixtures written by hand from the spec; fuzzed round trips on every codec; conformance against both store backends.</li>
+          <li>End-to-end scenarios through the real assembly on real TCP; the load driver reuses them.</li>
+          <li>A new test counts only once it has been watched to fail against the old behaviour.</li>
+          <li>wholesky is the load test: a day of the world at warp 1 with an invariant suite as the pass criterion.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="standing">
+  <div class="wrap">
+    <div class="eyebrow">the honest table</div>
+    <h2>What is specified, and what is inferred</h2>
+    <p class="lead">Most of these formats are defined in paid IATA publications that were not bought. That is not a reason to guess quietly; it is a reason to say which layer is which.</p>
+    <div class="legend"><span class="tag spec">specified</span> the document is public and conformance is checked · <span class="tag inf">inferred</span> built from free reproductions and worked examples · <span class="tag none">no data</span> structure only</div>
+    <div class="table-wrap"><table>
+      <tr><th>layer</th><th>standing</th><th>source</th></tr>
+      <tr><td class="mono">edifact · CONTRL · matip</td><td><span class="tag spec">specified</span></td><td>ISO 9735, RFC 2351</td></tr>
+      <tr><td class="mono">typeb limits · PDM</td><td><span class="tag spec">specified</span></td><td>IATA's public Type B whitepaper</td></tr>
+      <tr><td class="mono">padis</td><td><span class="tag spec">partly</span></td><td>the free PNRGOV implementation guide</td></tr>
+      <tr><td class="mono">ndc</td><td><span class="tag spec">specified</span></td><td>public schemas and carrier examples</td></tr>
+      <tr><td class="mono">aftn</td><td><span class="tag spec">specified</span></td><td>ICAO Annex 10 Vol II</td></tr>
+      <tr><td class="mono">ats</td><td><span class="tag spec">specified</span></td><td>FAA reproductions of Doc 4444 forms</td></tr>
+      <tr><td class="mono">inventory</td><td><span class="tag spec">method specified</span></td><td>leg-based nested authorisations; numbers are the caller's</td></tr>
+      <tr><td class="mono">dcs load control</td><td><span class="tag spec">method specified</span></td><td>AHM 560/565 arithmetic; representative fleet data</td></tr>
+      <tr><td class="mono">mvt · acars · PSM PTM LDM CPM</td><td><span class="tag inf">inferred, closely</span></td><td>OAG tables and verbatim examples; airports' reproductions of the practices</td></tr>
+      <tr><td class="mono">airimp · avs · ssim · PFS · ETL</td><td><span class="tag inf">inferred</span></td><td>profiles, not conformance; AIRIMP and SSIM are paywalled</td></tr>
+      <tr><td class="mono">fare</td><td><span class="tag none">structure only</span></td><td>how ATPCO filings and tickets work; the filings are licensed and the package carries none</td></tr>
+    </table></div>
+    <p class="prose muted" style="margin-top:18px">The roadmap names each paid document and what its absence costs, so they are one procurement decision rather than six unrelated apologies. The AIRIMP divide message is the most expensive single absence: it is why a split booking cannot be advised to its carriers.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>jetway is MIT-licensed, by <a href="https://github.com/adamf">Adam Fletcher</a>. It is not affiliated with IATA, SITA, ARINC or any carrier, and nothing in it is a conformance claim.</div>
+    <div class="mono"><a href="https://github.com/adamf/jetway">jetway</a> · <a href="https://jetway-demo.fly.dev">demo</a> · <a href="index.html">wholesky</a></div>
+  </div>
+</footer>
+</body>
+</html>
