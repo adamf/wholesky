@@ -41,6 +41,7 @@ const pageHTML = `<!doctype html>
   <span>links <i id="hlinks">—</i></span>
   <span>messages <i id="hmsgs">—</i></span>
   <span>bookings <i id="hbkg">—</i></span>
+  <span>sold <i id="hrev">—</i></span>
   <span>movements <i id="hmvt">—</i></span>
   <span>uptime <i id="hup">—</i></span>
   <div class="nav"><a href="/eye">globe →</a><a href="/fleet">fleet →</a><a href="/">switch console →</a></div>
@@ -60,6 +61,9 @@ const pageHTML = `<!doctype html>
   <div class="card"><h3>bookings / second</h3><div class="big" id="b-bkg"></div>
     <canvas id="c-bkg"></canvas>
     <div class="legend"><i style="color:#5fd38d">record events at the gds</i></div></div>
+  <div class="card"><h3>sold / second</h3><div class="big" id="b-rev"></div>
+    <canvas id="c-rev"></canvas>
+    <div class="legend"><i style="color:#e0b93c">what bookings were priced at, synthetic tariff</i></div></div>
   <div class="card"><h3>aircraft airborne</h3><div class="big" id="b-air"></div>
     <canvas id="c-air"></canvas>
     <div class="legend"><i style="color:#e8eef4">flown by movement messages</i></div></div>
@@ -126,6 +130,9 @@ async function poll(){
     ["#5f96be","#e0b93c","#5fd38d","#e05a5a","#b48fd9","#8fd9c4","#f0a0c8","#7fd0ff","#ffd27f"],{maxLabel:1});
   $("b-bkg").innerHTML=last(S.bookings).toFixed(1)+" <small>/s</small>";
   drawSeries($("c-bkg"),[S.bookings],["#5fd38d"],{maxLabel:1});
+  $("b-rev").innerHTML="$"+Math.round(last(S.revenue||[0])).toLocaleString()+" <small>/s</small>";
+  drawSeries($("c-rev"),[S.revenue||[]],["#e0b93c"],{maxLabel:1});
+  if(d.totals.revenue!==undefined) $("hrev").textContent="$"+Math.round(d.totals.revenue/100).toLocaleString();
   $("b-air").innerHTML=last(S.airborne).toFixed(0)+" <small>aircraft</small>";
   drawSeries($("c-air"),[S.airborne],["#e8eef4"],{maxLabel:1});
   $("b-mvt").innerHTML=last(S.movements).toFixed(0)+" <small>/s</small>";
