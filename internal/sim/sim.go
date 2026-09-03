@@ -469,6 +469,11 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 			}
 		}()
 	}
+	// The plan settles as the day goes: every few minutes over what the
+	// books hold now, so a machine that only holds agents' books -- a
+	// distribution system's -- builds its statement through the day rather
+	// than at the wrap alone.
+	go s.settleLoop(ctx, 5*time.Minute)
 	return s, nil
 }
 
@@ -1504,6 +1509,28 @@ func (s *Sim) Settle(ctx context.Context) {
 	s.settleMu.Unlock()
 	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
 		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown, "unverified", sum.Unverified)
+}
+
+// settleLoop re-runs the plan on a timer; a run still going is not
+// doubled.
+func (s *Sim) settleLoop(ctx context.Context, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	var running atomic.Bool
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if !running.CompareAndSwap(false, true) {
+			continue
+		}
+		go func() {
+			defer running.Store(false)
+			s.Settle(ctx)
+		}()
+	}
 }
 
 // SetSettlement installs a settlement view assembled elsewhere: the core's
