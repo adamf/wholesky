@@ -49,17 +49,17 @@ type link interface {
 type Tenant struct {
 	// interline offers other carriers' flights to connect onto; pendingThrough
 	// are through check-in requests awaiting their DCRCKA.
-	interline      func(f world.Flight) []world.Flight
-	border         string
-	overrides      *equipmentOverrides
-	substituted    map[dcs.Key]string
-	countryOf      func(iata string) string
-	apisSent       map[dcs.Key]int
+	interline   func(f world.Flight) []world.Flight
+	border      string
+	overrides   *equipmentOverrides
+	substituted map[dcs.Key]string
+	countryOf   func(iata string) string
+	apisSent    map[dcs.Key]int
 	// pnrgovSent is how many records the last PNR push to the state named,
 	// per flight; retimed is the day's time change on a flight, when the
 	// carrier announced one.
-	pnrgovSent map[dcs.Key]int
-	retimed    map[dcs.Key]string
+	pnrgovSent     map[dcs.Key]int
+	retimed        map[dcs.Key]string
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
 	Carrier        world.Carrier
@@ -221,19 +221,16 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	}
 	inv := inventory.New(c.Designator, capacity)
 	inv.Publish(metrics.Default)
-	// Revenue management, leg-based: each cabin sells its classes under
-	// nested authorisations, so the last seats go at the higher fares.
-	inv.Levels = func(carrier, flightNum, wireDate, board, compartment string) []inventory.Level {
-		comps, ok := capacity(carrier, flightNum, wireDate, board)
-		if !ok {
-			return nil
-		}
-		var out []inventory.Level
-		for _, l := range tariff.Authorizations(compartment, comps[compartment]) {
-			out = append(out, inventory.Level{Class: l.Class, Authorized: l.Authorized})
-		}
-		return out
-	}
+	// Revenue management, leg-based: a controller sets each cabin's nested
+	// authorisations by EMSR-b from the tariff's demand forecast, so the
+	// last seats go at the higher fares and the deep discounts close as
+	// the flight fills. The forecast is static here; the controller
+	// re-optimises on every question, so a forecaster that read the clock
+	// would move the ladder through the booking curve.
+	rm := &inventory.Controller{Capacity: capacity, Forecast: func(carrier, flightNum, wireDate, board, compartment string, seats int) []inventory.ClassDemand {
+		return tariff.Forecast(compartment, seats)
+	}}
+	inv.Levels = rm.Levels
 
 	// The switch identifies this tenant by the listener it dialled, the way
 	// a real circuit identifies its subscriber. Which client dials depends on

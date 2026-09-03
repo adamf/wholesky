@@ -14,9 +14,11 @@ package tariff
 
 import (
 	"hash/fnv"
+	"math"
 	"strings"
 
 	"github.com/adamf/jetway/pkg/fare"
+	"github.com/adamf/jetway/pkg/inventory"
 
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -121,6 +123,50 @@ func (t *Synthetic) TaxesFor(carrier string) []fare.Tax {
 		{Code: "AY", Kind: fare.PerTicket, Amount: usd(560)},
 		{Code: "XF", Kind: fare.PerEnplanement, Amount: usd(450), Airports: t.airports},
 	}
+}
+
+// Forecast is the revenue management forecaster's view of a cabin: the
+// demand still to come by class, with the fare each sells at, for EMSR-b
+// to set the authorisations from. The class mix is the one the world's
+// demand draws its parties from (two in a hundred first, nine business,
+// nineteen full economy, twenty-five in the middle buckets, the rest in
+// the deep discounts), the total a little above the cabin -- a flight
+// with less demand than seats needs no managing -- and the spread a
+// Poisson's and a quarter, because parties travel together. Only the
+// fare ratios matter to the method, so the ladder's shares of full fare
+// stand in for the market's fares.
+func Forecast(compartment string, seats int) []inventory.ClassDemand {
+	type mix struct {
+		class string
+		share float64
+	}
+	var m []mix
+	switch compartment {
+	case "F":
+		m = []mix{{"F", 1}}
+	case "C":
+		m = []mix{{"J", 1.0 / 3}, {"C", 1.0 / 3}, {"D", 1.0 / 3}}
+	default:
+		// 19 : 25 : 45 across Y, the middle three and the deep six.
+		m = []mix{{"Y", 19.0 / 89}}
+		for _, c := range []string{"B", "M", "H"} {
+			m = append(m, mix{c, 25.0 / 89 / 3})
+		}
+		for _, c := range []string{"Q", "K", "L", "V", "S", "N"} {
+			m = append(m, mix{c, 45.0 / 89 / 6})
+		}
+	}
+	fareOf := map[string]float64{}
+	for _, s := range ladder {
+		fareOf[s.class] = s.share
+	}
+	total := float64(seats) * 1.1
+	out := make([]inventory.ClassDemand, 0, len(m))
+	for _, x := range m {
+		mean := total * x.share
+		out = append(out, inventory.ClassDemand{Class: x.class, Fare: fareOf[x.class], Mean: mean, StdDev: math.Sqrt(mean) * 1.25})
+	}
+	return out
 }
 
 // Authorizations is the class ladder's nested authorisation levels for a

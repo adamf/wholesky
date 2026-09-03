@@ -353,9 +353,10 @@ connecting passenger misses the flight when the inbound is late enough;
 every carrier answers sells from the aircraft's own seats (jetway's
 `pkg/inventory`: cabins from the fleet's layout, pooled per leg, rebuilt
 from the book of record at every start and purge), under a nested class
-ladder, so a filled 737 confirms what is left, closes its cheap classes
-while full fare is still open, waitlists the next party and refuses after
-that, and the availability it broadcasts says how many seats remain;
+ladder set by an EMSR-b revenue management controller from the tariff's
+demand forecast, so a filled 737 confirms what is left, closes its cheap
+classes while full fare is still open, waitlists the next party and
+refuses after that, and the availability it broadcasts says how many seats remain;
 every booking is priced before it sells against a fare filing derived from
 the schedule (jetway's `pkg/fare`: a ladder of classes per market with
 basis codes, advance-purchase and stay rules, change fees and refundability,

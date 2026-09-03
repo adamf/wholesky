@@ -30,14 +30,17 @@ between carriers on interline itineraries. The recorded day's 7,000
 codeshares are billed between the marketing and operating carriers. This
 is a batch system of files, not messages, and it is where the money is.
 
-**Revenue management.** The inventory sells while a cabin has a seat. A
-real carrier sells by booking class with authorisation levels that yield
-management moves every night against demand forecasts, and closes cheap
-classes on flights that are filling. The inventory has the hooks
-(`pkg/inventory` pools by cabin; classes map onto cabins) but no nesting
-and no controller. Adding class authorisations and a nightly optimiser
-would make availability broadcasts change through the day the way they
-do, and give the filler a reason for the fare mix it invents.
+**Revenue management.** Done as far as the method goes (jetway v0.1.67):
+`pkg/inventory` sells under nested class authorisations, and an EMSR-b
+controller (Belobaba's heuristic, the textbook one) sets them from a
+demand forecast by class, re-optimised on every question. Every carrier
+in the world now runs it, with the tariff's forecast: the class mix the
+demand draws from, total demand a tenth above the cabin, so the deep
+discounts close while full fare sells to the seat. What is still missing
+is the forecaster: the forecast is static, where a real system reads
+history and the booking curve and moves the ladder through the days
+before departure; and the network kind of RM (bid prices over an O&D)
+rather than leg-based.
 
 **Interline through check-in (IATCI).** Done (jetway v0.1.61-63, `pkg/iatci`):
 one connection in four crosses carriers, the first carrier's departure

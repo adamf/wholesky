@@ -309,6 +309,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <ul>
           <li><b>Cabins per leg</b> keyed by carrier, flight, date, boarding point and compartment, with booking classes mapped onto the cabins the aircraft has.</li>
           <li><b>Nested class authorisations</b>: a full cabin waitlists, a closed class with seats still in the cabin refuses, the last seats go at the higher fares.</li>
+          <li><b>Revenue management</b>: an EMSR-b controller sets the authorisations from a demand forecast by class (fare, mean, spread), pooling the classes above each discount and protecting seats until the marginal seat is worth less than the discount in hand; re-optimised on every question, so a forecaster that reads the clock moves the ladder through the booking curve. Tested against the normal table, not the code.</li>
           <li><b>Waitlists</b> a tenth of the cabin deep, at least two; overrides per class.</li>
           <li><b>Rebuilt from the book of record</b> at boot, because anything that remembers sold seats in memory oversells after a restart. Publishes per-carrier sold, waitlisted and full-cabin gauges and counts every answer by status.</li>
         </ul>

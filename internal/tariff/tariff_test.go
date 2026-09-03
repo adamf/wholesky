@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/adamf/jetway/pkg/fare"
+	"github.com/adamf/jetway/pkg/inventory"
 
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -48,5 +49,39 @@ func TestLadderPricesFromDistanceAndCloses(t *testing.T) {
 	au := Authorizations("Y", 174)
 	if au[0].Class != "Y" || au[0].Authorized != 174 || au[len(au)-1].Class != "N" || au[len(au)-1].Authorized != 31 {
 		t.Errorf("authorisations: %+v", au)
+	}
+}
+
+// The forecast fed to EMSR-b closes the deep discounts on a 737 while
+// full fare sells to the seat and the ladder nests.
+func TestForecastClosesTheDeepDiscounts(t *testing.T) {
+	fc := Forecast("Y", 174)
+	if len(fc) != 10 || fc[0].Class != "Y" || fc[0].Fare != 1 || fc[9].Class != "N" {
+		t.Fatalf("forecast: %+v", fc)
+	}
+	var total float64
+	for _, c := range fc {
+		total += c.Mean
+	}
+	if total < 190 || total > 193 {
+		t.Errorf("demand a tenth above the cabin: %.1f", total)
+	}
+	lv := inventory.EMSRb(174, fc)
+	if lv[0].Class != "Y" || lv[0].Authorized != 174 {
+		t.Errorf("Y to the seat: %+v", lv)
+	}
+	for i := 1; i < len(lv); i++ {
+		if lv[i].Authorized > lv[i-1].Authorized {
+			t.Errorf("does not nest: %+v", lv)
+		}
+	}
+	if n := lv[len(lv)-1]; n.Class != "N" || n.Authorized > 17 {
+		t.Errorf("the deepest discount is nearly shut: %+v", lv)
+	}
+	if b := lv[1]; b.Class != "B" || b.Authorized < 130 {
+		t.Errorf("the class under full fare stays wide open: %+v", lv)
+	}
+	if c := Forecast("C", 48); len(c) != 3 || c[0].Class != "J" {
+		t.Errorf("business cabin: %+v", c)
 	}
 }

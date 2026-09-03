@@ -1367,7 +1367,9 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	if _, err := s.Book(ctx, f, "N", 0, "TOOLATE"); err == nil {
 		t.Errorf("a 45-day advance purchase fare sold thirty days out")
 	}
-	// The carrier's ladder: N may take 18% of the cabin, then it is unable while Y is open.
+	// The carrier's ladder is what revenue management set by EMSR-b from
+	// the tariff's forecast: N may take its authorisation, then it is
+	// unable while Y is open.
 	tn := s.Tenants[f.Carrier]
 	day := strings.ToUpper(s.BookingDate.Format("02Jan"))
 	ask := func(class string, n int) string {
@@ -1379,9 +1381,19 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 		}
 		return out[p.Segments[0].Key()]
 	}
-	nAuth := int(float64(f.Seats)*0.18 + 0.5)
-	if got := ask("N", nAuth); got != "KK" {
-		t.Fatalf("N up to its authorisation should confirm: %s (%d seats)", got, nAuth)
+	nAuth := 0
+	for _, l := range tn.Inventory.Levels(f.Carrier, f.Number, day, f.From, "Y") {
+		if l.Class == "N" {
+			nAuth = l.Authorized
+		}
+	}
+	if nAuth >= f.Seats/2 {
+		t.Fatalf("revenue management left the deepest discount wide open: %d of %d", nAuth, f.Seats)
+	}
+	if nAuth > 0 {
+		if got := ask("N", nAuth); got != "KK" {
+			t.Fatalf("N up to its authorisation should confirm: %s (%d seats)", got, nAuth)
+		}
 	}
 	if got := ask("N", 1); got != "UC" {
 		t.Errorf("N past its authorisation should be unable, not waitlisted: %s", got)
