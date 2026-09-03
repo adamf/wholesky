@@ -262,8 +262,8 @@ type Sim struct {
 	DemCancelledLocs []string
 
 	// Demand's ledger, for the log line and the tests.
-	DemBooked, DemFailed, DemInterline          atomic.Int64
-	DemTicketed, DemCancelled, DemSplit, DemNDC atomic.Int64
+	DemBooked, DemFailed, DemInterline                       atomic.Int64
+	DemTicketed, DemCancelled, DemRefunded, DemSplit, DemNDC atomic.Int64
 
 	// Eye is the world's observer and map, mounted on the switch console.
 	Eye *eye.Eye

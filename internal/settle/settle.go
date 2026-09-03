@@ -53,9 +53,11 @@ type Statement struct {
 	Airline      string
 	File         *bsp.File
 	Transactions int
-	Gross        int64
-	Remittance   int64
-	Commission   int64
+	// Refunds is how many of the transactions are refunds.
+	Refunds    int
+	Gross      int64
+	Remittance int64
+	Commission int64
 	// Reconciliation: documents the plan reports that the carrier also
 	// holds, documents the plan reports that the carrier does not hold,
 	// documents the carrier holds that no agent reported, and documents
@@ -72,6 +74,7 @@ type Summary struct {
 	Day          time.Time            `json:"day"`
 	Airlines     int                  `json:"airlines"`
 	Transactions int                  `json:"transactions"`
+	Refunds      int                  `json:"refunds"`
 	Gross        int64                `json:"gross"`
 	Remittance   int64                `json:"remittance"`
 	Commission   int64                `json:"commission"`
@@ -87,6 +90,7 @@ type Summary struct {
 type Row struct {
 	Airline      string `json:"airline"`
 	Transactions int    `json:"transactions"`
+	Refunds      int    `json:"refunds"`
 	Gross        int64  `json:"gross"`
 	Remittance   int64  `json:"remittance"`
 	Commission   int64  `json:"commission"`
@@ -107,7 +111,7 @@ type View struct {
 func (s *Summary) AsView() View {
 	v := View{Summary: s}
 	for code, st := range s.Statements {
-		v.Rows = append(v.Rows, Row{Airline: code, Transactions: st.Transactions, Gross: st.Gross, Remittance: st.Remittance,
+		v.Rows = append(v.Rows, Row{Airline: code, Transactions: st.Transactions, Refunds: st.Refunds, Gross: st.Gross, Remittance: st.Remittance,
 			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, Unverified: st.Unverified,
 			File: "/settlement/" + code + ".hot"})
 	}
@@ -127,6 +131,7 @@ func Merge(day time.Time, views map[string]View) *Summary {
 			st := out.Statements[r.Airline]
 			st.Airline = r.Airline
 			st.Transactions += r.Transactions
+			st.Refunds += r.Refunds
 			st.Gross += r.Gross
 			st.Remittance += r.Remittance
 			st.Commission += r.Commission
@@ -143,6 +148,7 @@ func Merge(day time.Time, views map[string]View) *Summary {
 	for _, st := range out.Statements {
 		out.Airlines++
 		out.Transactions += st.Transactions
+		out.Refunds += st.Refunds
 		out.Gross += st.Gross
 		out.Remittance += st.Remittance
 		out.Commission += st.Commission
@@ -193,6 +199,9 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 				tx := transactionFor(rec, tk, ag, p)
 				k := key{al.Designator, ag.Designator}
 				sold[k] = append(sold[k], tx)
+				if r, ok := refundFor(tx, tk, day); ok {
+					sold[k] = append(sold[k], r)
+				}
 				if reported[al.Designator] == nil {
 					reported[al.Designator] = map[string]bool{}
 				}
@@ -245,7 +254,11 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 				reported[al.Designator][doc] = true
 				unverified[al.Designator]++
 				k := key{al.Designator, agent}
-				sold[k] = append(sold[k], transactionFor(rec, tk, ag, p))
+				tx := transactionFor(rec, tk, ag, p)
+				sold[k] = append(sold[k], tx)
+				if r, ok := refundFor(tx, tk, day); ok {
+					sold[k] = append(sold[k], r)
+				}
 			}
 		}
 	}
@@ -280,6 +293,9 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		st := Statement{Airline: al.Designator, File: f, Transactions: n, Unverified: unverified[al.Designator]}
 		for oi := range f.Offices {
 			for ti := range f.Offices[oi].Transactions {
+				if f.Offices[oi].Transactions[ti].Code == bsp.TransRefund {
+					st.Refunds++
+				}
 				tot := f.Offices[oi].Transactions[ti].Compute()
 				st.Gross += tot.Gross
 				st.Remittance += tot.Remittance
@@ -318,6 +334,7 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		sum.Statements[al.Designator] = st
 		sum.Airlines++
 		sum.Transactions += n
+		sum.Refunds += st.Refunds
 		sum.Gross += st.Gross
 		sum.Remittance += st.Remittance
 		sum.Commission += st.Commission
@@ -439,6 +456,31 @@ func transactionFor(rec *pnr.PNR, tk pnr.Ticket, ag Agent, p *Plan) bsp.Transact
 	}
 	tx.Payments = []bsp.Payment{{Type: bsp.PaymentCash, Amount: tot}}
 	return tx
+}
+
+// refundFor is the refund transaction a refunded document adds after its
+// sale: the same document with every amount reversed, dated when it was
+// refunded, so the commission the agent kept comes back with it. The
+// handbook has refunds reported with negative amounts and the commission
+// recalled positive, which the reversed signs give.
+func refundFor(sale bsp.Transaction, tk pnr.Ticket, day time.Time) (bsp.Transaction, bool) {
+	if !tk.Refunded() || tk.RefundedAt == nil || tk.RefundedAt.After(day.Add(24*time.Hour)) {
+		return bsp.Transaction{}, false
+	}
+	r := sale
+	r.Code = bsp.TransRefund
+	r.Issued = *tk.RefundedAt
+	r.Fare, r.Total, r.CommissionAmount = -sale.Fare, -sale.Total, 0
+	r.Taxes = nil
+	for _, t := range sale.Taxes {
+		r.Taxes = append(r.Taxes, bsp.Tax{Code: t.Code, Amount: -t.Amount})
+	}
+	r.Payments = nil
+	for _, pm := range sale.Payments {
+		r.Payments = append(r.Payments, bsp.Payment{Type: pm.Type, Amount: -pm.Amount})
+	}
+	r.Segments = nil
+	return r, true
 }
 
 func cabinOf(class string) string {

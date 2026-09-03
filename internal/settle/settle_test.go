@@ -84,3 +84,54 @@ func TestPlanGathersFromBothSidesAndReconciles(t *testing.T) {
 		t.Errorf("merged %+v", merged)
 	}
 }
+
+// A refunded document is reported twice: the sale, and a refund with every
+// amount reversed and dated when the money went back, so the plan's totals
+// net to nothing and the commission the agent kept comes back.
+func TestRefundedDocumentIsReportedAsARefund(t *testing.T) {
+	ctx := context.Background()
+	agent := store.NewMem()
+	rec := ticketedRecord("REFUND", "1G", "125", "2400000009", 50000)
+	at := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+	rec.Tickets[0].RefundedAt = &at
+	rec.Tickets[0].Coupons[0].Status = pnr.CouponRefunded
+	agent.CreatePNR(ctx, rec, nil)
+	p := &Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	sum, err := p.Run(ctx, time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC), []Agent{{Designator: "1G", Store: agent}}, []Airline{{Designator: "BA", Accounting: "125"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := sum.Statements["BA"]
+	if st.Transactions != 2 || st.Refunds != 1 || sum.Refunds != 1 {
+		t.Fatalf("sale and refund: %+v", st)
+	}
+	if st.Gross != 0 || st.Remittance != 0 || st.Commission != 0 {
+		t.Errorf("a same-day refund nets to nothing: gross %d remittance %d commission %d", st.Gross, st.Remittance, st.Commission)
+	}
+	var sale, refund *bsp.Transaction
+	for i := range st.File.Offices[0].Transactions {
+		tx := &st.File.Offices[0].Transactions[i]
+		if tx.Code == bsp.TransRefund {
+			refund = tx
+		} else {
+			sale = tx
+		}
+	}
+	if sale == nil || refund == nil {
+		t.Fatal("both transactions present")
+	}
+	if refund.Fare != -sale.Fare || refund.Total != -sale.Total || refund.Taxes[0].Amount != -sale.Taxes[0].Amount || !refund.Issued.Equal(at) || refund.Document != sale.Document {
+		t.Errorf("refund reverses the sale:\n sale %+v\n refund %+v", sale, refund)
+	}
+	if refund.CommissionAmount != -sale.CommissionAmount || refund.Payments[0].Remittance != -sale.Payments[0].Remittance {
+		t.Errorf("commission recalled and remittance reversed: sale %d/%d refund %d/%d", sale.CommissionAmount, sale.Payments[0].Remittance, refund.CommissionAmount, refund.Payments[0].Remittance)
+	}
+	// A refund dated after the day is not in this day's file.
+	late := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	rec.Tickets[0].RefundedAt = &late
+	agent.UpdatePNR(ctx, rec, rec.Version, nil)
+	sum, _ = p.Run(ctx, time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC), []Agent{{Designator: "1G", Store: agent}}, []Airline{{Designator: "BA", Accounting: "125"}})
+	if sum.Statements["BA"].Transactions != 1 {
+		t.Errorf("a later refund reported early: %+v", sum.Statements["BA"])
+	}
+}

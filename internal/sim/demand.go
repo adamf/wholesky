@@ -196,6 +196,13 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 	roll := rng.Intn(100)
 	switch {
 	case roll < 8:
+		// A ticketed booking's money goes back before the seats do: the
+		// refund the settlement plan reports, then the cancellation.
+		if rec, err := g.Store.GetPNR(ctx, locator); err == nil && rec.Ticketed() {
+			if _, err := g.GW.Refund(ctx, locator, gateway.RefundOptions{By: "demand", Reason: "traveller cancelled"}); err == nil {
+				s.DemRefunded.Add(1)
+			}
+		}
 		if _, err := g.GW.Cancel(ctx, locator, gateway.CancelOptions{
 			By: "demand", Reason: "traveller cancelled",
 		}); err == nil {

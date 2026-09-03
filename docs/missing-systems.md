@@ -46,11 +46,14 @@ from) and the operating carrier invoices the ticketing carrier the coupon's
 share less a nine per cent interline service charge, one invoice per pair
 of carriers, served at `/billing.json` and `/billing/<biller>-<billed>.json`
 and merged across machines like the settlement. Not IATA's IS-XML: the
-passenger record structures sit behind the SIS participation guide. Not
-done: the RET the agents send the plan, refunds and ADMs/ACMs as
-transactions, net reporting and card data, the Prorate Manual's provisos
-(minima, factors, special agreements), and rejections and billing memos
-between the carriers.
+passenger record structures sit behind the SIS participation guide. Refunds are
+done (jetway v0.1.78): a ticketed booking the traveller cancels is refunded
+first -- open coupons go back, used ones stay used -- and the plan reports
+the document again as a refund with every amount reversed, dated when the
+money went back, so the commission comes back with it. Not done: the RET
+the agents send the plan, ADMs/ACMs and exchanges as transactions, net
+reporting and card data, the Prorate Manual's provisos (minima, factors,
+special agreements), and rejections and billing memos between the carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):
 `pkg/inventory` sells under nested class authorisations, and an EMSR-b
