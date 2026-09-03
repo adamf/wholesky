@@ -41,6 +41,7 @@ import (
 	"github.com/adamf/wholesky/internal/fill"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/interline"
 	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/stats"
@@ -211,6 +212,7 @@ type Sim struct {
 	plan       settle.Plan
 	settleMu   sync.Mutex
 	settlement *settle.Summary
+	billing    *interline.Summary
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
 	// first, which is also the movement watcher.
 	GDSes       []*GDSNode
@@ -409,6 +411,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		// installed, and answers for this process's carriers otherwise.
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
+		mux.HandleFunc("GET /billing.json", s.serveBilling)
+		mux.HandleFunc("GET /billing/", s.serveInvoice)
 		mux.HandleFunc("GET /invariants.json", func(w http.ResponseWriter, r *http.Request) {
 			s.fedMu.RLock()
 			h := s.invHandler
@@ -520,6 +524,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		}
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
+			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
@@ -1226,8 +1231,10 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	s.rebuildLedger(ctx)
 	// The plan settles what was sold for the day: the advance sales the
 	// agents ticketed, handed to each airline as its HOT before the day
-	// flies, the way yesterday's sales reach an airline's accountants.
+	// flies, the way yesterday's sales reach an airline's accountants; and
+	// the carriers bill each other for the codeshare coupons.
 	s.Settle(ctx)
+	s.Bill(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -1252,6 +1259,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				s.rebuildInventories(ctx)
 				s.rebuildLedger(ctx)
 				s.Settle(ctx)
+				s.Bill(ctx)
 			}()
 		}
 		if cur-prev > maxCatchUp {
@@ -1541,8 +1549,82 @@ func (s *Sim) settleLoop(ctx context.Context, every time.Duration) {
 		go func() {
 			defer running.Store(false)
 			s.Settle(ctx)
+			s.Bill(ctx)
 		}()
 	}
+}
+
+// Bill runs the interline billing plan over the books this machine holds:
+// every ticketed coupon flown by one carrier on another's document,
+// prorated by mileage, less the service charge, as an invoice per pair.
+func (s *Sim) Bill(ctx context.Context) {
+	if len(s.GDSes) == 0 && len(s.Tenants) == 0 {
+		return
+	}
+	var books []interline.Book
+	for _, g := range s.GDSes {
+		books = append(books, interline.Book{Name: g.Designator, Store: g.Store})
+	}
+	for code, t := range s.Tenants {
+		books = append(books, interline.Book{Name: code, Store: t.Store})
+	}
+	p := &interline.Plan{ServiceCharge: 900, Accounting: s.accountingCode}
+	sum, err := p.Run(ctx, s.BookingDate, s.Manifest, books)
+	if err != nil {
+		s.log.Warn("interline billing failed", "err", err)
+		return
+	}
+	s.settleMu.Lock()
+	s.billing = sum
+	s.settleMu.Unlock()
+	s.log.Info("billed", "invoices", sum.Invoices, "coupons", sum.Coupons, "prorate", sum.Prorate, "service_charge", sum.ServiceCharge, "net", sum.Net)
+}
+
+// Billing is the latest interline billing summary, or nil before the first.
+func (s *Sim) Billing() *interline.Summary {
+	s.settleMu.Lock()
+	defer s.settleMu.Unlock()
+	return s.billing
+}
+
+// SetBilling installs a billing view assembled elsewhere: the core's merge.
+func (s *Sim) SetBilling(sum *interline.Summary) {
+	s.settleMu.Lock()
+	s.billing = sum
+	s.settleMu.Unlock()
+}
+
+func (s *Sim) serveBilling(w http.ResponseWriter, r *http.Request) {
+	sum := s.Billing()
+	if sum == nil {
+		http.Error(w, "no billing yet", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sum.AsView()) //nolint:errcheck
+}
+
+// serveInvoice hands out one pair's invoice, lines and all, proxying to
+// the machine that holds it when this one does not.
+func (s *Sim) serveInvoice(w http.ResponseWriter, r *http.Request) {
+	key := strings.ToUpper(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/billing/"), ".json"))
+	sum := s.Billing()
+	if sum == nil {
+		http.NotFound(w, r)
+		return
+	}
+	inv, ok := sum.ByPair[key]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if inv.Lines == nil && inv.Peer != "" {
+		if proxyPass(w, r, inv.Peer) {
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inv) //nolint:errcheck
 }
 
 // SetSettlement installs a settlement view assembled elsewhere: the core's

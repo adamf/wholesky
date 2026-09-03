@@ -37,10 +37,20 @@ is the report and is counted unverified. A caveat the numbers carry: the
 carriers' in-memory books are bounded (`-max-records`), so on the recorded
 day a large carrier's older records are evicted before the plan runs and
 show as documents the agent reported that the carrier does not hold --
-eviction, not a wire fault. Not done: the RET the agents send the plan,
-refunds and ADMs/ACMs as transactions, net reporting and card data, and
-interline billing -- the recorded day's 7,000 codeshares are still not
-prorated between the marketing and operating carriers.
+eviction, not a wire fault. Interline billing is done as far as the
+method goes (jetway v0.1.77 `pkg/prorate`, wholesky `internal/interline`):
+every ticketed coupon flown by one carrier on another's document -- the
+recorded day's 7,000 codeshares -- is prorated by mileage across the
+ticket's coupons (straight rate, the arithmetic the prorate manuals begin
+from) and the operating carrier invoices the ticketing carrier the coupon's
+share less a nine per cent interline service charge, one invoice per pair
+of carriers, served at `/billing.json` and `/billing/<biller>-<billed>.json`
+and merged across machines like the settlement. Not IATA's IS-XML: the
+passenger record structures sit behind the SIS participation guide. Not
+done: the RET the agents send the plan, refunds and ADMs/ACMs as
+transactions, net reporting and card data, the Prorate Manual's provisos
+(minima, factors, special agreements), and rejections and billing memos
+between the carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):
 `pkg/inventory` sells under nested class authorisations, and an EMSR-b
@@ -48,11 +58,13 @@ controller (Belobaba's heuristic, the textbook one) sets them from a
 demand forecast by class, re-optimised on every question. Every carrier
 in the world now runs it, with the tariff's forecast: the class mix the
 demand draws from, total demand a tenth above the cabin, so the deep
-discounts close while full fare sells to the seat. What is still missing
-is the forecaster: the forecast is static, where a real system reads
-history and the booking curve and moves the ladder through the days
-before departure; and the network kind of RM (bid prices over an O&D)
-rather than leg-based.
+discounts close while full fare sells to the seat. The forecaster now
+reads the booking curve (additive pickup: what each class has sold plus
+the share of its baseline demand still to come before departure, on the
+world's clock), so a flight selling behind its curve reopens its discounts
+during the day and one ahead of it protects harder. Still missing: a
+forecast learned from history rather than the demand model's own mix, and
+the network kind of RM (bid prices over an O&D) rather than leg-based.
 
 **Interline through check-in (IATCI).** Done (jetway v0.1.61-63, `pkg/iatci`):
 one connection in four crosses carriers, the first carrier's departure

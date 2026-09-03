@@ -46,6 +46,7 @@ import (
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/interline"
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -281,6 +282,27 @@ func (c *Core) refreshSettlement(client *http.Client) int {
 	}
 	if len(views) > 0 {
 		c.Sim.SetSettlement(settle.Merge(day, views))
+	}
+	// And the interline invoices, the same way.
+	bills := map[string]interline.View{}
+	for _, p := range c.livePeers() {
+		if p.Role != "region" && p.Role != "gds" {
+			continue
+		}
+		resp, err := client.Get(p.URL + "/billing.json")
+		if err != nil {
+			continue
+		}
+		var v interline.View
+		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&v)
+		resp.Body.Close()
+		if err != nil || v.Summary == nil {
+			continue
+		}
+		bills[p.URL] = v
+	}
+	if len(bills) > 0 {
+		c.Sim.SetBilling(interline.Merge(day, bills))
 	}
 	return len(views)
 }
@@ -670,6 +692,8 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	// settled and proxies for the files.
 	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
+	mux.HandleFunc("GET /billing.json", s.serveBilling)
+	mux.HandleFunc("GET /billing/", s.serveInvoice)
 	mux.HandleFunc("GET /shard/summary.json", func(w http.ResponseWriter, r *http.Request) {
 		sum := shardSummary{Queues: map[string]int{}, Halos: map[string]int64{}}
 		sum.Bookings = bk()
@@ -907,6 +931,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		}
 		t, err := host.Start(ctx, c, s.Flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
+			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],

@@ -1368,8 +1368,21 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 		t.Errorf("a 45-day advance purchase fare sold thirty days out")
 	}
 	// The carrier's ladder is what revenue management set by EMSR-b from
-	// the tariff's forecast: N may take its authorisation, then it is
-	// unable while Y is open.
+	// the forecaster's view of the booking curve: N may take its
+	// authorisation, then it is unable while Y is open. The forecaster
+	// reads the world's clock, so this asks about a flight that has not
+	// departed yet -- for one that has, every class is rightly wide open.
+	if float64(f.DepMin) <= s.clock.Pos(time.Now())+30 {
+		for _, g := range s.Flights[f.Carrier] {
+			if float64(g.DepMin) > s.clock.Pos(time.Now())+30 {
+				f = g
+				break
+			}
+		}
+	}
+	if float64(f.DepMin) <= s.clock.Pos(time.Now())+30 {
+		t.Skip("every flight of the carrier has departed in sim time; the ladder is rightly open")
+	}
 	tn := s.Tenants[f.Carrier]
 	day := strings.ToUpper(s.BookingDate.Format("02Jan"))
 	ask := func(class string, n int) string {
@@ -1387,7 +1400,10 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 			nAuth = l.Authorized
 		}
 	}
-	if nAuth >= f.Seats/2 {
+	// The forecaster reads the curve: with nothing sold and part of the
+	// selling window gone, the discount has room again, but never the
+	// whole cabin -- the higher fares' remaining demand is protected.
+	if nAuth >= f.Seats {
 		t.Fatalf("revenue management left the deepest discount wide open: %d of %d", nAuth, f.Seats)
 	}
 	if nAuth > 0 {

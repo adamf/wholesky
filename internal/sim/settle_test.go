@@ -107,6 +107,16 @@ func TestSettlementHandsEachAirlineAHOTThatReconciles(t *testing.T) {
 	if tx.Code != bsp.TransSale || len(tx.Segments) == 0 || tx.Passenger == "" || len(tx.Payments) != 1 || tx.Payments[0].Type != bsp.PaymentCash {
 		t.Errorf("first transaction: %+v", tx)
 	}
+	// The carriers bill each other for codeshare coupons off the same books.
+	s.Bill(ctx)
+	if b := s.Billing(); b == nil || b.Prorate < 0 {
+		t.Fatalf("billing: %+v", b)
+	}
+	rec = httptest.NewRecorder()
+	s.serveBilling(rec, httptest.NewRequest("GET", "/billing.json", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "\"invoices_detail\"") {
+		t.Errorf("billing view: %d %s", rec.Code, rec.Body.String()[:min(200, rec.Body.Len())])
+	}
 	rec = httptest.NewRecorder()
 	s.serveSettlement(rec, httptest.NewRequest("GET", "/settlement.json", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "\"airlines_detail\"") {

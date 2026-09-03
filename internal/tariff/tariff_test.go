@@ -85,3 +85,52 @@ func TestForecastClosesTheDeepDiscounts(t *testing.T) {
 		t.Errorf("business cabin: %+v", c)
 	}
 }
+
+// The forecaster reads the curve: at the start of the selling window the
+// pickup forecast is the baseline; at the door it is what was sold; a
+// flight selling behind its curve reopens the deep discount.
+func TestPickupFollowsTheBookingCurve(t *testing.T) {
+	base := Forecast("Y", 174)
+	start := Pickup("Y", 174, nil, 1)
+	for i := range base {
+		if start[i] != base[i] {
+			t.Fatalf("at the start of the window the forecast is the baseline: %+v vs %+v", start[i], base[i])
+		}
+	}
+	sold := map[string]int{"Y": 10, "B": 12, "K": 20}
+	door := Pickup("Y", 174, sold, 0)
+	for _, c := range door {
+		if float64(sold[c.Class]) != c.Mean || c.StdDev != 0 {
+			t.Errorf("at the door the forecast is what sold: %+v", c)
+		}
+	}
+	// Behind the curve: halfway to departure with a quarter of the seats
+	// sold, the deepest discount has room again.
+	behind := inventory.EMSRb(174, Pickup("Y", 174, map[string]int{"Y": 8, "M": 10, "Q": 12, "N": 10}, 0.5))
+	static := inventory.EMSRb(174, Forecast("Y", 174))
+	var nBehind, nStatic int
+	for _, l := range behind {
+		if l.Class == "N" {
+			nBehind = l.Authorized
+		}
+	}
+	for _, l := range static {
+		if l.Class == "N" {
+			nStatic = l.Authorized
+		}
+	}
+	if nBehind <= nStatic {
+		t.Errorf("behind the curve N should reopen: %d vs static %d", nBehind, nStatic)
+	}
+	// A class sold outside the mix is still demand.
+	odd := Pickup("Y", 10, map[string]int{"Z": 2}, 0.5)
+	found := false
+	for _, c := range odd {
+		if c.Class == "Z" && c.Mean == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an off-ladder class sold is not forecast: %+v", odd)
+	}
+}

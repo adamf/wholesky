@@ -169,6 +169,46 @@ func Forecast(compartment string, seats int) []inventory.ClassDemand {
 	return out
 }
 
+// Pickup is the forecaster reading the booking curve: what a cabin has
+// sold so far by class, plus the share of its baseline demand still to
+// come. The share is the caller's -- how much of the selling window is
+// left before departure, one at the start and nought at the door -- and
+// the spread is only on what is to come, because what is sold is known.
+// Total demand for the cabin is then sold plus pickup: the additive pickup
+// method, the textbook one. A flight selling ahead of its curve forecasts
+// more and protects harder; one selling behind forecasts less and the
+// discounts reopen, which is what a revenue manager watching the curve
+// would do by hand.
+func Pickup(compartment string, seats int, sold map[string]int, remaining float64) []inventory.ClassDemand {
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > 1 {
+		remaining = 1
+	}
+	base := Forecast(compartment, seats)
+	out := make([]inventory.ClassDemand, 0, len(base))
+	seen := map[string]bool{}
+	for _, c := range base {
+		pickup := c.Mean * remaining
+		mean := float64(sold[c.Class]) + pickup
+		out = append(out, inventory.ClassDemand{Class: c.Class, Fare: c.Fare, Mean: mean, StdDev: math.Sqrt(pickup) * 1.25})
+		seen[c.Class] = true
+	}
+	// A class sold that the mix does not name -- an override, an odd
+	// booking -- is demand all the same, at its ladder fare.
+	fareOf := map[string]float64{}
+	for _, s := range ladder {
+		fareOf[s.class] = s.share
+	}
+	for class, n := range sold {
+		if !seen[class] && n > 0 {
+			out = append(out, inventory.ClassDemand{Class: class, Fare: fareOf[class], Mean: float64(n)})
+		}
+	}
+	return out
+}
+
 // Authorizations is the class ladder's nested authorisation levels for a
 // cabin of the given seats: the share of the cabin each class and those
 // below it may take. Full fare takes the cabin; each cheaper class is held

@@ -151,6 +151,10 @@ type Options struct {
 	OperatorAddresses map[string]string
 	// BookingDate is the date the world sells, for availability broadcasts.
 	BookingDate time.Time
+	// DayPos is the world's clock, in minutes into the selling day, for
+	// the revenue management forecaster to read the booking curve by; nil
+	// forecasts as if the day had not begun.
+	DayPos func() float64
 	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
 	MaxMessages int
 	MaxRecords  int
@@ -222,13 +226,26 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	inv := inventory.New(c.Designator, capacity)
 	inv.Publish(metrics.Default)
 	// Revenue management, leg-based: a controller sets each cabin's nested
-	// authorisations by EMSR-b from the tariff's demand forecast, so the
-	// last seats go at the higher fares and the deep discounts close as
-	// the flight fills. The forecast is static here; the controller
-	// re-optimises on every question, so a forecaster that read the clock
-	// would move the ladder through the booking curve.
+	// authorisations by EMSR-b from the forecaster's view of demand, so
+	// the last seats go at the higher fares and the deep discounts close
+	// as the flight fills. The forecaster reads the booking curve: what
+	// the cabin has sold by class plus the share of its baseline demand
+	// still to come before departure, so the ladder moves through the day
+	// -- a flight selling behind its curve reopens its discounts, one
+	// ahead of it protects harder. The controller re-optimises on every
+	// question.
+	departs := map[string]int{}
+	for _, f := range append(append([]world.Flight{}, flights...), opts.Marketed...) {
+		departs[f.Carrier+strings.TrimLeft(f.Number, "0")+"/"+f.From] = f.DepMin
+	}
 	rm := &inventory.Controller{Capacity: capacity, Forecast: func(carrier, flightNum, wireDate, board, compartment string, seats int) []inventory.ClassDemand {
-		return tariff.Forecast(compartment, seats)
+		remaining := 1.0
+		if opts.DayPos != nil {
+			if dep, ok := departs[carrier+strings.TrimLeft(flightNum, "0")+"/"+board]; ok && dep > 0 {
+				remaining = (float64(dep) - opts.DayPos()) / float64(dep)
+			}
+		}
+		return tariff.Pickup(compartment, seats, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining)
 	}}
 	inv.Levels = rm.Levels
 

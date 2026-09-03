@@ -353,8 +353,9 @@ connecting passenger misses the flight when the inbound is late enough;
 every carrier answers sells from the aircraft's own seats (jetway's
 `pkg/inventory`: cabins from the fleet's layout, pooled per leg, rebuilt
 from the book of record at every start and purge), under a nested class
-ladder set by an EMSR-b revenue management controller from the tariff's
-demand forecast, so a filled 737 confirms what is left, closes its cheap
+ladder set by an EMSR-b revenue management controller from a forecaster
+that reads the booking curve on the world's clock (sold so far plus the
+pickup still to come), so a filled 737 confirms what is left, closes its cheap
 classes while full fare is still open, waitlists the next party and
 refuses after that, and the availability it broadcasts says how many seats remain;
 every booking is priced before it sells against a fare filing derived from
@@ -409,7 +410,10 @@ every airline its BSP HOT file (jetway's `pkg/bsp`, to IATA's public DISH
 reconciled against the carrier's own book -- teletype carriers now hear
 their ticket numbers as SSR TKNE so the books agree -- served at
 `/settlement.json` and `/settlement/<carrier>.hot`, with the day's gross
-on the globe's money bar;
+on the globe's money bar; interline billing between carriers -- every
+codeshare coupon flown by one carrier on another's ticket prorated by
+mileage (jetway's `pkg/prorate`) and invoiced, less the interline service
+charge, at `/billing.json`;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across
