@@ -281,6 +281,10 @@ around $341, business $750 to $785, the deep discount buckets $93 to
 $160. The shape of a real Thanksgiving Wednesday, every cent of it
 labelled synthetic.
 
+![The priced sky: the recorded day's evening banks, with what the aircraft in the air were sold for and what has been bought since boot](docs/the-priced-sky.jpg)
+
+![A flight's bookings, priced: United 2408 Denver to Washington, 65 records under the selling channels' locators, each with its fare and fare basis](docs/the-fares.jpg)
+
 The world also answers for its laws while it flies. Every shard reports
 its inventories at `/shard/invariants.json`, the core federates them at
 `/invariants.json`, and `go run ./cmd/skycheck <url>` exits non-zero on a

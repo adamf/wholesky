@@ -403,7 +403,8 @@ async function showFlight(p){
   const fated=recs.filter(r=>r.queue);
   if(fated.length){
     const rebooked=fated.filter(r=>!r.waiting&&/rebooked/.test(r.queue)).length, waiting=fated.filter(r=>r.waiting).length, other=fated.length-rebooked-waiting;
-    h+="<div class='row' style='color:#e0b93c'>after the cancellation: "+rebooked+" rebooked"+(waiting?" · "+waiting+" still on the queue for a person":"")+(other?" · "+other+" worked otherwise":"")+"</div>";
+    const wasCancelled=!!(fl&&fl.actual&&fl.actual.cancelled)||!!(dcs&&dcs.cancelled);
+    h+="<div class='row' style='color:#e0b93c'>"+(wasCancelled?"after the cancellation: ":"worked from a queue: ")+rebooked+" rebooked"+(waiting?" · "+waiting+" still on the queue for a person":"")+(other?" · "+other+" worked otherwise":"")+"</div>";
   }
   h+=recs.length? "<div class='sub' style='margin:0 0 2px'>"+recs.length+" records</div>"+recs.slice(0,14).map(r=>
     "<div class='sub' style='margin:1px 0'><a href='/node/"+r.gds+"/' target='_blank' style='color:#5fd38d'>"+r.locator+
