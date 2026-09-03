@@ -1,6 +1,6 @@
 # The load test as a release gate. A real world boots on real sockets at
-# warp 240 -- a day in six minutes -- flies its departure banks for two
-# minutes, and is then asked whether its laws held: no cabin over capacity,
+# warp 240 -- a day in six minutes -- flies its day for more than three
+# minutes -- long enough to cross the night at warp 240 -- and is then asked whether its laws held: no cabin over capacity,
 # every shard answering, something flown and something sold.
 name: gate
 on:
@@ -20,7 +20,7 @@ jobs:
       - name: compile a world
         run: go run ./cmd/worldc -countries "United Kingdom,France,Germany,Spain" -carriers 20 -o /tmp/gate-world.json
       - name: fly it and check the laws
-        run: scripts/gate.sh /tmp/gate-world.json 150
+        run: scripts/gate.sh /tmp/gate-world.json 200
       - name: keep the log
         if: always()
         uses: actions/upload-artifact@v4

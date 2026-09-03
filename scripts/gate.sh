@@ -2,12 +2,14 @@
 # The load test as a release gate: boot a world on real sockets at warp 240,
 # let the departure banks run, then ask it whether its laws held. Exit
 # non-zero if a cabin holds more than it has, a shard did not answer, or
-# nothing flew or sold -- a quiet sky is a failure too.
+# nothing flew or sold -- a quiet sky is a failure too. The day's position
+# is anchored to the wall clock, so the run must be long enough to cross the
+# night: at warp 240 the eight quiet hours are two minutes.
 #
 #   scripts/gate.sh world.json [seconds]
 set -eu
 WORLD=${1:-world.json}
-SECS=${2:-120}
+SECS=${2:-200}
 go build -o /tmp/skyd ./cmd/skyd
 go build -o /tmp/skycheck ./cmd/skycheck
 /tmp/skyd -world "$WORLD" -carriers 12 -warp 240 -demand 30 -console 127.0.0.1:8080 -avs-interval 300s > /tmp/gate-skyd.log 2>&1 &
