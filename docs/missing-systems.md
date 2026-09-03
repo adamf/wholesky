@@ -30,9 +30,16 @@ commission, coupons, passenger and payment, office and file totals,
 over-punch signed -- and reconciles it against the carrier's own book.
 Teletype carriers hear their ticket numbers as SSR TKNE (v0.1.73) so the
 books agree; the files are served at `/settlement/<carrier>.hot`, the day's
-gross sits on the globe's money bar. Not done: the RET the agents send the
-plan, refunds and ADMs/ACMs as transactions, net reporting and card data,
-and interline billing -- the recorded day's 7,000 codeshares are still not
+gross sits on the globe's money bar. On the multi-machine demo each region
+and distribution system settles the books it holds and the core merges
+the views; where the agent's book is on another machine the carrier's copy
+is the report and is counted unverified. A caveat the numbers carry: the
+carriers' in-memory books are bounded (`-max-records`), so on the recorded
+day a large carrier's older records are evicted before the plan runs and
+show as documents the agent reported that the carrier does not hold --
+eviction, not a wire fault. Not done: the RET the agents send the plan,
+refunds and ADMs/ACMs as transactions, net reporting and card data, and
+interline billing -- the recorded day's 7,000 codeshares are still not
 prorated between the marketing and operating carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):
