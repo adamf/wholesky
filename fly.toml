@@ -31,8 +31,8 @@ primary_region = "lhr"
   gds1g = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 1 -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1s = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 2 -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1a = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 3 -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
-  region0 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 0 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-dsn $DATABASE_URL"
-  region1 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 1 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300 -tenant-dsn $DATABASE_URL"
+  region0 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 0 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300"
+  region1 = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role region -shard 1 -shards 2 -carriers 0 -console 0.0.0.0:8080 -core-url http://core.process.wholesky-demo.internal:8080 -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300"
 
 [http_service]
   processes = ["core"]
