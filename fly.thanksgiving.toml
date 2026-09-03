@@ -25,7 +25,7 @@ primary_region = "lhr"
   dockerfile = "Dockerfile"
 
 [processes]
-  app = "-world /etc/wholesky/thanksgiving.json -memlimit 3200MiB -role all -warp 1 -demand 240 -sell-days 1 -fill 0.85 -carriers 0 -gds 3 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -avs-interval 300s -max-messages 2000 -max-records 8000 -tenant-max-messages 300 -tenant-dsn $DATABASE_URL -gds-dsn $DATABASE_URL -stats-snapshot /tmp/wholesky-stats.json"
+  app = "-world /etc/wholesky/thanksgiving.json -memlimit 3200MiB -role all -switches 2 -warp 1 -demand 240 -sell-days 1 -fill 0.85 -carriers 0 -gds 3 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -avs-interval 300s -max-messages 2000 -max-records 8000 -tenant-max-messages 300 -tenant-dsn $DATABASE_URL -gds-dsn $DATABASE_URL -stats-snapshot /tmp/wholesky-stats.json"
 
 [http_service]
   processes = ["app"]

@@ -142,7 +142,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · loadsheet (AHM 560)</td></tr>
           <tr><td>aircraft &amp; operations</td><td class="mono">MVT · MVA · DIV · ACARS OOOI (OUT OFF ON IN)</td></tr>
           <tr><td>air traffic services</td><td class="mono">AFTN envelope · FPL · DEP · ARR · DLA · CNL · CHG</td></tr>
-          <tr><td>transports</td><td class="mono">Type B over framed TCP · MATIP (RFC 2351) · EDIFACT over TCP · HTTPS with mutual TLS · file drop</td></tr>
+          <tr><td>transports</td><td class="mono">Type B over framed TCP · MATIP (RFC 2351) · EDIFACT over TCP · HTTPS with mutual TLS · file drop · dialled trunk links between switches (link_dial + via routing)</td></tr>
         </table></div>
       </div>
       <div class="card">
@@ -175,6 +175,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <div class="card">
         <h3>What a switch does, and it does</h3>
         <ul>
+          <li><b>Trunks to another switch</b>: holds a dialled, bidirectional link open to a second switch and routes the other switch's subscribers via it, so a message between carriers on different switches crosses the trunk once and is never carried back to its own origin.</li>
           <li>Terminates hundreds of circuits; <b>relays by address line</b> and UNB recipient to every addressee named.</li>
           <li><b>Captures before interpreting</b>; keeps possible duplicates marked; sequence gaps and repeats counted per peer.</li>
           <li><b>Spools</b> before acknowledging; <b>redelivers</b> with backoff when a link comes back; a peer that stops reading is refused, never stalled behind.</li>

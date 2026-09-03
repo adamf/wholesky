@@ -152,11 +152,17 @@ deliver Type B over MQ, over HTTPS (Type B over IP with acknowledgements),
 over IBM MQ queues, and as email gateways, as well as the MATIP the world
 already speaks. A production jetway needs the MQ and HTTPS deliveries.
 
-**Two switches.** The world has one switch. The real network has two
-providers and carriers hold circuits to both; the switches exchange
-traffic; addresses are routed by provider tables. A second switch and the
-inter-switch trunk is the piece full-throttle.md identified as the
-scaling step, and it is also the realism step.
+**Two switches.** Done (jetway v0.1.69, wholesky `-switches 2`): jetway's
+node gained the `link_dial` egress, a dialled, bidirectional link one
+switch holds open to another, and `via` routing sends the other switch's
+subscribers down it; the world runs two switches joined by that trunk,
+every carrier homed on one by hash, the distribution systems, networks
+and border agencies on the first. A booking on a carrier across the
+trunk sells and settles; a message for one local and one remote
+subscriber reaches each once and is never carried back to its origin.
+Still one provider's view: carriers hold a circuit to one switch, not
+both, and the provider routing tables are the configuration, not a
+message.
 
 ## In order
 

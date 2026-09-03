@@ -12,7 +12,7 @@ WORLD=${1:-world.json}
 SECS=${2:-200}
 go build -o /tmp/skyd ./cmd/skyd
 go build -o /tmp/skycheck ./cmd/skycheck
-/tmp/skyd -world "$WORLD" -carriers 12 -warp 240 -demand 30 -console 127.0.0.1:8080 -avs-interval 300s > /tmp/gate-skyd.log 2>&1 &
+/tmp/skyd -world "$WORLD" -carriers 12 -switches 2 -warp 240 -demand 30 -console 127.0.0.1:8080 -avs-interval 300s > /tmp/gate-skyd.log 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true' EXIT
 for i in $(seq 1 60); do

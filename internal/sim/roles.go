@@ -79,6 +79,9 @@ type registration struct {
 type welcome struct {
 	// SwitchAddr is the shared subscriber listener, ready to dial.
 	SwitchAddr string `json:"switch_addr"`
+	// SwitchAddrs names the listener each carrier dials when the fabric
+	// runs more than one switch: a carrier is homed on one of them.
+	SwitchAddrs map[string]string `json:"switch_addrs,omitempty"`
 	// MATIPAddrs maps each MATIP carrier to its own listener.
 	MATIPAddrs map[string]string `json:"matip_addrs"`
 	Warp       int               `json:"warp"`
@@ -208,7 +211,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.fedMu.Unlock()
 
 	s.Stats.Airborne = s.Eye.Airborne
-	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
+	s.Stats.LinksUp = s.linksUp
 	go s.Stats.Run(ctx.Done())
 
 	s.ConsoleProxy = func(w http.ResponseWriter, r *http.Request, code string) bool {
@@ -268,10 +271,14 @@ func (c *Core) register(w http.ResponseWriter, r *http.Request) {
 		Pos:        c.Sim.clock.Pos(time.Now()),
 		Closed:     closed,
 	}
+	if len(c.Sim.Switches) > 1 {
+		wl.SwitchAddrs = map[string]string{}
+	}
 	for _, cr := range c.Sim.Manifest.Carriers {
 		if cr.Transport == "matip" {
-			wl.MATIPAddrs[cr.Designator] = rehost(
-				c.Sim.Switch.Addr("link-"+strings.ToLower(cr.Designator)), c.advertise)
+			wl.MATIPAddrs[cr.Designator] = rehost(c.Sim.switchAddrFor(cr), c.advertise)
+		} else if wl.SwitchAddrs != nil {
+			wl.SwitchAddrs[cr.Designator] = rehost(c.Sim.switchAddrFor(cr), c.advertise)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -826,6 +833,9 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		mine++
 		tenantBus := gateway.NewBus(64)
 		switchAddr := wl.SwitchAddr
+		if a, ok := wl.SwitchAddrs[c.Designator]; ok {
+			switchAddr = a
+		}
 		if c.Transport == "matip" {
 			addr, ok := wl.MATIPAddrs[c.Designator]
 			if !ok {

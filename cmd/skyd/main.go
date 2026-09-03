@@ -46,6 +46,7 @@ func main() {
 func run() error {
 	var (
 		worldPath = flag.String("world", "world.json", "compiled manifest to boot")
+		switches  = flag.Int("switches", 1, "message switches in the fabric, 1 or 2; two are joined by a trunk and carriers are homed on one by hash")
 		ssimPath  = flag.String("ssim", "", "take the day's schedule from this SSIM chapter 7 file instead of the manifest's flights")
 		carriers  = flag.Int("carriers", 12, "how many carriers to run, largest first; 0 for all")
 		warp      = flag.Int("warp", 60, "sim minutes per real minute for the flight day")
@@ -131,7 +132,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

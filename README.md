@@ -400,7 +400,10 @@ told by ASM EQT; a flight running forty-six minutes or more late
 announced two hours out as an ASM TIM, the sold segments moved to the new
 times at TK on every distribution system; the day's schedule written as
 an SSIM chapter 7 file (`worldc -ssim`) and flown from one (`skyd -ssim`),
-so a carrier's own schedule file is a source;
+so a carrier's own schedule file is a source; two message switches joined
+by a trunk (`skyd -switches 2`), every carrier homed on one by hash, so a
+booking on a carrier across the trunk sells and settles the way traffic
+between the real network's providers does;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across

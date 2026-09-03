@@ -86,6 +86,12 @@ type GDSNode struct {
 type Options struct {
 	// Carriers caps how many carriers run, largest first. Zero runs all.
 	Carriers int
+	// Switches is how many message switches the fabric runs, one or two:
+	// with two, every carrier is homed on one by hash and the switches are
+	// joined by a trunk, so a message between carriers on different
+	// switches crosses it the way the real network's inter-switch trunks
+	// carry traffic between SITA and ARINC. Zero and one are one switch.
+	Switches int
 	// Console is the switch console address; empty skips the console.
 	Console string
 	// Capacity, when positive, overrides every cabin's seats at every
@@ -192,6 +198,9 @@ type Sim struct {
 	refill     bool
 	Manifest   *world.Manifest
 	Switch     *node.Node
+	// Switches is every switch in the fabric, Switch being the first: the
+	// one with the console, the instruments and the distribution systems.
+	Switches []*node.Node
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
 	// first, which is also the movement watcher.
 	GDSes       []*GDSNode
@@ -372,7 +381,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	if !withSwitch {
 		return s, nil
 	}
-	sw, err := buildSwitch(ctx, m, opts, func(mux *http.ServeMux) {
+	nSwitches := switchCount(opts)
+	sw, err := buildSwitch(ctx, m, opts, 0, nSwitches, "", func(mux *http.ServeMux) {
 		s.Eye.Routes(mux)
 		s.Fleet.Routes(mux)
 		s.Stats.Routes(mux)
@@ -407,9 +417,22 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		return nil, err
 	}
 	s.Switch = sw
+	s.Switches = []*node.Node{sw}
 	if err := sw.Start(ctx); err != nil {
 		s.Stop()
 		return nil, err
+	}
+	for k := 1; k < nSwitches; k++ {
+		other, err := buildSwitch(ctx, m, opts, k, nSwitches, sw.Addr("link-net"), nil, log)
+		if err != nil {
+			s.Stop()
+			return nil, err
+		}
+		if err := other.Start(ctx); err != nil {
+			s.Stop()
+			return nil, err
+		}
+		s.Switches = append(s.Switches, other)
 	}
 	// The Eye watches the switch's message stream: every message in the world
 	// crosses it, so its bus is the fabric firehose.
@@ -469,10 +492,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	for _, c := range m.Carriers {
 		tenantBus := gateway.NewBus(64)
-		switchAddr := sw.Addr("link-net")
-		if c.Transport == "matip" {
-			switchAddr = sw.Addr("link-" + strings.ToLower(c.Designator))
-		}
+		switchAddr := s.switchAddrFor(c)
 		tenantMaxMsgs, tenantMaxRecs := opts.TenantMaxMessages, opts.TenantMaxRecords
 		if tenantMaxMsgs == 0 {
 			tenantMaxMsgs = opts.MaxMessages
@@ -552,7 +572,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 
 	s.Stats.Airborne = s.Eye.Airborne
-	s.Stats.LinksUp = func() int { return len(s.Switch.LivePeers()) }
+	s.Stats.LinksUp = s.linksUp
 	s.Stats.QueueDepths = func() map[string]int {
 		out := map[string]int{}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -575,8 +595,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 // Stop tears the world down.
 func (s *Sim) Stop() {
 	s.cancel()
-	if s.Switch != nil {
-		s.Switch.Close()
+	for _, sw := range s.Switches {
+		sw.Close()
 	}
 	if s.tenantDB != nil {
 		s.tenantDB.Close()
@@ -1421,14 +1441,66 @@ var groundEvents = []groundEvent{
 	}},
 }
 
-func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend func(*http.ServeMux), log *slog.Logger) (*node.Node, error) {
+// switchCount is how many switches the options ask for, at least one.
+func switchCount(opts Options) int {
+	if opts.Switches < 1 {
+		return 1
+	}
+	return opts.Switches
+}
+
+// homeSwitch is the switch a carrier is homed on: deterministic by
+// designator, so every process in a multi-machine world agrees.
+func homeSwitch(designator string, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	return aogHash(designator) % n
+}
+
+// switchIdentity names switch k: 1X is the first, 1Y the second.
+func switchIdentity(k int) (designator, tty string) {
+	d := "1" + string(rune('X'+k))
+	return d, "XCHDD" + d
+}
+
+// buildSwitch assembles switch k of n. Subscribers homed here are links
+// it accepts; those homed elsewhere are reached via the trunk to the
+// first switch (from a later one) or via the trunk the later switch
+// dialled in on (from the first). The distribution systems, the
+// networks and the border agencies live on the first switch, as do the
+// console and the instruments; trunkTo is the first switch's listener,
+// which a later switch dials.
+func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int, trunkTo string, extend func(*http.ServeMux), log *slog.Logger) (*node.Node, error) {
 	console := opts.Console
+	if k > 0 {
+		console = ""
+	}
+	firstDesignator, firstTTY := switchIdentity(0)
 	cfg := config.Default()
 	// jetway spools every inbound message to disk by default, which is
 	// right for a carrier and wrong for a switch relaying sixteen thousand a
 	// second on a machine that forgets its day at midnight anyway.
 	cfg.Spool.Enabled = false
-	cfg.Identity = config.Identity{Designator: "1X", TTYAddress: "XCHDD1X", Name: "wholesky switch"}
+	designator, tty := switchIdentity(k)
+	name := "wholesky switch"
+	if n > 1 {
+		name = fmt.Sprintf("wholesky switch %d of %d", k+1, n)
+	}
+	cfg.Identity = config.Identity{Designator: designator, TTYAddress: tty, Name: name}
+	// Traffic for a subscriber on another switch goes down the trunk. The
+	// first switch's trunk to switch k is the link switch k dialled in on;
+	// a later switch's trunk is the link it holds to the first.
+	viaTrunk := func(home int) config.Egress {
+		if home == k {
+			return config.Egress{Type: "tcp_accept"}
+		}
+		if k == 0 {
+			d, _ := switchIdentity(home)
+			return config.Egress{Type: "via", Via: d}
+		}
+		return config.Egress{Type: "via", Via: firstDesignator}
+	}
 	cfg.HTTP.Addr = console
 	if console == "" {
 		cfg.HTTP.Addr = "127.0.0.1:0"
@@ -1455,21 +1527,22 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 		Name: "link-net", Type: "tcp", Addr: net.JoinHostPort(bind, "0"),
 		Identify: config.Identify{ByHello: true},
 	})
-	addPeer := func(designator, tty, format string) {
+	addPeer := func(designator, tty, format string, home int) {
 		cfg.Peers = append(cfg.Peers, config.Peer{
 			Name: designator, Carrier: designator, TTYAddress: tty,
 			Format: format,
-			Egress: config.Egress{Type: "tcp_accept"},
+			Egress: viaTrunk(home),
 		})
 	}
 	for _, c := range m.Carriers {
-		if c.Transport == "matip" {
+		home := homeSwitch(c.Designator, n)
+		if c.Transport == "matip" && home == k {
 			cfg.Ingress = append(cfg.Ingress, config.Ingress{
 				Name: "link-" + strings.ToLower(c.Designator), Type: "matip",
 				Addr: net.JoinHostPort(bind, "0"), Identify: config.Identify{Peer: c.Designator},
 			})
 		}
-		addPeer(c.Designator, c.TTYAddress, c.Format)
+		addPeer(c.Designator, c.TTYAddress, c.Format, home)
 		// The carrier's ICAO designator routes its AFTN traffic here too.
 		cfg.Peers[len(cfg.Peers)-1].ICAO = c.ICAO
 	}
@@ -1477,31 +1550,43 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 	for shard := 0; shard < networkShards; shard++ {
 		cfg.Peers = append(cfg.Peers, config.Peer{
 			Name: dspPeer(shard), TTYAddress: dspAddress(shard), Format: "typeb",
-			Egress: config.Egress{Type: "tcp_accept"},
+			Egress: viaTrunk(0),
 		})
 		// One link takes the aeronautical network's unclaimed indicators --
 		// the towers' -- so the flight plans land on one ANSP; the other
 		// shard's ANSP still sends its own towers' messages.
 		cfg.Peers = append(cfg.Peers, config.Peer{
 			Name: atcPeer(shard), TTYAddress: atcAddress(shard), Format: "aftn", AFTN: shard == 0,
-			Egress: config.Egress{Type: "tcp_accept"},
+			Egress: viaTrunk(0),
 		})
 		// The border control agency receives passenger lists as EDIFACT
 		// interchanges addressed to it, so it is a carrier-like peer: the
 		// switch routes on the UNB recipient.
 		cfg.Peers = append(cfg.Peers, config.Peer{
 			Name: govPeer(shard), Carrier: govPeer(shard), TTYAddress: govAddress(shard), Format: "edifact",
-			Egress: config.Egress{Type: "tcp_accept"},
+			Egress: viaTrunk(0),
 		})
 	}
 	for _, slot := range gdsSlots {
-		addPeer(slot.Designator, gdsAddress(slot), "typeb")
+		addPeer(slot.Designator, gdsAddress(slot), "typeb", 0)
+	}
+	// The trunks. The first switch accepts each later switch's link; a
+	// later switch holds its link to the first open itself.
+	if k == 0 {
+		for j := 1; j < n; j++ {
+			d, t := switchIdentity(j)
+			cfg.Peers = append(cfg.Peers, config.Peer{Name: d, Carrier: d, TTYAddress: t, Format: "typeb", Trunk: true,
+				Egress: config.Egress{Type: "tcp_accept"}})
+		}
+	} else {
+		cfg.Peers = append(cfg.Peers, config.Peer{Name: firstDesignator, Carrier: firstDesignator, TTYAddress: firstTTY, Format: "typeb", Trunk: true,
+			Egress: config.Egress{Type: "link_dial", Addr: trunkTo, Role: "switch"}})
 	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("switch config: %w", err)
 	}
-	return node.Build(ctx, cfg, log.With("node", "switch"), node.Options{
+	return node.Build(ctx, cfg, log.With("node", strings.ToLower(designator)), node.Options{
 		LocatorSecret: []byte("wholesky-switch"),
 		SkipConsole:   console == "",
 		ExtendAPI:     extend,
@@ -2024,6 +2109,32 @@ func (s *Sim) tapBus(ctx context.Context, bus *gateway.Bus, fn func(gateway.Even
 	}
 }
 
+// switchAddrFor is the listener a carrier dials: its home switch's shared
+// subscriber listener, or its own MATIP listener there.
+func (s *Sim) switchAddrFor(c world.Carrier) string {
+	sw := s.Switches[homeSwitch(c.Designator, len(s.Switches))]
+	if c.Transport == "matip" {
+		return sw.Addr("link-" + strings.ToLower(c.Designator))
+	}
+	return sw.Addr("link-net")
+}
+
+// linksUp is how many subscriber links the fabric holds: every switch's
+// live peers, less the trunks between them, which are the fabric's own.
+func (s *Sim) linksUp() int {
+	n := 0
+	for _, sw := range s.Switches {
+		n += len(sw.LivePeers())
+	}
+	if t := len(s.Switches) - 1; t > 0 {
+		n -= 2 * t
+	}
+	if n < 0 {
+		n = 0
+	}
+	return n
+}
+
 func (s *Sim) waitForLinks(ctx context.Context, want int, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
@@ -2033,12 +2144,15 @@ func (s *Sim) waitForLinks(ctx context.Context, want int, within time.Duration) 
 				allGDSUp = false
 			}
 		}
-		if len(s.Switch.LivePeers()) >= want && allGDSUp {
+		if s.linksUp() >= want && allGDSUp {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("only %d of %d links came up: %v",
-				len(s.Switch.LivePeers()), want, s.Switch.LivePeers())
+			var live []string
+			for _, sw := range s.Switches {
+				live = append(live, sw.LivePeers()...)
+			}
+			return fmt.Errorf("only %d of %d links came up: %v", s.linksUp(), want, live)
 		}
 		select {
 		case <-ctx.Done():
