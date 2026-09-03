@@ -1466,12 +1466,22 @@ var groundEvents = []groundEvent{
 // reconciled against the carrier's own book when this process runs the
 // carrier. The result is kept for the instruments and served as files.
 func (s *Sim) Settle(ctx context.Context) {
-	if len(s.GDSes) == 0 {
-		return
+	if len(s.GDSes) == 0 && len(s.Tenants) == 0 {
+		return // a core with neither books nor agents federates instead
 	}
-	agents := make([]settle.Agent, 0, len(s.GDSes))
+	// The agents are the distribution systems: those on this machine with
+	// their books, the rest by name, so a region can attribute the sales
+	// its carriers' books carry to the system that made them.
+	local := map[string]bool{}
+	agents := make([]settle.Agent, 0, len(gdsSlots))
 	for _, g := range s.GDSes {
 		agents = append(agents, settle.Agent{Designator: g.Designator, Name: g.Name, Store: g.Store})
+		local[g.Designator] = true
+	}
+	for _, slot := range gdsSlots {
+		if !local[slot.Designator] {
+			agents = append(agents, settle.Agent{Designator: slot.Designator, Name: slot.Name})
+		}
 	}
 	var airlines []settle.Airline
 	for _, c := range s.Manifest.Carriers {
@@ -1493,7 +1503,15 @@ func (s *Sim) Settle(ctx context.Context) {
 	s.settlement = sum
 	s.settleMu.Unlock()
 	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
-		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown)
+		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown, "unverified", sum.Unverified)
+}
+
+// SetSettlement installs a settlement view assembled elsewhere: the core's
+// merge of what its regions settled.
+func (s *Sim) SetSettlement(sum *settle.Summary) {
+	s.settleMu.Lock()
+	s.settlement = sum
+	s.settleMu.Unlock()
 }
 
 // Settlement is the latest settlement summary, or nil before the first.
@@ -1509,28 +1527,8 @@ func (s *Sim) serveSettlement(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no settlement yet", http.StatusNotFound)
 		return
 	}
-	type row struct {
-		Airline      string `json:"airline"`
-		Transactions int    `json:"transactions"`
-		Gross        int64  `json:"gross"`
-		Remittance   int64  `json:"remittance"`
-		Commission   int64  `json:"commission"`
-		Matched      int    `json:"matched"`
-		Unreported   int    `json:"unreported"`
-		Unknown      int    `json:"unknown"`
-		File         string `json:"file"`
-	}
-	out := struct {
-		*settle.Summary
-		Rows []row `json:"airlines_detail"`
-	}{Summary: sum}
-	for code, st := range sum.Statements {
-		out.Rows = append(out.Rows, row{Airline: code, Transactions: st.Transactions, Gross: st.Gross, Remittance: st.Remittance,
-			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, File: "/settlement/" + code + ".hot"})
-	}
-	sort.Slice(out.Rows, func(i, j int) bool { return out.Rows[i].Gross > out.Rows[j].Gross })
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out) //nolint:errcheck
+	json.NewEncoder(w).Encode(sum.AsView()) //nolint:errcheck
 }
 
 // serveHOT hands out one airline's file as the plan produced it.
@@ -1543,6 +1541,15 @@ func (s *Sim) serveHOT(w http.ResponseWriter, r *http.Request) {
 	}
 	st, ok := sum.Statements[code]
 	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if st.File == nil {
+		// Another machine holds the file: the region whose carriers'
+		// books the plan ran over.
+		if st.Peer != "" && proxyPass(w, r, st.Peer) {
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}

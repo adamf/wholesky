@@ -46,6 +46,7 @@ import (
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -233,7 +234,49 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.Fleet.OnOwners = c.SetOwners
 	s.Stats.SetQueueDepths(c.federatedQueues)
 	go c.pollSummaries(ctx)
+	go c.pollSettlement(ctx)
 	return c, nil
+}
+
+// pollSettlement gathers what each shard's plan settled and installs the
+// merged view on the core: the sums add, and each airline's row knows
+// the machine that holds its file.
+func (c *Core) pollSettlement(ctx context.Context) {
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+	client := &http.Client{Timeout: 5 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		views := map[string]settle.View{}
+		var day time.Time
+		for _, p := range c.livePeers() {
+			if p.Role != "region" && p.Role != "gds" {
+				continue
+			}
+			resp, err := client.Get(p.URL + "/settlement.json")
+			if err != nil {
+				continue
+			}
+			var v settle.View
+			err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&v)
+			resp.Body.Close()
+			if err != nil || v.Summary == nil {
+				continue
+			}
+			if day.IsZero() {
+				day = v.Day
+			}
+			views[p.URL] = v
+		}
+		if len(views) == 0 {
+			continue
+		}
+		c.Sim.SetSettlement(settle.Merge(day, views))
+	}
 }
 
 // Routes mounts the federation surface onto the core's console mux.
@@ -617,6 +660,10 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	}
 	s.Fleet.Routes(mux)
 	mux.HandleFunc("/node/", s.serveNodeConsole)
+	// The plan runs where the books are; the core merges what each shard
+	// settled and proxies for the files.
+	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
+	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /shard/summary.json", func(w http.ResponseWriter, r *http.Request) {
 		sum := shardSummary{Queues: map[string]int{}, Halos: map[string]int64{}}
 		sum.Bookings = bk()

@@ -58,8 +58,13 @@ type Statement struct {
 	Commission   int64
 	// Reconciliation: documents the plan reports that the carrier also
 	// holds, documents the plan reports that the carrier does not hold,
-	// and documents the carrier holds that no agent reported.
-	Matched, Unreported, Unknown int
+	// documents the carrier holds that no agent reported, and documents
+	// reported from the carrier's copy alone because the agent's book is
+	// not on this machine (Unverified).
+	Matched, Unreported, Unknown, Unverified int
+	// Peer is the machine that holds this statement's file when it is not
+	// this one, for a federated view.
+	Peer string
 }
 
 // Summary is the plan's day across airlines, for the instruments.
@@ -73,7 +78,80 @@ type Summary struct {
 	Matched      int                  `json:"matched"`
 	Unreported   int                  `json:"unreported"`
 	Unknown      int                  `json:"unknown"`
+	Unverified   int                  `json:"unverified"`
 	Statements   map[string]Statement `json:"-"`
+}
+
+// Row is one airline's line of a settlement view, as the instruments and
+// a federating core read it.
+type Row struct {
+	Airline      string `json:"airline"`
+	Transactions int    `json:"transactions"`
+	Gross        int64  `json:"gross"`
+	Remittance   int64  `json:"remittance"`
+	Commission   int64  `json:"commission"`
+	Matched      int    `json:"matched"`
+	Unreported   int    `json:"unreported"`
+	Unknown      int    `json:"unknown"`
+	Unverified   int    `json:"unverified"`
+	File         string `json:"file"`
+}
+
+// View is the summary with its rows, the JSON a settlement endpoint serves.
+type View struct {
+	*Summary
+	Rows []Row `json:"airlines_detail"`
+}
+
+// AsView lays the summary out for serving.
+func (s *Summary) AsView() View {
+	v := View{Summary: s}
+	for code, st := range s.Statements {
+		v.Rows = append(v.Rows, Row{Airline: code, Transactions: st.Transactions, Gross: st.Gross, Remittance: st.Remittance,
+			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, Unverified: st.Unverified,
+			File: "/settlement/" + code + ".hot"})
+	}
+	sort.Slice(v.Rows, func(i, j int) bool { return v.Rows[i].Gross > v.Rows[j].Gross })
+	return v
+}
+
+// Merge folds several machines' views into one: the sums add, and each
+// airline's row remembers the machine that holds its file.
+func Merge(day time.Time, views map[string]View) *Summary {
+	out := &Summary{Day: day, Statements: map[string]Statement{}}
+	for peer, v := range views {
+		if v.Summary == nil {
+			continue
+		}
+		for _, r := range v.Rows {
+			st := out.Statements[r.Airline]
+			st.Airline = r.Airline
+			st.Transactions += r.Transactions
+			st.Gross += r.Gross
+			st.Remittance += r.Remittance
+			st.Commission += r.Commission
+			st.Matched += r.Matched
+			st.Unreported += r.Unreported
+			st.Unknown += r.Unknown
+			st.Unverified += r.Unverified
+			if st.Peer == "" || r.Transactions > 0 {
+				st.Peer = peer
+			}
+			out.Statements[r.Airline] = st
+		}
+	}
+	for _, st := range out.Statements {
+		out.Airlines++
+		out.Transactions += st.Transactions
+		out.Gross += st.Gross
+		out.Remittance += st.Remittance
+		out.Commission += st.Commission
+		out.Matched += st.Matched
+		out.Unreported += st.Unreported
+		out.Unknown += st.Unknown
+		out.Unverified += st.Unverified
+	}
+	return out
 }
 
 // Run settles one day: every ticketed document the agents hold dated on
@@ -123,6 +201,55 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		}
 	}
 
+	// The carriers' books hold the same sales from the other side: a
+	// record sold through an agent carries the agent's locator or origin.
+	// Where the agent's own book is not on this machine, the carrier's
+	// copy is the report -- marked unverified, because nobody here has
+	// seen both sides.
+	agentSet := map[string]bool{}
+	for _, ag := range agents {
+		agentSet[strings.ToUpper(ag.Designator)] = true
+		if _, ok := agentNames[ag.Designator]; !ok {
+			agentNames[ag.Designator] = ag
+		}
+	}
+	unverified := map[string]int{}
+	for _, al := range airlines {
+		if al.Store == nil {
+			continue
+		}
+		held, err := al.Store.ListPNRs(ctx, 1_000_000)
+		if err != nil {
+			return nil, fmt.Errorf("settle: list %s records: %w", al.Designator, err)
+		}
+		for _, rec := range held {
+			agent := soldThrough(rec, agentSet)
+			if agent == "" {
+				continue
+			}
+			ag := agentNames[agent]
+			if ag.Store != nil {
+				continue // the agent's own book is here and was read above
+			}
+			for _, tk := range rec.Tickets {
+				if tk.Type != "" && tk.Type != pnr.DocTicket || tk.Number.AirlineCode != al.Accounting || tk.IssuedAt.After(day.Add(24*time.Hour)) {
+					continue
+				}
+				doc := tk.Number.AirlineCode + tk.Number.Serial
+				if reported[al.Designator][doc] {
+					continue
+				}
+				if reported[al.Designator] == nil {
+					reported[al.Designator] = map[string]bool{}
+				}
+				reported[al.Designator][doc] = true
+				unverified[al.Designator]++
+				k := key{al.Designator, agent}
+				sold[k] = append(sold[k], transactionFor(rec, tk, ag, p))
+			}
+		}
+	}
+
 	sum := &Summary{Day: day, Statements: map[string]Statement{}}
 	for _, al := range airlines {
 		var offices []bsp.Office
@@ -150,7 +277,7 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 			Cycle:   bsp.Cycle{ProcessingWeek: fmt.Sprintf("%02d%d", day.Month(), (day.Day()-1)/7+1), Number: 1, Ending: day, ReportingEnd: day, Final: true},
 			Offices: offices,
 		}
-		st := Statement{Airline: al.Designator, File: f, Transactions: n}
+		st := Statement{Airline: al.Designator, File: f, Transactions: n, Unverified: unverified[al.Designator]}
 		for oi := range f.Offices {
 			for ti := range f.Offices[oi].Transactions {
 				tot := f.Offices[oi].Transactions[ti].Compute()
@@ -179,6 +306,9 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 					st.Unreported++
 				}
 			}
+			// What the carrier's own copy reported is not a match with
+			// anything: it is one side only.
+			st.Matched -= st.Unverified
 			for doc := range known {
 				if !reported[al.Designator][doc] {
 					st.Unknown++
@@ -194,8 +324,23 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		sum.Matched += st.Matched
 		sum.Unreported += st.Unreported
 		sum.Unknown += st.Unknown
+		sum.Unverified += st.Unverified
 	}
 	return sum, nil
+}
+
+// soldThrough names the agent a record was sold through, when it was: the
+// system that originated it, or one whose locator it carries.
+func soldThrough(rec *pnr.PNR, agents map[string]bool) string {
+	if p := strings.ToUpper(rec.Origin.Party); agents[p] {
+		return p
+	}
+	for _, l := range rec.Locators {
+		if o := strings.ToUpper(l.Owner); agents[o] {
+			return o
+		}
+	}
+	return ""
 }
 
 // transactionFor is one ticket as the plan reports it: the sale, the
