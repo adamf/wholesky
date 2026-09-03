@@ -347,7 +347,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
   <div class="wrap">
     <div class="eyebrow">readiness</div>
     <h2>What jetway needed before any of this was true</h2>
-    <p class="lead">In the order a team would build it. Eight of nine are done in full; the ninth is half done. The weekly archive export the DR section calls for exists too: <code>jetwayctl export --out records.ndjson</code> streams every record a node holds.</p>
+    <p class="lead">In the order a team would build it. Eight of nine are done in full; the ninth runs in CI and lacks only a staging topology. The weekly archive export the DR section calls for exists too: <code>jetwayctl export --out records.ndjson</code> streams every record a node holds.</p>
     <div class="table-wrap"><table>
       <tr><th>#</th><th>item</th><th>state</th><th>what it is</th></tr>
       <tr><td class="mono">1</td><td>A system lease</td><td><span class="tag done">v0.1.48–51</span></td><td>bind links only while holding the system's row; standbys poll and take over; a holder asked to stop drains first and releases after</td></tr>
@@ -358,7 +358,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <tr><td class="mono">6</td><td>Hot peer reload</td><td><span class="tag done">done</span></td><td>SIGHUP re-reads the config and adds new peers; removing one is a restart</td></tr>
       <tr><td class="mono">7</td><td>Metrics for the outbox and the inventory</td><td><span class="tag done">v0.1.53</span></td><td>outbox depth and congestion per peer; inventory decisions by status and per-carrier gauges</td></tr>
       <tr><td class="mono">8</td><td>Rate limiting per peer</td><td><span class="tag done">v0.1.53</span></td><td>per-peer pacing with a shared cap per ingress, and <code>peers[].rate_limit</code> for a peer's own share</td></tr>
-      <tr><td class="mono">9</td><td>Load test as a release gate</td><td><span class="tag open">half</span></td><td>the live invariant check exists (<code>skycheck</code>); not yet a staging topology or a pipeline step</td></tr>
+      <tr><td class="mono">9</td><td>Load test as a release gate</td><td><span class="tag open">most</span></td><td>wholesky's <code>gate</code> workflow boots a world at warp 240 on every push, flies its banks and fails the build on an oversold cabin, a silent shard, or a sky that did not move or sell; a staging instance of the production topology is still open</td></tr>
     </table></div>
     <h3 style="margin-top:30px">Cost, roughly</h3>
     <p class="prose muted">Per region at list prices: three 8-vCPU link instances about $600 a month; a 16-vCPU HA database with a read replica about $3,500; the cross-region DR replica another $1,700; load balancing, edge policy, NAT, logging and monitoring a few hundred. Call it $6,500 a month for one region with DR, which is what one Type B circuit from a network provider used to cost per year in the era the protocol was designed, and about a day of one GDS's segment fees for a mid-sized carrier.</p>

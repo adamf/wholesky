@@ -1,0 +1,29 @@
+# The load test as a release gate. A real world boots on real sockets at
+# warp 240 -- a day in six minutes -- flies its departure banks for two
+# minutes, and is then asked whether its laws held: no cabin over capacity,
+# every shard answering, something flown and something sold.
+name: gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fly-a-day:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: compile a world
+        run: go run ./cmd/worldc -countries "United Kingdom,France,Germany,Spain" -carriers 20 -o /tmp/gate-world.json
+      - name: fly it and check the laws
+        run: scripts/gate.sh /tmp/gate-world.json 150
+      - name: keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-log
+          path: /tmp/gate-skyd.log
