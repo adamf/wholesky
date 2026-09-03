@@ -68,9 +68,14 @@ discounts close while full fare sells to the seat. The forecaster now
 reads the booking curve (additive pickup: what each class has sold plus
 the share of its baseline demand still to come before departure, on the
 world's clock), so a flight selling behind its curve reopens its discounts
-during the day and one ahead of it protects harder. Still missing: a
-forecast learned from history rather than the demand model's own mix, and
-the network kind of RM (bid prices over an O&D) rather than leg-based.
+during the day and one ahead of it protects harder. Network control is on
+too (jetway v0.1.81): the ladders give each leg a bid price -- the fare of
+the cheapest class still open, the displacement cost -- and a connecting
+itinerary on one carrier is accepted only when its through fare covers the
+sum of the legs' bid prices, the additive leg bid-price heuristic. Still
+missing: a forecast learned from history rather than the demand model's
+own mix, and the network linear programme that a large carrier's RM
+department runs in place of the heuristic.
 
 **Interline through check-in (IATCI).** Done (jetway v0.1.61-63, `pkg/iatci`):
 one connection in four crosses carriers, the first carrier's departure

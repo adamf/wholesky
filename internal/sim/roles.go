@@ -932,6 +932,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		t, err := host.Start(ctx, c, s.Flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
+			Tariff:                s.tariff,
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],

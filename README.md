@@ -357,7 +357,9 @@ ladder set by an EMSR-b revenue management controller from a forecaster
 that reads the booking curve on the world's clock (sold so far plus the
 pickup still to come), so a filled 737 confirms what is left, closes its cheap
 classes while full fare is still open, waitlists the next party and
-refuses after that, and the availability it broadcasts says how many seats remain;
+refuses after that, and turns away a connecting passenger whose through
+fare does not cover the seats it would take from two flights' local
+passengers (bid-price control), and the availability it broadcasts says how many seats remain;
 every booking is priced before it sells against a fare filing derived from
 the schedule (jetway's `pkg/fare`: a ladder of classes per market with
 basis codes, advance-purchase and stay rules, change fees and refundability,

@@ -23,6 +23,7 @@ import (
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
 	"github.com/adamf/jetway/pkg/dcs"
+	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/inventory"
 	"github.com/adamf/jetway/pkg/matip"
@@ -160,6 +161,10 @@ type Options struct {
 	// the revenue management forecaster to read the booking curve by; nil
 	// forecasts as if the day had not begun.
 	DayPos func() float64
+	// Tariff prices the forecaster's classes in money, which is what lets
+	// bid-price control hold a connecting passenger's through fare against
+	// the seats it displaces; nil leaves network control off.
+	Tariff fare.Tariff
 	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
 	MaxMessages int
 	MaxRecords  int
@@ -239,20 +244,31 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	// -- a flight selling behind its curve reopens its discounts, one
 	// ahead of it protects harder. The controller re-optimises on every
 	// question.
-	departs := map[string]int{}
+	type legInfo struct {
+		dep int
+		to  string
+	}
+	legs := map[string]legInfo{}
 	for _, f := range append(append([]world.Flight{}, flights...), opts.Marketed...) {
-		departs[f.Carrier+strings.TrimLeft(f.Number, "0")+"/"+f.From] = f.DepMin
+		legs[f.Carrier+strings.TrimLeft(f.Number, "0")+"/"+f.From] = legInfo{dep: f.DepMin, to: f.To}
 	}
 	rm := &inventory.Controller{Capacity: capacity, Forecast: func(carrier, flightNum, wireDate, board, compartment string, seats int) []inventory.ClassDemand {
 		remaining := 1.0
-		if opts.DayPos != nil {
-			if dep, ok := departs[carrier+strings.TrimLeft(flightNum, "0")+"/"+board]; ok && dep > 0 {
-				remaining = (float64(dep) - opts.DayPos()) / float64(dep)
+		var full int64
+		if leg, ok := legs[carrier+strings.TrimLeft(flightNum, "0")+"/"+board]; ok {
+			if opts.DayPos != nil && leg.dep > 0 {
+				remaining = (float64(leg.dep) - opts.DayPos()) / float64(leg.dep)
 			}
+			full = tariff.FullFare(opts.Tariff, carrier, board, leg.to)
 		}
-		return tariff.Pickup(compartment, seats, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining)
+		return tariff.PickupPriced(compartment, seats, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining, full)
 	}}
 	inv.Levels = rm.Levels
+	// Network control: with the forecast in money, a connecting itinerary
+	// must pay for the seats it displaces on every leg.
+	if opts.Tariff != nil {
+		inv.Network = rm
+	}
 
 	// The switch identifies this tenant by the listener it dialled, the way
 	// a real circuit identifies its subscriber. Which client dials depends on

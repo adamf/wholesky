@@ -122,6 +122,11 @@ func TestPickupFollowsTheBookingCurve(t *testing.T) {
 	if nBehind <= nStatic {
 		t.Errorf("behind the curve N should reopen: %d vs static %d", nBehind, nStatic)
 	}
+	// Priced, the fares are money: Y at the market's full fare, N at its share.
+	priced := PickupPriced("Y", 174, nil, 1, 20000)
+	if priced[0].Class != "Y" || priced[0].Fare != 20000 || priced[len(priced)-1].Fare != 0.24*20000 {
+		t.Errorf("priced fares: %v %v", priced[0], priced[len(priced)-1])
+	}
 	// A class sold outside the mix is still demand.
 	odd := Pickup("Y", 10, map[string]int{"Z": 2}, 0.5)
 	found := false

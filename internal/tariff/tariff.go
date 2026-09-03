@@ -180,6 +180,14 @@ func Forecast(compartment string, seats int) []inventory.ClassDemand {
 // discounts reopen, which is what a revenue manager watching the curve
 // would do by hand.
 func Pickup(compartment string, seats int, sold map[string]int, remaining float64) []inventory.ClassDemand {
+	return PickupPriced(compartment, seats, sold, remaining, 0)
+}
+
+// PickupPriced is Pickup with the fares in money: each class's share of
+// the market's full fare, in minor units, so the ladder's bid prices can
+// be held against what a connecting passenger actually pays. A zero full
+// fare leaves the fares as shares of one.
+func PickupPriced(compartment string, seats int, sold map[string]int, remaining float64, fullFare int64) []inventory.ClassDemand {
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -192,7 +200,11 @@ func Pickup(compartment string, seats int, sold map[string]int, remaining float6
 	for _, c := range base {
 		pickup := c.Mean * remaining
 		mean := float64(sold[c.Class]) + pickup
-		out = append(out, inventory.ClassDemand{Class: c.Class, Fare: c.Fare, Mean: mean, StdDev: math.Sqrt(pickup) * 1.25})
+		f := c.Fare
+		if fullFare > 0 {
+			f = c.Fare * float64(fullFare)
+		}
+		out = append(out, inventory.ClassDemand{Class: c.Class, Fare: f, Mean: mean, StdDev: math.Sqrt(pickup) * 1.25})
 		seen[c.Class] = true
 	}
 	// A class sold that the mix does not name -- an override, an odd
@@ -203,10 +215,28 @@ func Pickup(compartment string, seats int, sold map[string]int, remaining float6
 	}
 	for class, n := range sold {
 		if !seen[class] && n > 0 {
-			out = append(out, inventory.ClassDemand{Class: class, Fare: fareOf[class], Mean: float64(n)})
+			f := fareOf[class]
+			if fullFare > 0 {
+				f *= float64(fullFare)
+			}
+			out = append(out, inventory.ClassDemand{Class: class, Fare: f, Mean: float64(n)})
 		}
 	}
 	return out
+}
+
+// FullFare is the market's Y one-way in minor units as the tariff files it,
+// or zero when the tariff has no fare for the market.
+func FullFare(t fare.Tariff, carrier, origin, destination string) int64 {
+	if t == nil {
+		return 0
+	}
+	for _, f := range t.Fares(carrier, origin, destination) {
+		if f.Class == "Y" {
+			return f.OneWay.Amount
+		}
+	}
+	return 0
 }
 
 // Authorizations is the class ladder's nested authorisation levels for a
