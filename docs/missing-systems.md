@@ -39,19 +39,20 @@ and no controller. Adding class authorisations and a nightly optimiser
 would make availability broadcasts change through the day the way they
 do, and give the filler a reason for the fare mix it invents.
 
-**Interline through check-in (IATCI).** A passenger connecting between
-carriers is checked in once and boards both. Today the second carrier's
-DCS learns of the passenger from its own name list and checks them in
-again. IATCI is a real EDIFACT dialogue (PAORES/PAOREQ's cousins for
-check-in: DCQCKI/DCRCKA) between two DCSs, and jetway's EDIFACT stack is
-the natural home.
+**Interline through check-in (IATCI).** Done (jetway v0.1.61-63, `pkg/iatci`):
+one connection in four crosses carriers, the first carrier's departure
+control asks the second's over the switch (DCQCKI), the second seats the
+passenger on its own flight and answers (DCRCKA), and the seat rides on the
+connection. The structures are the PADIS release 01.1 layouts as publicly
+mirrored; the members-only implementation guide was not consulted.
 
-**Schedules distribution (SSIM, ASM/SSM in full).** The world compiles its
-own schedule and pushes cancellations as ASM. An airline publishes its
-schedule as an SSIM file to OAG and the GDSes months out and adjusts it
-with ASM and SSM messages -- equipment changes, time changes, new flights
--- all of which change bookings. jetway parses SSIM and the schedule
-messages; the world uses one message type of them.
+**Schedules distribution (SSIM, ASM/SSM in full).** Partly. An aircraft
+going technical is now a story (jetway v0.1.65): one flight in a hundred
+and fifty is substituted after check-in opens, departure control rebuilds
+the cabin and re-seats or denies boarding, the inventory shrinks to the new
+aircraft, and distribution hears the ASM EQT and queues the bookings. Time
+changes (TIM) and the SSIM file as the schedule's source are not yet
+applied; the world still compiles its own timetable.
 
 **Baggage reconciliation and tracing (BRS, WorldTracer).** Reconciliation
 is done (jetway v0.1.59): at the door every bag the hold reported loaded is
@@ -61,13 +62,12 @@ and the panel shows the count. Tracing is not: WorldTracer is the
 interline system for the bags that got lost, and nothing here loses one
 yet.
 
-**Border and government (APIS, PNRGOV, Secure Flight, timatic).** Every
-international departure sends passenger data to the destination
-government before the aircraft leaves, and US domestic flights vet every
-name against Secure Flight before a boarding pass is issued. These are
-UN/EDIFACT PAXLST messages and a request/response per passenger, and
-they are why a check-in can be refused. The recorded day is domestic
-and so is spared, but a real DCS cannot be.
+**Border and government (APIS, PNRGOV, Secure Flight, timatic).** APIS is
+done (jetway v0.1.64, `pkg/paxlst`, specified against the public
+WCO/IATA/ICAO guide and tested on its worked examples): every international
+door close sends the border control agency the flight-close passenger list,
+and the agency counts travellers by arrival. Secure Flight-style vetting
+before a boarding pass, PNRGOV pushes and timatic are not.
 
 ## Operations, mostly off the wire
 

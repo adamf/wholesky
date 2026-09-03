@@ -51,6 +51,8 @@ type Tenant struct {
 	// are through check-in requests awaiting their DCRCKA.
 	interline      func(f world.Flight) []world.Flight
 	border         string
+	overrides      *equipmentOverrides
+	substituted    map[dcs.Key]string
 	countryOf      func(iata string) string
 	apisSent       map[dcs.Key]int
 	pendingMu      sync.Mutex
@@ -194,7 +196,24 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		Name:       c.Name,
 	}, st, bus, log.With("carrier", c.Designator), []byte("wholesky-"+c.Designator))
 
-	capacity := capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity)
+	base := capacityFor(c.Designator, append(append([]world.Flight{}, flights...), opts.Marketed...), opts.Capacity)
+	// An aircraft substitution changes a leg's cabins for the day; the
+	// override is consulted before the schedule's type.
+	overrides := &equipmentOverrides{by: map[string]string{}}
+	fleet := fleetData()
+	capacity := func(cr, flightNum, wireDate, board string) (map[string]int, bool) {
+		if typ := overrides.get(cr, flightNum, board); typ != "" {
+			if t, ok := fleet.Type(typ); ok {
+				comps := map[string]int{}
+				for _, sec := range t.Cabin.Sections {
+					perRow := len(strings.ReplaceAll(sec.Letters, " ", ""))
+					comps[sec.Compartment] += perRow * (sec.ToRow - sec.FromRow + 1)
+				}
+				return comps, true
+			}
+		}
+		return base(cr, flightNum, wireDate, board)
+	}
 	inv := inventory.New(c.Designator, capacity)
 	inv.Publish(metrics.Default)
 	// Revenue management, leg-based: each cabin sells its classes under
@@ -283,6 +302,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.interline = opts.Interline
 	t.pendingThrough = map[string]throughPending{}
 	t.border, t.countryOf = opts.Border, opts.CountryOf
+	t.overrides = overrides
+	t.substituted = map[dcs.Key]string{}
 	t.apisSent = map[dcs.Key]int{}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
@@ -960,4 +981,28 @@ func (ts throughStation) ThroughCheckIn(ctx context.Context, req dcs.ThroughRequ
 		return &dcs.ThroughResult{}, nil
 	}
 	return ts.t.DCS.ThroughCheckIn(ctx, req)
+}
+
+// equipmentOverrides holds the aircraft type a leg flies today when it is
+// not the schedule's: an AOG substitution, keyed by carrier, flight number
+// and boarding point.
+type equipmentOverrides struct {
+	mu sync.Mutex
+	by map[string]string
+}
+
+func overrideKey(cr, flightNum, board string) string {
+	return cr + "/" + strings.TrimLeft(flightNum, "0") + "/" + board
+}
+
+func (o *equipmentOverrides) get(cr, flightNum, board string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.by[overrideKey(cr, flightNum, board)]
+}
+
+func (o *equipmentOverrides) set(cr, flightNum, board, typ string) {
+	o.mu.Lock()
+	o.by[overrideKey(cr, flightNum, board)] = typ
+	o.mu.Unlock()
 }

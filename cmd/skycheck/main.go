@@ -42,7 +42,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "skycheck:", err)
 		os.Exit(2)
 	}
-	fmt.Printf("%d shards, %d cabins, %d seats sold, %d oversold\n", v.Shards, v.Cabins, v.Sold, len(v.Oversold))
+	fmt.Printf("%d shards, %d cabins, %d seats sold, %d oversold, %d downgauged\n", v.Shards, v.Cabins, v.Sold, len(v.Oversold), v.Downgauged)
 	for _, o := range v.Oversold {
 		fmt.Printf("OVERSOLD %s%s %s %s %s: %d sold of %d\n", o.Carrier, o.Flight, o.Date, o.Board, o.Compartment, o.Sold, o.Seats)
 	}

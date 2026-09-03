@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/adamf/wholesky/internal/host"
 )
@@ -26,6 +27,10 @@ type Invariants struct {
 	Cabins   int        `json:"cabins"`
 	Sold     int        `json:"sold"`
 	Oversold []Oversold `json:"oversold"`
+	// Downgauged counts cabins holding more than the aircraft that took the
+	// flight today has: an aircraft substitution, not an oversell, and the
+	// agents' queue knows.
+	Downgauged int `json:"downgauged,omitempty"`
 }
 
 // OK is whether every law held.
@@ -36,6 +41,7 @@ func (v *Invariants) Merge(o Invariants) {
 	v.Shards += o.Shards
 	v.Cabins += o.Cabins
 	v.Sold += o.Sold
+	v.Downgauged += o.Downgauged
 	v.Oversold = append(v.Oversold, o.Oversold...)
 }
 
@@ -58,6 +64,10 @@ func checkInventories(tenants map[string]*host.Tenant) Invariants {
 			v.Cabins++
 			v.Sold += p.Sold
 			if p.Sold > p.Seats {
+				if t.Downgauged(strings.TrimPrefix(p.Flight, code), p.Board) {
+					v.Downgauged++
+					continue
+				}
 				v.Oversold = append(v.Oversold, Oversold{Carrier: code, Flight: p.Flight, Date: p.Date, Board: p.Board,
 					Compartment: p.Compartment, Seats: p.Seats, Sold: p.Sold})
 			}

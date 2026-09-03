@@ -631,6 +631,11 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 				continue
 			}
 			for _, it := range items {
+				// Only cancellations light an airport; an equipment or time
+				// change queues bookings too, and nothing has closed.
+				if it.Code != "schedule_cnl" {
+					continue
+				}
 				if apt := airportOfReason(it.Reason); apt != "" {
 					sum.Halos[apt]++
 				}

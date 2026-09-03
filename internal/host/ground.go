@@ -862,6 +862,8 @@ type Summary struct {
 	// APIS is how many travellers the border agency was told about at the
 	// door, when the flight crosses one.
 	APIS int `json:"apis,omitempty"`
+	// Substituted describes an aircraft change on the day, when there was one.
+	Substituted string `json:"substituted,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -931,7 +933,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {
@@ -1087,4 +1089,90 @@ func (t *Tenant) apisSentFor(fl *dcs.Flight) int {
 	t.groundMu.Lock()
 	defer t.groundMu.Unlock()
 	return t.apisSent[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
+}
+
+// Substitute is the aircraft going technical before departure: a smaller
+// type from the fleet takes the flight. Departure control rebuilds the cabin
+// and re-seats or displaces, the inventory's cabins shrink to the new
+// aircraft's, and distribution hears the change as an ASM EQT -- under the
+// marketing carrier's code too when the leg is a codeshare -- so the
+// bookings land on the schedule-change queue for agents to reprotect. It
+// returns the type substituted, or "" when the fleet offers nothing smaller.
+func (t *Tenant) Substitute(ctx context.Context, f world.Flight, day time.Time) (string, error) {
+	if t.isCancelled(f, day) {
+		return "", nil
+	}
+	key := flightKey(f, day)
+	fl, err := t.DCS.Flight(key)
+	if err != nil || fl.State == dcs.StateClosed {
+		return "", nil
+	}
+	best := SmallerType(fl.Equipment)
+	if best == "" {
+		return "", nil
+	}
+	reg := "SUB" + strings.TrimLeft(f.Number, "0")
+	ch, err := t.DCS.ChangeEquipment(ctx, key, dcs.Equipment{Type: best, Registration: reg, Dest: f.To, Crew: crewFor(best)})
+	if err != nil {
+		return "", err
+	}
+	t.overrides.set(f.Carrier, f.Number, f.From, best)
+	t.groundMu.Lock()
+	t.substituted[key] = fmt.Sprintf("%s → %s, %d re-seated, %d denied boarding", ch.From, ch.To, len(ch.Reseated), len(ch.Displaced))
+	t.groundMu.Unlock()
+	text := fmt.Sprintf("ASM\nUTC\nEQT\n%s%s/%s\nJ %s\n%s%s %s%s %s%s", f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), best,
+		f.From, f.To, f.From, hhmmOf(f.DepMin), f.To, hhmmOf(f.ArrMin))
+	err = t.SendSchedule(ctx, text)
+	if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" {
+		mtext := fmt.Sprintf("ASM\nUTC\nEQT\n%s%s/%s\nJ %s\n%s%s %s%s %s%s", f.Marketing, f.MarketingNumber, strings.ToUpper(day.Format("02Jan")), best,
+			f.From, f.To, f.From, hhmmOf(f.DepMin), f.To, hhmmOf(f.ArrMin))
+		if merr := t.SendSchedule(ctx, mtext); merr != nil && err == nil {
+			err = merr
+		}
+	}
+	t.log.Info("aircraft substituted", "flight", key.Flight, "board", key.Board, "from", ch.From, "to", ch.To,
+		"kept", ch.Kept, "reseated", len(ch.Reseated), "displaced", len(ch.Displaced))
+	return best, err
+}
+
+func hhmmOf(min int) string {
+	min = ((min % 1440) + 1440) % 1440
+	return fmt.Sprintf("%02d%02d", min/60, min%60)
+}
+
+// Downgauged reports whether a leg flies a smaller aircraft than it sold:
+// its inventory may then rightly hold more than the cabin, and the live
+// invariant check says so rather than calling it an oversell.
+func (t *Tenant) Downgauged(flightNum, board string) bool {
+	return t.overrides != nil && t.overrides.get(t.Carrier.Designator, flightNum, board) != ""
+}
+
+func (t *Tenant) substitutedFor(fl *dcs.Flight) string {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.substituted[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
+}
+
+// SmallerType is the aircraft the fleet would substitute for one that has
+// gone technical: the nearest smaller type, between three fifths and
+// nineteen twentieths of the seats -- a real substitution, not a toy -- or
+// "" when the fleet offers none.
+func SmallerType(current string) string {
+	fleet := fleetData()
+	cur, ok := fleet.Type(current)
+	if !ok {
+		return ""
+	}
+	have := cur.Cabin.Seats()
+	best, bestSeats := "", 0
+	for code, at := range fleet.Types {
+		n := at.Cabin.Seats()
+		if n >= have || n < have*3/5 || n > have*19/20 {
+			continue
+		}
+		if n > bestSeats || (n == bestSeats && code < best) {
+			best, bestSeats = code, n
+		}
+	}
+	return best
 }

@@ -1371,6 +1371,16 @@ var groundEvents = []groundEvent{
 	{150, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 150)
 	}},
+	{110, "aircraft substitution", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		// One flight in a hundred and fifty goes technical after check-in
+		// has opened: a smaller aircraft takes it, the cabin is re-seated,
+		// distribution hears the EQT.
+		if aogHash(f.Carrier+f.Number+day.Format("0102"))%150 != 0 {
+			return nil
+		}
+		_, err := t.Substitute(ctx, f, day)
+		return err
+	}},
 	{120, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 120)
 	}},
@@ -2129,4 +2139,18 @@ func (s *Sim) countryOf(iata string) string {
 		return a.Country
 	}
 	return ""
+}
+
+// aogHash spreads the day's technical failures over the schedule
+// deterministically: the same flight goes technical on the same day of
+// every run, so a story can be found again.
+func aogHash(key string) int {
+	h := 0
+	for _, r := range key {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return h
 }
