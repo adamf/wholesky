@@ -64,6 +64,11 @@ type Statement struct {
 	// reported from the carrier's copy alone because the agent's book is
 	// not on this machine (Unverified).
 	Matched, Unreported, Unknown, Unverified int
+	// Memos is how many agency debit and credit memos the carrier raised
+	// against the reported documents, and MemoAmount their net: debits
+	// positive, credits negative.
+	Memos      int
+	MemoAmount int64
 	// Peer is the machine that holds this statement's file when it is not
 	// this one, for a federated view.
 	Peer string
@@ -82,6 +87,8 @@ type Summary struct {
 	Unreported   int                  `json:"unreported"`
 	Unknown      int                  `json:"unknown"`
 	Unverified   int                  `json:"unverified"`
+	Memos        int                  `json:"memos"`
+	MemoAmount   int64                `json:"memo_amount"`
 	Statements   map[string]Statement `json:"-"`
 }
 
@@ -98,6 +105,8 @@ type Row struct {
 	Unreported   int    `json:"unreported"`
 	Unknown      int    `json:"unknown"`
 	Unverified   int    `json:"unverified"`
+	Memos        int    `json:"memos"`
+	MemoAmount   int64  `json:"memo_amount"`
 	File         string `json:"file"`
 }
 
@@ -112,7 +121,7 @@ func (s *Summary) AsView() View {
 	v := View{Summary: s}
 	for code, st := range s.Statements {
 		v.Rows = append(v.Rows, Row{Airline: code, Transactions: st.Transactions, Refunds: st.Refunds, Gross: st.Gross, Remittance: st.Remittance,
-			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, Unverified: st.Unverified,
+			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, Unverified: st.Unverified, Memos: st.Memos, MemoAmount: st.MemoAmount,
 			File: "/settlement/" + code + ".hot"})
 	}
 	sort.Slice(v.Rows, func(i, j int) bool { return v.Rows[i].Gross > v.Rows[j].Gross })
@@ -139,6 +148,8 @@ func Merge(day time.Time, views map[string]View) *Summary {
 			st.Unreported += r.Unreported
 			st.Unknown += r.Unknown
 			st.Unverified += r.Unverified
+			st.Memos += r.Memos
+			st.MemoAmount += r.MemoAmount
 			if st.Peer == "" || r.Transactions > 0 {
 				st.Peer = peer
 			}
@@ -156,6 +167,8 @@ func Merge(day time.Time, views map[string]View) *Summary {
 		out.Unreported += st.Unreported
 		out.Unknown += st.Unknown
 		out.Unverified += st.Unverified
+		out.Memos += st.Memos
+		out.MemoAmount += st.MemoAmount
 	}
 	return out
 }
@@ -265,6 +278,28 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 
 	sum := &Summary{Day: day, Statements: map[string]Statement{}}
 	for _, al := range airlines {
+		// The carrier's own book: which of its documents it holds, and what
+		// its copy of each says the passenger paid, for the memos.
+		var known map[string]bool
+		copies := map[string]int64{}
+		if al.Store != nil {
+			held, err := al.Store.ListPNRs(ctx, 1_000_000)
+			if err != nil {
+				return nil, fmt.Errorf("settle: list %s records: %w", al.Designator, err)
+			}
+			known = map[string]bool{}
+			for _, rec := range held {
+				for _, tk := range rec.Tickets {
+					if tk.Number.AirlineCode == al.Accounting && (tk.Type == "" || tk.Type == pnr.DocTicket) {
+						doc := tk.Number.AirlineCode + tk.Number.Serial
+						known[doc] = true
+						if base, tax, ok := priceOf(rec, tk); ok {
+							copies[doc] = base + tax
+						}
+					}
+				}
+			}
+		}
 		var offices []bsp.Office
 		codes := make([]string, 0, len(agentNames))
 		for d := range agentNames {
@@ -277,6 +312,7 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 			if len(txs) == 0 {
 				continue
 			}
+			txs = append(txs, p.memosFor(al, d, day, txs, copies)...)
 			sort.Slice(txs, func(i, j int) bool { return txs[i].Document < txs[j].Document })
 			offices = append(offices, bsp.Office{Agent: agentCode(d), RemittanceEnd: day, Currency: p.Currency, Transactions: txs})
 			n += len(txs)
@@ -293,8 +329,12 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		st := Statement{Airline: al.Designator, File: f, Transactions: n, Unverified: unverified[al.Designator]}
 		for oi := range f.Offices {
 			for ti := range f.Offices[oi].Transactions {
-				if f.Offices[oi].Transactions[ti].Code == bsp.TransRefund {
+				switch f.Offices[oi].Transactions[ti].Code {
+				case bsp.TransRefund:
 					st.Refunds++
+				case bsp.TransADM, bsp.TransACM:
+					st.Memos++
+					st.MemoAmount += f.Offices[oi].Transactions[ti].Fare
 				}
 				tot := f.Offices[oi].Transactions[ti].Compute()
 				st.Gross += tot.Gross
@@ -302,19 +342,7 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 				st.Commission += tot.Commission
 			}
 		}
-		if al.Store != nil {
-			held, err := al.Store.ListPNRs(ctx, 1_000_000)
-			if err != nil {
-				return nil, fmt.Errorf("settle: list %s records: %w", al.Designator, err)
-			}
-			known := map[string]bool{}
-			for _, rec := range held {
-				for _, tk := range rec.Tickets {
-					if tk.Number.AirlineCode == al.Accounting && (tk.Type == "" || tk.Type == pnr.DocTicket) {
-						known[tk.Number.AirlineCode+tk.Number.Serial] = true
-					}
-				}
-			}
+		if known != nil {
 			for doc := range reported[al.Designator] {
 				if known[doc] {
 					st.Matched++
@@ -342,8 +370,80 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 		sum.Unreported += st.Unreported
 		sum.Unknown += st.Unknown
 		sum.Unverified += st.Unverified
+		sum.Memos += st.Memos
+		sum.MemoAmount += st.MemoAmount
 	}
 	return sum, nil
+}
+
+// memosFor is the carrier's agency debit and credit memos against one
+// agent's sales: where the carrier's own copy of a ticketed record prices
+// the passenger differently from what the agent reported, the carrier
+// debits the shortfall or credits the excess, naming the document in the
+// memo's BKS45. Only sales are compared -- a refund or an exchange settles
+// on its own document -- and only where the carrier's copy is priced;
+// the world's carriers reprice from the same tariff the agents sell from,
+// so a difference here is a real disagreement, not noise, and there are
+// few of them. A carrier whose book is not on this machine raises none.
+func (p *Plan) memosFor(al Airline, agent string, day time.Time, sales []bsp.Transaction, copies map[string]int64) []bsp.Transaction {
+	if len(copies) == 0 {
+		return nil
+	}
+	var memos []bsp.Transaction
+	for _, tx := range sales {
+		if tx.Code != bsp.TransSale || tx.OriginalDocument != "" {
+			continue
+		}
+		carrierTotal, ok := copies[tx.Document]
+		if !ok {
+			continue
+		}
+		reported := tx.Fare
+		for _, t := range tx.Taxes {
+			reported += t.Amount
+		}
+		diff := carrierTotal - reported
+		if diff == 0 {
+			continue
+		}
+		p.Sequence["memo/"+al.Designator]++
+		memo := bsp.Transaction{
+			Code: bsp.TransADM, Issued: day, Agent: tx.Agent, ReportingSystem: tx.ReportingSystem, Currency: p.Currency,
+			Document:        al.Accounting + fmt.Sprintf("%010d", 9_000_000_000+p.Sequence["memo/"+al.Designator]),
+			RelatedDocument: tx.Document, RelatedIssued: tx.Issued, MemoReason: bsp.MemoFareDifference,
+			Fare: diff, Passenger: tx.Passenger, Locator: tx.Locator, TicketingMode: "/",
+			Payments: []bsp.Payment{{Type: bsp.PaymentCash, Amount: diff}},
+		}
+		if diff < 0 {
+			memo.Code = bsp.TransACM
+		}
+		memo.CheckDigit, _ = bsp.CheckDigit(memo.Document)
+		memos = append(memos, memo)
+	}
+	return memos
+}
+
+// priceOf is what a record says one ticket's passenger paid: the
+// passenger's own base when the pricing names it, else an even share of
+// the record's, with the taxes shared evenly.
+func priceOf(rec *pnr.PNR, tk pnr.Ticket) (base, tax int64, ok bool) {
+	if rec.Pricing == nil || len(rec.Passengers) == 0 {
+		return 0, 0, false
+	}
+	n := int64(len(rec.Passengers))
+	base = rec.Pricing.Base / n
+	for _, pp := range rec.Pricing.Passengers {
+		if pp.Ref == tk.PaxRef {
+			base = 0
+			for _, a := range pp.Segments {
+				base += a
+			}
+		}
+	}
+	if rec.Pricing.Taxes > 0 {
+		tax = rec.Pricing.Taxes / n
+	}
+	return base, tax, true
 }
 
 // WriteRET is the agent's side of the exchange: the Agent Reporting Data
@@ -438,20 +538,10 @@ func transactionFor(rec *pnr.PNR, tk pnr.Ticket, ag Agent, p *Plan) bsp.Transact
 	}
 	// The price: this passenger's base when the pricing names it, else an
 	// even share; taxes shared evenly across the record's passengers.
-	if rec.Pricing != nil && len(rec.Passengers) > 0 {
-		n := int64(len(rec.Passengers))
-		base := rec.Pricing.Base / n
-		for _, pp := range rec.Pricing.Passengers {
-			if pp.Ref == tk.PaxRef {
-				base = 0
-				for _, a := range pp.Segments {
-					base += a
-				}
-			}
-		}
+	if base, tax, ok := priceOf(rec, tk); ok {
 		tx.Fare = base
-		if rec.Pricing.Taxes > 0 {
-			tx.Taxes = []bsp.Tax{{Code: "XT", Amount: rec.Pricing.Taxes / n}}
+		if tax > 0 {
+			tx.Taxes = []bsp.Tax{{Code: "XT", Amount: tax}}
 		}
 		cur := rec.Pricing.Currency
 		if cur == "" {

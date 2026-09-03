@@ -386,6 +386,7 @@ async function showFlight(p){
       if(dcs.substituted) h+="<div class='row' style='color:#e0b93c'>aircraft substituted: "+esc(dcs.substituted)+"</div>";
       if(dcs.retimed) h+="<div class='row' style='color:#e0b93c'>retimed: "+esc(dcs.retimed)+"</div>";
       if(dcs.rushed) h+="<div class='row'>bags: "+esc(dcs.rushed)+"</div>";
+      if(dcs.traced) h+="<div class='row'>tracing: "+esc(dcs.traced)+"</div>";
       if(dcs.apis) h+="<div class='row'>advance passenger information: "+dcs.apis+" travellers sent to the border agency at the door</div>";
       if(dcs.pnrgov) h+="<div class='row'>PNR push: "+dcs.pnrgov+" records to the state's passenger information unit</div>";
       if(dcs.loadsheet) h+="<div class='row'><a class='tog' onclick=\"const x=this.parentNode.nextSibling;x.style.display=x.style.display==='none'?'block':'none'\">loadsheet</a></div><pre style='display:none'>"+esc(dcs.loadsheet)+"</pre>";

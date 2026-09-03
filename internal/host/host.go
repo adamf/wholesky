@@ -22,6 +22,7 @@ import (
 	"github.com/adamf/jetway/pkg/ats"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
+	"github.com/adamf/jetway/pkg/baggage"
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/gateway"
@@ -64,8 +65,25 @@ type Tenant struct {
 	// rushed describes the short-shipped bags a departure sent on after it,
 	// and rushIn counts the unaccompanied bags each of this carrier's
 	// stations has been told to expect.
-	rushed         map[dcs.Key]string
-	rushIn         map[string]int
+	rushed map[dcs.Key]string
+	rushIn map[string]int
+	// The bag office (tracing.go): bags a departure left behind by the
+	// flight that should have carried them and by the flight rushing them,
+	// the AHL files open by tag, the panel's line per departure, the
+	// counters, and the sender tests substitute.
+	shortAt     map[dcs.Key][]shortBag
+	rushTags    map[dcs.Key][]shortBag
+	openAHL     map[string]*baggage.TracingFile
+	traced      map[dcs.Key]string
+	tracing     Tracing
+	tracingSeq  int
+	tracingSend func(ctx context.Context, from string, addrs []string, text, kind string) error
+	// The network programme (network.go) and what it reads.
+	net            *networkRM
+	dayPos         func() float64
+	tariff         fare.Tariff
+	capacity       inventory.Capacity
+	bookingDate    time.Time
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
 	Carrier        world.Carrier
@@ -349,6 +367,11 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.retimed = map[dcs.Key]string{}
 	t.rushed = map[dcs.Key]string{}
 	t.rushIn = map[string]int{}
+	t.shortAt = map[dcs.Key][]shortBag{}
+	t.rushTags = map[dcs.Key][]shortBag{}
+	t.openAHL = map[string]*baggage.TracingFile{}
+	t.traced = map[dcs.Key]string{}
+	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
@@ -356,6 +379,13 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	linkCtx, linkCancel := context.WithCancel(ctx)
 	t.linkCancel = linkCancel
 	go t.runLink(linkCtx)
+	// The network programme prices the legs over the ladders' heuristic
+	// once the world has a clock and a tariff to read; see network.go.
+	if opts.Tariff != nil && opts.DayPos != nil {
+		t.net = &networkRM{}
+		rm.BidPrice = t.BidPrice
+		go t.runNetwork(linkCtx, 30*time.Second)
+	}
 	interval := opts.AVSInterval
 	if interval <= 0 {
 		interval = availabilityInterval
@@ -562,6 +592,11 @@ func (t *Tenant) Arrive(ctx context.Context, f world.Flight, day time.Time, reg 
 	text, err := m.Build()
 	if err != nil {
 		return err
+	}
+	// The arrival station's bag office: the bags that did not come, and
+	// the ones that came without their passengers.
+	if err := t.bagOffice(ctx, f, day); err != nil {
+		t.log.Debug("bag office", "flight", f.Carrier+f.Number, "err", err)
 	}
 	// The flight has landed; departure control's record of it has done its
 	// work and the ledger holds every message it produced.

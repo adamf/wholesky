@@ -1,6 +1,7 @@
 package settle
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -170,5 +171,82 @@ func TestExchangedDocumentCarriesItsOriginalIssue(t *testing.T) {
 	}
 	if len(reissue.Payments) != 2 || reissue.Payments[0].Type != bsp.PaymentExchange || reissue.Payments[0].Amount != reissue.Total || reissue.Payments[1].Type != bsp.PaymentCash || reissue.Payments[1].Amount != 0 || reissue.Payments[1].Remittance != 0 || reissue.CommissionAmount != 0 {
 		t.Errorf("an even exchange remits nothing new: %+v", reissue.Payments)
+	}
+}
+
+// Where the carrier's copy of a record prices the passenger above what the
+// agent reported, the carrier debits the agent the difference; below, it
+// credits. Each memo names the document it corrects, and the file carries
+// it in the handbook's layout and reads it back.
+func TestPlanRaisesMemosWhereTheCarrierPricesDifferently(t *testing.T) {
+	ctx := context.Background()
+	agent := store.NewMem()
+	carrier := store.NewMem()
+	copyOf := func(r *pnr.PNR, loc string, price int64) *pnr.PNR {
+		c := *r
+		c.RecordLocator = loc
+		c.Locators = []pnr.ExternalLocator{{Owner: "1G", Value: r.RecordLocator}}
+		c.Pricing = &pnr.Pricing{Currency: "USD", Base: price, Taxes: price / 10, Total: price + price/10}
+		return &c
+	}
+	under := ticketedRecord("UNDER1", "1G", "125", "2400000011", 50000) // agent reported 55000; carrier says 66000
+	over := ticketedRecord("OVER01", "1G", "125", "2400000012", 50000)  // carrier says 44000
+	same := ticketedRecord("SAME01", "1G", "125", "2400000013", 50000)  // agree
+	for _, r := range []*pnr.PNR{under, over, same} {
+		agent.CreatePNR(ctx, r, nil)
+	}
+	carrier.CreatePNR(ctx, copyOf(under, "BAUND1", 60000), nil)
+	carrier.CreatePNR(ctx, copyOf(over, "BAOVR1", 40000), nil)
+	carrier.CreatePNR(ctx, copyOf(same, "BASAM1", 50000), nil)
+
+	p := &Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	sum, err := p.Run(ctx, day, []Agent{{Designator: "1G", Store: agent}}, []Airline{{Designator: "BA", Accounting: "125", Store: carrier}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := sum.Statements["BA"]
+	if st.Memos != 2 || st.MemoAmount != 11000-11000 || st.Transactions != 5 {
+		t.Fatalf("memos %d net %d transactions %d", st.Memos, st.MemoAmount, st.Transactions)
+	}
+	if sum.Memos != 2 {
+		t.Errorf("summary memos %d", sum.Memos)
+	}
+	var adm, acm *bsp.Transaction
+	for _, o := range st.File.Offices {
+		for i := range o.Transactions {
+			switch o.Transactions[i].Code {
+			case bsp.TransADM:
+				adm = &o.Transactions[i]
+			case bsp.TransACM:
+				acm = &o.Transactions[i]
+			}
+		}
+	}
+	if adm == nil || adm.RelatedDocument != "1252400000011" || adm.Fare != 11000 || adm.MemoReason != bsp.MemoFareDifference {
+		t.Errorf("debit memo %+v", adm)
+	}
+	if acm == nil || acm.RelatedDocument != "1252400000012" || acm.Fare != -11000 {
+		t.Errorf("credit memo %+v", acm)
+	}
+	// The written file carries the memos' related documents back.
+	var buf bytes.Buffer
+	if err := st.File.Write(&buf); err != nil {
+		t.Fatal(err)
+	}
+	back, err := bsp.Parse(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, o := range back.Offices {
+		for _, tx := range o.Transactions {
+			if (tx.Code == bsp.TransADM || tx.Code == bsp.TransACM) && tx.RelatedDocument != "" {
+				found++
+			}
+		}
+	}
+	if found != 2 {
+		t.Errorf("memos read back with their related documents: %d", found)
 	}
 }

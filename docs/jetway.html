@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.79</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.84</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -140,7 +140,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <tr><td>distribution · HTTP</td><td class="mono">NDC OrderCreateRQ · OrderRetrieveRQ · OrderCancelRQ · OrderViewRS</td></tr>
           <tr><td>availability &amp; schedule</td><td class="mono">AVS · SSM · ASM (CNL, EQT, TIM applied) · SSIM</td></tr>
           <tr><td>reservations → airport</td><td class="mono">PNL (multi-part) · ADL</td></tr>
-          <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · BUM (rush bag) · loadsheet (AHM 560)</td></tr>
+          <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · BUM (rush bag) · AHL · OHD · FWD (tracing files) · loadsheet (AHM 560)</td></tr>
           <tr><td>aircraft &amp; operations</td><td class="mono">MVT · MVA · DIV · ACARS OOOI (OUT OFF ON IN)</td></tr>
           <tr><td>air traffic services</td><td class="mono">AFTN envelope · FPL · DEP · ARR · DLA · CNL · CHG</td></tr>
           <tr><td>transports</td><td class="mono">Type B over framed TCP · MATIP (RFC 2351) · EDIFACT over TCP · HTTPS with mutual TLS · file drop · dialled trunk links between switches (link_dial + via routing)</td></tr>
@@ -167,7 +167,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li>Opens the flight from the name list; <b>checks in</b> with seat assignments by cabin and bag tags; applies <b>ADL</b> amendments.</li>
           <li><b>Boards</b>, closes the counter and the door on the clock; produces <b>PFS, PTM, PSM, ETL, LDM, CPM</b> to their addresses.</li>
           <li><b>Load control</b> by the AHM 560/565 index method, a legal <b>loadsheet</b> per departure.</li>
-          <li><b>Reconciles the hold against the cabin</b> at the door: a loaded bag whose passenger did not board holds the flight until it is pulled; a boarded passenger's bag never loaded is named for the rush and announced ahead of itself to the arrival station (BUM). <b>Offloads</b> on cancellation.</li>
+          <li><b>Reconciles the hold against the cabin</b> at the door: a loaded bag whose passenger did not board holds the flight until it is pulled; a boarded passenger's bag never loaded is named for the rush and announced ahead of itself to the arrival station (BUM); the station <b>traces</b> it: an AHL when its passenger arrives without it, an OHD when it arrives alone, matched on the tag and forwarded (a profile; WorldTracer's formats are the vendor's). <b>Offloads</b> on cancellation.</li>
           <li><b>Through check-in</b> across carriers over IATCI: accepts another airline's connecting passengers by name, seats them and answers per passenger; asks the onward carrier for its own passengers and records the seat it gave.</li>
           <li><b>Changes the aircraft</b> under a checked-in flight: rebuilds the cabin from the new type, keeps every seat that still exists, re-seats the rest and puts whoever no longer fits on standby with a denied-boarding alert.</li>
           <li><b>Tells the state</b>: the APIS passenger list at the door (PAXLST) and the PNR push with each traveller's seat, sequence and bags (PNRGOV), both to the public guides.</li>
@@ -308,7 +308,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       </div>
       <div class="card">
         <h3>pkg/bsp <span class="tag spec">DISH 23 specified</span></h3>
-        <p>Settlement: the Airline Accounting/Sales data file (HOT) a Billing and Settlement Plan hands each airline for its agents' sales, written and read to IATA's public handbook, column by column. Sales and refunds, over-punch signing, the document-amount, commission and remittance arithmetic of section 6.7, office, cycle and file totals; tested against the handbook's own worked figures. Ticket numbers reach teletype carriers as SSR TKNE so their books reconcile.</p>
+        <p>Settlement: the Airline Accounting/Sales data file (HOT) a Billing and Settlement Plan hands each airline for its agents' sales, written and read to IATA's public handbook, column by column. Sales and refunds, over-punch signing, the document-amount, commission and remittance arithmetic of section 6.7, office, cycle and file totals; tested against the handbook's own worked figures. Exchanges carry their original issue (BKS46), agency debit and credit memos name the document they correct (BKS45), and the agents' side, the RET of chapter 5, is written and read too. Ticket numbers reach teletype carriers as SSR TKNE so their books reconcile.</p>
       </div>
       <div class="card">
         <h3>pkg/prorate <span class="tag inf">method public · provisos not</span></h3>
@@ -320,7 +320,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <ul>
           <li><b>Cabins per leg</b> keyed by carrier, flight, date, boarding point and compartment, with booking classes mapped onto the cabins the aircraft has.</li>
           <li><b>Nested class authorisations</b>: a full cabin waitlists, a closed class with seats still in the cabin refuses, the last seats go at the higher fares.</li>
-          <li><b>Revenue management</b>: an EMSR-b controller sets the authorisations from a demand forecast by class (fare, mean, spread), pooling the classes above each discount and protecting seats until the marginal seat is worth less than the discount in hand; re-optimised on every question and told what each class has sold, so a forecaster reading the booking curve moves the ladder through the day. Tested against the normal table, not the code.</li>
+          <li><b>Revenue management</b>: an EMSR-b controller sets the authorisations from a demand forecast by class (fare, mean, spread), pooling the classes above each discount and protecting seats until the marginal seat is worth less than the discount in hand; re-optimised on every question and told what each class has sold, so a forecaster reading the booking curve moves the ladder through the day. Tested against the normal table, not the code. <b>Network control</b>: a connecting itinerary must cover the sum of its legs' bid prices -- the ladders' displacement costs, or the duals of the deterministic network programme (a plain simplex over legs, itineraries and demand) when the caller supplies them.</li>
           <li><b>Waitlists</b> a tenth of the cabin deep, at least two; overrides per class.</li>
           <li><b>Rebuilt from the book of record</b> at boot, because anything that remembers sold seats in memory oversells after a restart. Publishes per-carrier sold, waitlisted and full-cabin gauges and counts every answer by status.</li>
         </ul>

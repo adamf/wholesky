@@ -777,13 +777,19 @@ func (t *Tenant) rushBags(ctx context.Context, f world.Flight, day time.Time, fl
 	}
 	short := fl.Reconciliation.NotLoaded
 	key := dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}
+	bags := make([]shortBag, 0, len(short))
+	for _, b := range short {
+		bags = append(bags, shortBag{tag: b.Tag, surname: b.Surname, ex: key})
+	}
 	next, ok := rushFlightFor(t.flights, f)
 	if !ok {
+		t.recordShort(f, day, nil, bags)
 		t.groundMu.Lock()
 		t.rushed[key] = fmt.Sprintf("%d short-shipped, no later flight today: held for tomorrow", len(short))
 		t.groundMu.Unlock()
 		return nil
 	}
+	t.recordShort(f, day, &next, bags)
 	wire := strings.ToUpper(day.Format("02Jan"))
 	var firstErr error
 	for _, b := range short {
@@ -962,6 +968,10 @@ type Summary struct {
 	Retimed string `json:"retimed,omitempty"`
 	// Rushed describes what became of the door's short-shipped bags.
 	Rushed string `json:"rushed,omitempty"`
+	// Traced is the bag office's story of them at the other end: the AHL
+	// files raised when their passengers arrived without them, and the
+	// matches that forwarded them.
+	Traced string `json:"traced,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -1031,7 +1041,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Rushed: t.rushedFor(fl), Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Rushed: t.rushedFor(fl), Traced: t.tracedFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {

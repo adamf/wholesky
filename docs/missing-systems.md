@@ -58,8 +58,16 @@ value as its form of payment (BKP84 EX). The RET the agents would
 send the plan is written too (jetway v0.1.82, chapter 5 of the same
 handbook; `GET /ret/<gds>.txt` on any machine that holds a distribution
 system's book), though the plan here still reads the books directly rather
-than the file. Not done: ADMs/ACMs, net reporting and card data, the Prorate Manual's provisos (minima, factors,
-special agreements), and rejections and billing memos between the carriers.
+than the file. Agency memos are done (jetway v0.1.83): where a carrier's
+own copy of a record prices the passenger differently from what the agent
+reported, the carrier debits the shortfall (ADM) or credits the excess
+(ACM), each memo naming the document it corrects in BKS45 as the handbook
+lays it out; the statement counts them and their net. Honest caveat: the
+world's agents and carriers price from the same tariff, so memos are rare
+by construction, and a machine that holds only one side raises none. Not
+done: net reporting and card data, the Prorate Manual's provisos (minima,
+factors, special agreements), and rejections and billing memos between
+the carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):
 `pkg/inventory` sells under nested class authorisations, and an EMSR-b
@@ -75,10 +83,18 @@ during the day and one ahead of it protects harder. Network control is on
 too (jetway v0.1.81): the ladders give each leg a bid price -- the fare of
 the cheapest class still open, the displacement cost -- and a connecting
 itinerary on one carrier is accepted only when its through fare covers the
-sum of the legs' bid prices, the additive leg bid-price heuristic. Still
-missing: a forecast learned from history rather than the demand model's
-own mix, and the network linear programme that a large carrier's RM
-department runs in place of the heuristic.
+sum of the legs' bid prices, the additive leg bid-price heuristic. The
+network linear programme is on top of it (jetway v0.1.83-84): every
+thirty seconds each carrier solves, over each point its book connects
+through, the deterministic programme -- seats to itineraries by fare
+within the legs departing in the next four hours and each product's
+demand still to come (the forecaster's by class for the locals, the
+booking curve's for the connecting paths actually sold) -- and the duals
+of the leg capacities replace the ladders' displacement costs as bid
+prices; a leg the programme did not reach falls back to its ladder. It is
+a plain dense simplex, so one connecting point is bounded at a hundred
+and twenty legs, the most-booked paths kept. Still missing: a forecast
+learned from history rather than the demand model's own mix.
 
 **Interline through check-in (IATCI).** Done (jetway v0.1.61-63, `pkg/iatci`):
 one connection in four crosses carriers, the first carrier's departure
@@ -111,10 +127,17 @@ and the panel shows the count. The rush is done too: a short-shipped bag
 follows on the carrier's next flight over the sector, sortation is told to
 load it and the arrival station's bag office is told to expect a bag
 without its passenger (a BUM, jetway v0.1.79), and the panel says which
-flight it rode. Tracing files are not: WorldTracer is SITA's system for the
-bags nobody can find (AHL, OHD, FWD), its formats are the vendor's, and the
-only reproductions are training guides; nothing here loses a bag beyond
-the next flight.
+flight it rode. Tracing files are done as a profile (jetway v0.1.83): when
+the passengers' flight lands without their bags the arrival station's
+tracing desk opens an AHL per bag; when the rush flight lands the bags
+come off alone and the desk raises an OHD each, matches them to the open
+files on the tag, sends the FWD that delivers the bag and closes the
+file; the panel tells the story per departure and the bag office's
+counters run on the carrier. WorldTracer is SITA's system and its formats
+are the vendor's -- the element codes here are the ones handler training
+material reproduces, unknown elements kept verbatim -- so this is the
+world's profile of a tracing file, not the vendor's format. Nothing here
+loses a bag beyond the next flight.
 
 **Border and government (APIS, PNRGOV, Secure Flight, timatic).** APIS is
 done (jetway v0.1.64, `pkg/paxlst`, specified against the public
