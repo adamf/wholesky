@@ -135,3 +135,40 @@ func TestRefundedDocumentIsReportedAsARefund(t *testing.T) {
 		t.Errorf("a later refund reported early: %+v", sum.Statements["BA"])
 	}
 }
+
+// A reissued document is reported with the one it replaced behind it and
+// the old document's value as its form of payment: an even exchange
+// collects nothing new in cash and earns no new commission.
+func TestExchangedDocumentCarriesItsOriginalIssue(t *testing.T) {
+	ctx := context.Background()
+	agent := store.NewMem()
+	rec := ticketedRecord("EXCHNG", "1G", "125", "2400000011", 50000)
+	old := rec.Tickets[0]
+	old.Coupons[0].Status = pnr.CouponExchanged
+	from := old.Number
+	newT := pnr.Ticket{Number: pnr.TicketNumber{AirlineCode: "125", Serial: "2400000012"}, PaxRef: 1, IssuedAt: old.IssuedAt.AddDate(0, 0, 2), IssuedBy: "1G",
+		Coupons: []pnr.Coupon{{Number: 1, SegmentRef: 1, Status: pnr.CouponOpen}}, ExchangedFrom: &from}
+	rec.Tickets = []pnr.Ticket{old, newT}
+	agent.CreatePNR(ctx, rec, nil)
+	p := &Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	sum, err := p.Run(ctx, time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC), []Agent{{Designator: "1G", Store: agent}}, []Airline{{Designator: "BA", Accounting: "125"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := sum.Statements["BA"]
+	if st.Transactions != 2 {
+		t.Fatalf("the old sale and the reissue: %+v", st)
+	}
+	var reissue *bsp.Transaction
+	for i := range st.File.Offices[0].Transactions {
+		if tx := &st.File.Offices[0].Transactions[i]; tx.Document == "1252400000012" {
+			reissue = tx
+		}
+	}
+	if reissue == nil || reissue.OriginalDocument != "1252400000011" || !reissue.OriginalIssued.Equal(old.IssuedAt) || reissue.OriginalAgent == "" {
+		t.Fatalf("reissue: %+v", reissue)
+	}
+	if len(reissue.Payments) != 2 || reissue.Payments[0].Type != bsp.PaymentExchange || reissue.Payments[0].Amount != reissue.Total || reissue.Payments[1].Type != bsp.PaymentCash || reissue.Payments[1].Amount != 0 || reissue.Payments[1].Remittance != 0 || reissue.CommissionAmount != 0 {
+		t.Errorf("an even exchange remits nothing new: %+v", reissue.Payments)
+	}
+}

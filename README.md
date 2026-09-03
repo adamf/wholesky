@@ -416,7 +416,9 @@ mileage (jetway's `pkg/prorate`) and invoiced, less the interline service
 charge, at `/billing.json`; refunds -- a ticketed booking that cancels is
 refunded first, and the plan reports the document again as a refund with
 the amounts reversed; a bag the hold never reported rushed on the next
-flight over the sector, with a BUM ahead of it to the arrival station;
+flight over the sector, with a BUM ahead of it to the arrival station; a reprotected passenger's
+ticket reissued over the new itinerary (an involuntary exchange), which the
+settlement plan carries with the original issue behind it;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across

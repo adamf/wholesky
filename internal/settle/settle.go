@@ -454,6 +454,21 @@ func transactionFor(rec *pnr.PNR, tk pnr.Ticket, ag Agent, p *Plan) bsp.Transact
 	for _, t := range tx.Taxes {
 		tot += t.Amount
 	}
+	if tk.ExchangedFrom != nil {
+		// A reissue: the document it replaces is the qualifying issue, and
+		// its value is the form of payment. An even exchange collects
+		// nothing new and earns no new commission.
+		tx.OriginalDocument = tk.ExchangedFrom.AirlineCode + tk.ExchangedFrom.Serial
+		tx.OriginalAgent = agentCode(ag.Designator)
+		for _, o := range rec.Tickets {
+			if o.Number == *tk.ExchangedFrom {
+				tx.OriginalIssued = o.IssuedAt
+			}
+		}
+		tx.CommissionRate = 0
+		tx.Payments = []bsp.Payment{{Type: bsp.PaymentExchange, Amount: tot}}
+		return tx
+	}
 	tx.Payments = []bsp.Payment{{Type: bsp.PaymentCash, Amount: tot}}
 	return tx
 }

@@ -233,7 +233,9 @@ type Sim struct {
 	// Rebooked counts passengers the irops engines moved off cancelled
 	// flights onto seats that were open.
 	Rebooked atomic.Int64
-	irops    []*irops.Engine
+	// Exchanged counts the involuntary reissues that followed a reprotection.
+	Exchanged atomic.Int64
+	irops     []*irops.Engine
 	// DSP and ANSP are this machine's datalink provider and air navigation
 	// service provider: the networks beside the airlines' own.
 	DSP      *Datalink

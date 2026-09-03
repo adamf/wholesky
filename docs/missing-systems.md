@@ -50,9 +50,12 @@ passenger record structures sit behind the SIS participation guide. Refunds are
 done (jetway v0.1.78): a ticketed booking the traveller cancels is refunded
 first -- open coupons go back, used ones stay used -- and the plan reports
 the document again as a refund with every amount reversed, dated when the
-money went back, so the commission comes back with it. Not done: the RET
-the agents send the plan, ADMs/ACMs and exchanges as transactions, net
-reporting and card data, the Prorate Manual's provisos (minima, factors,
+money went back, so the commission comes back with it. Exchanges are done (jetway v0.1.80): a passenger the IROPS engine
+reprotects has the ticket reissued over the new itinerary, the old
+document's open coupons marked exchanged, and the plan reports the new
+document with the original issue behind it (BKS46) and the old document's
+value as its form of payment (BKP84 EX). Not done: the RET the agents send
+the plan, ADMs/ACMs, net reporting and card data, the Prorate Manual's provisos (minima, factors,
 special agreements), and rejections and billing memos between the carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):

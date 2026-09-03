@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/irops"
 	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
@@ -125,6 +126,16 @@ func (s *Sim) startIROPS(ctx context.Context, g *GDSNode, every time.Duration, l
 			s.Rebooked.Add(1)
 			s.Stats.OnRebooked()
 			s.Eye.OnRebooked(item.Reason)
+			// A reprotected passenger's ticket still covers the dead leg;
+			// the involuntary reissue puts a document on the new one, and
+			// settlement carries the exchange.
+			if rec, err := g.Store.GetPNR(ctx, item.Locator); err == nil && len(rec.FlightTickets()) > 0 {
+				if _, err := g.GW.Exchange(ctx, item.Locator, gateway.ExchangeOptions{By: "irops", Reason: item.Reason}); err == nil {
+					s.Exchanged.Add(1)
+				} else {
+					log.Debug("involuntary reissue failed", "locator", item.Locator, "err", err)
+				}
+			}
 		},
 	}
 	if every <= 0 {
