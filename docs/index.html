@@ -126,6 +126,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <a href="#different">why</a>
     <a href="#system">the system</a>
     <a href="jetway.html">jetway</a>
+    <a href="production.html">production</a>
     <a href="#architecture" class="hide-sm">architecture</a>
     <a href="#recorded" class="hide-sm">the recorded day</a>
     <a href="#deploy" class="hide-sm">deploying</a>
@@ -424,7 +425,8 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
           <tr><td class="mono">wholesky-demo</td><td>core · gds1g · gds1s · gds1a · region0 · region1</td><td>the synthetic world at warp 6, carriers' books in bounded memory</td></tr>
           <tr><td class="mono">wholesky-thanksgiving</td><td>one machine, <code>-role all</code></td><td>the recorded day at warp 1, books of record and distribution systems' books in Managed Postgres</td></tr>
         </table></div>
-        <p class="muted" style="margin-top:12px">Both from <code>fly.toml</code> and <code>fly.thanksgiving.toml</code>. Roles: <code>core</code>, <code>gds</code>, <code>region -shard N -shards M</code>, or <code>all</code>. Peers find the core with <code>-core-url</code> and advertise themselves with <code>-self-url</code>. Stores are memory by default, or Postgres with <code>-tenant-dsn</code> and <code>-gds-dsn</code>; records are partitioned by their retirement day and dropped when the day wraps.</p>
+        <p class="muted" style="margin-top:12px">For a carrier's host or a switch carrying real traffic, the SRE plan is its own page: <a href="production.html">deploy to production</a> — topology, the lease, database provisioning, DR, the alerts, and load testing as the release gate.</p>
+        <p class="muted">Both from <code>fly.toml</code> and <code>fly.thanksgiving.toml</code>. Roles: <code>core</code>, <code>gds</code>, <code>region -shard N -shards M</code>, or <code>all</code>. Peers find the core with <code>-core-url</code> and advertise themselves with <code>-self-url</code>. Stores are memory by default, or Postgres with <code>-tenant-dsn</code> and <code>-gds-dsn</code>; records are partitioned by their retirement day and dropped when the day wraps.</p>
         <p class="muted">Lessons the deployments taught, all now in the code: a filled 737's name list is three parts; a link's outbox must refuse rather than stall; a seat inventory must be rebuilt from the book at boot; two worlds must not share one small database; and a partition that cannot be created must not stop the write.</p>
       </div>
     </div>

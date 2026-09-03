@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploy to production — running jetway as a carrier's host or a message switch</title>
+<meta name="description" content="The SRE plan for running jetway in production: topology, high availability, the lease, database provisioning, capacity, disaster recovery, observability, load testing with wholesky as the release gate, and what can be split out.">
+<meta property="og:title" content="Deploy to production">
+<meta property="og:description" content="Treat jetway like a database with a wire protocol: the production topology, HA, DR, database provisioning and load testing.">
+<meta property="og:url" content="https://wholesky.io/production.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230b0f14' stroke='%23e0b93c' stroke-width='2'/%3E%3Cpath d='M8 20 L24 12' stroke='%23e8eef4' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0b0f14; --panel:#11161d; --panel2:#161c25; --line:#1f2732;
+  --text:#e8eef4; --muted:#8794a3; --dim:#5a6675;
+  --green:#5fd38d; --amber:#e0b93c; --red:#e05a5a; --blue:#5f96be; --violet:#b48fd9;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--amber);text-decoration:none}
+a:hover{text-decoration:underline}
+code,pre,.mono{font-family:var(--mono)}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.92em}
+pre{background:#080b10;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.5;color:#c9d3de}
+pre code{background:none;padding:0}
+h1,h2,h3{line-height:1.2;text-wrap:balance;margin:0 0 .5em}
+h2{font-size:28px;letter-spacing:-.01em}
+h3{font-size:19px}
+p{margin:0 0 1em}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.prose{max-width:70ch}
+.muted{color:var(--muted)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+nav.top{position:sticky;top:0;z-index:10;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:22px;height:52px;font-family:var(--mono);font-size:13px}
+nav.top .brand{font-weight:700;letter-spacing:.06em;color:var(--text)}
+nav.top a{color:var(--muted)}
+nav.top a:hover{color:var(--text);text-decoration:none}
+nav.top .live{margin-left:auto;color:var(--green)}
+@media (max-width:760px){nav.top .hide-sm{display:none}}
+.hero{padding:56px 0 30px;border-bottom:1px solid var(--line);background:radial-gradient(1200px 500px at 60% -10%,#1d1a12 0%,transparent 60%)}
+.hero h1{font-size:clamp(32px,4.6vw,52px);letter-spacing:-.02em;margin-bottom:14px}
+.hero .lede{font-size:19px;color:var(--muted);max-width:68ch}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0 10px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:var(--mono);font-size:14px}
+.btn:hover{border-color:var(--muted);text-decoration:none}
+.btn.primary{background:var(--amber);color:#1a1406;border-color:var(--amber);font-weight:600}
+.btn.primary:hover{background:#ead06a}
+section{padding:52px 0;border-bottom:1px solid var(--line)}
+section .lead{font-size:18px;color:var(--muted);max-width:70ch;margin-bottom:22px}
+.toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin:28px 0 0}
+.toc a{display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:13px}
+.toc a span{display:block;color:var(--dim);font-family:var(--sans);font-size:13px;margin-top:2px}
+.toc a:hover{border-color:var(--muted);text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.grid .wide{grid-column:1/-1}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.card h3{margin-bottom:8px}
+.card p{color:var(--muted);margin-bottom:.6em}
+.card ul,.card ol{margin:0;padding-left:18px;color:var(--muted)}
+.card li{margin:4px 0}
+.card li b,.card p b{color:var(--text);font-weight:600}
+.numbers{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:26px 0}
+.numbers div{background:var(--panel);padding:16px 18px}
+.numbers b{display:block;font-family:var(--mono);font-size:22px;font-weight:600;color:var(--text)}
+.numbers span{font-size:13px;color:var(--muted)}
+.numbers .amber b{color:var(--amber)} .numbers .green b{color:var(--green)} .numbers .red b{color:var(--red)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+td.mono{font-family:var(--mono);font-size:13px}
+.table-wrap{overflow-x:auto}
+.tag{font:12px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
+.tag.done{border-color:#2a4a38;color:var(--green)} .tag.open{border-color:#4a3f22;color:var(--amber)} .tag.page{border-color:#4a2a2a;color:var(--red)}
+
+/* diagrams */
+.diagram{background:#080b10;border:1px solid var(--line);border-radius:10px;padding:22px;margin:18px 0;overflow-x:auto}
+.diagram .title{font:12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+.tier{display:grid;gap:10px;justify-items:center}
+.row{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;width:100%}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;font:13px var(--mono);min-width:180px;text-align:center}
+.box b{display:block;color:var(--text);font-weight:600}
+.box span{display:block;color:var(--muted);font-size:12px;font-family:var(--sans);margin-top:2px}
+.box.edge{border-color:var(--red)} .box.link{border-color:var(--green)} .box.db{border-color:var(--blue)} .box.dr{border-color:var(--violet);border-style:dashed} .box.obs{border-color:var(--amber)}
+.arrow{color:var(--dim);font:12px var(--mono);text-align:center;padding:2px 0}
+.zones{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
+.zone{border:1px dashed var(--line);border-radius:10px;padding:10px;display:grid;gap:8px}
+.zone .zl{font:11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:center}
+@media (max-width:760px){.zones{grid-template-columns:1fr}}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;width:100%}
+.split .box{text-align:left}
+.split .box i{display:block;color:var(--amber);font-style:normal;font-size:12px;margin-top:6px}
+footer{padding:34px 0 48px;color:var(--dim);font-size:13px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html">WHOLESKY</a>
+    <a href="index.html#system" class="hide-sm">the system</a>
+    <a href="jetway.html">jetway</a>
+    <a href="production.html" style="color:var(--text)">production</a>
+    <a href="#topology" class="hide-sm">topology</a>
+    <a href="#ha" class="hide-sm">availability</a>
+    <a href="#database" class="hide-sm">database</a>
+    <a href="#loadtest" class="hide-sm">load testing</a>
+    <a class="live" href="https://github.com/adamf/jetway/blob/main/docs/production-gcp.md">the SRE document</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">deploy to production · the SRE plan · written against jetway v0.1.58</div>
+    <h1>Treat it like a database with a wire protocol.</h1>
+    <p class="lede">This is the deployment a senior SRE would build for jetway carrying real airline traffic: a carrier's reservations and departure-control host, or a message switch, with the availability the business expects from its Type B and EDIFACT plumbing. Not a web service. Long-lived TCP sessions pinned behind a passthrough load balancer, one writer per system, warm standbys that already hold the links, a regional database with a synchronous standby, and a release process that never restarts everything at once. Most of the availability comes from the topology, not from the code.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/adamf/jetway/blob/main/docs/production-gcp.md">Read the full plan on GitHub →</a>
+      <a class="btn" href="#loadtest">How it is load-tested</a>
+      <a class="btn" href="#split">What can be split out</a>
+      <a class="btn" href="jetway.html">← everything jetway does</a>
+    </div>
+    <div class="toc">
+      <a href="#service">The service<span>what has to stay up, RPO and RTO</span></a>
+      <a href="#topology">Topology<span>edge, link tier, database, DR — the diagram</span></a>
+      <a href="#split">What can be split out<span>the seams and what each buys</span></a>
+      <a href="#ha">Availability engineering<span>lease, zone loss, slow database, slow partner, deploys</span></a>
+      <a href="#database">Database provisioning<span>sizing, pooling, partitions, retention, migrations</span></a>
+      <a href="#dr">Disaster recovery<span>cross-region replica, backups, the runbook</span></a>
+      <a href="#observe">Observability<span>the alerts in the order people get woken; SLOs</span></a>
+      <a href="#loadtest">Load testing<span>wholesky as the release gate; what it measured</span></a>
+      <a href="#readiness">Readiness list<span>what jetway needed, and what is still open</span></a>
+    </div>
+  </div>
+</header>
+
+<section id="service">
+  <div class="wrap">
+    <div class="eyebrow">the service</div>
+    <h2>What has to stay up, and what it costs when it does not</h2>
+    <div class="grid">
+      <div class="card"><h3>Hold the links</h3><p>Every partner — a GDS, an interline carrier, a ground handler, SITA or ARINC — holds one or a few long-lived sessions to you. A link that is down is a partner queueing messages or, worse, routing around you. Link availability is the number they measure you by.</p></div>
+      <div class="card"><h3>Answer inside the window</h3><p>A sell over Type B is expected to be answered in seconds; the GDS's own timers run 30 to 120 seconds before it queues the booking for a human. EDIFACT interactive sessions are tighter. Availability is answered in hundreds of milliseconds or the shopping engine drops you.</p></div>
+      <div class="card"><h3>Never lose or duplicate a message</h3><p>The write-ahead spool and the message log exist for this. A message acknowledged and lost is a passenger booked at the GDS and unknown to the airline. A message applied twice is an oversell.</p></div>
+      <div class="card"><h3>Keep the book consistent</h3><p>One record, one version, one writer at a time. Optimistic concurrency does the work inside one database; there must never be two databases that both think they are it.</p></div>
+    </div>
+    <div class="numbers">
+      <div class="green"><b>RPO 0</b><span>for the book: a committed sell is never lost</span></div>
+      <div><b>RTO &lt; 60 s</b><span>zone loss, inside the partners' timers</span></div>
+      <div><b>RTO &lt; 15 min</b><span>region loss, RPO equal to replication lag</span></div>
+      <div><b>&lt; 30 s</b><span>link re-establishment after any failover; the client's backoff caps at 15 s</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="topology">
+  <div class="wrap">
+    <div class="eyebrow">topology</div>
+    <h2>One region, three zones, one writer per system</h2>
+    <p class="lead">The reference is Google Cloud because that is what the plan was written against; every piece has a direct equivalent elsewhere (an NLB is an NLB, Cloud SQL HA is RDS Multi-AZ, a MIG is an ASG). The shape is what matters.</p>
+
+    <div class="diagram">
+      <div class="title">the production topology</div>
+      <div class="tier">
+        <div class="row"><div class="box edge"><b>partners</b><span>SITA / ARINC · GDSes · interline carriers · ground handlers · datalink provider</span></div></div>
+        <div class="arrow">TCP · MATIP · TLS · reserved static addresses for the life of the contract ↓</div>
+        <div class="row"><div class="box edge"><b>L3/L4 policy + external passthrough network load balancer</b><span>partner CIDRs only · L4 passthrough so source-IP identity and MATIP framing survive · client-IP affinity · no persistence on unhealthy backends</span></div></div>
+        <div class="arrow">health: TCP on the link port · /healthz liveness · /readyz readiness ↓</div>
+        <div class="zones">
+          <div class="zone"><div class="zl">zone a</div><div class="box link"><b>link tier · instance 1</b><span>one jetwayd process per system · holds the leases it won</span></div><div class="box"><b>spool disk</b><span>persistent, outlives the VM</span></div></div>
+          <div class="zone"><div class="zl">zone b</div><div class="box link"><b>link tier · instance 2</b><span>warm standby for every system it does not lead</span></div><div class="box"><b>spool disk</b><span>persistent, outlives the VM</span></div></div>
+          <div class="zone"><div class="zl">zone c</div><div class="box link"><b>link tier · instance 3</b><span>each instance can carry the whole load alone</span></div><div class="box"><b>spool disk</b><span>persistent, outlives the VM</span></div></div>
+        </div>
+        <div class="arrow">private connectivity · pgbouncer in transaction mode · pool_max_conns 24 per process · statement_timeout 5 s ↓</div>
+        <div class="row">
+          <div class="box db"><b>PostgreSQL 17 · primary</b><span>regional HA · synchronous standby in another zone · CMEK · PITR 35 days</span></div>
+          <div class="box db"><b>read replica</b><span>consoles · /api/messages · insights — the queries that scan</span></div>
+          <div class="box dr"><b>cross-region replica</b><span>asynchronous · the DR copy · promoted by runbook</span></div>
+        </div>
+        <div class="arrow">metrics (Prometheus exposition) · traces (OTLP) · slog JSON with trace ids ↓</div>
+        <div class="row"><div class="box obs"><b>monitoring · tracing · logging</b><span>the alerts below, the stats-page dashboard rebuilt from the same metrics</span></div></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h3>Compute</h3><p>Regional managed instance groups over three zones running the <code>jetwayd</code> container or the binary under systemd. Not serverless, not autopilot Kubernetes: the value is long-lived inbound TCP with source-IP identification and MATIP framing, stable addresses, no request-scoped scaling, and control over connection draining. Kubernetes Standard works if the organisation already runs it, with host networking or an internal passthrough LB per service and disruption budgets that keep one link instance per system up; it buys nothing over instance groups here.</p></div>
+      <div class="card"><h3>Load balancing</h3><p>A passthrough NLB with connection tracking by 5-tuple, persistence on unhealthy backends off so a failed instance's partners reconnect rather than hang, and client-IP affinity so a partner that opens several sessions lands on one instance (jetway's <code>by_hello</code> and source-IP resolvers assume a peer's sessions share a process). A TCP proxy is not usable: framing and identity must survive.</p></div>
+      <div class="card"><h3>Networking</h3><p>Link tier in a private subnet; NAT for the few outbound dials; partner-facing addresses reserved and static, because partners whitelist you by IP and change control on their side takes weeks. Private access to secrets, logging and registries without NAT. Regional residency: a European carrier's book does not replicate to another continent, even for DR, without the lawyers first.</p></div>
+      <div class="card"><h3>One system per process</h3><p>jetway models many systems in one database (one node view per system). In production run one process per system per instance, not one for all: a panic in one carrier's decoder takes down one carrier. Each system gets its own container and unit, its own listener ports, its own metrics labels, its own spool directory, and the same database as its own node view.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="split">
+  <div class="wrap">
+    <div class="eyebrow">the seams</div>
+    <h2>What can be split out, and what each split buys</h2>
+    <p class="lead">wholesky runs every one of these as an embedded assembly in one process on a laptop and as separate machines on the deployed demo; the switch cannot tell the difference. In production the same seams are where you scale, isolate and delegate.</p>
+    <div class="diagram">
+      <div class="title">the seams, and the wire between them</div>
+      <div class="split">
+        <div class="box link"><b>the switch</b><span>relay by address line and UNB recipient, spool, outbox per link, rate limits, lease</span><i>split first: it is the piece every message crosses, and a network provider's job, not a carrier's</i></div>
+        <div class="box link"><b>reservations host · per carrier</b><span>gateway, book of record, inventory, queues, IROPS, pricing</span><i>one process per carrier; one lease per carrier; the unit of failure and of a tenant contract</i></div>
+        <div class="box link"><b>departure control · per carrier or per airport</b><span>manifest, check-in, bags, load control, PFS/PTM/PSM/ETL/LDM/CPM</span><i>talks to reservations only by PNL/ADL in and lists out, so it can live in the airport or with a handler</i></div>
+        <div class="box link"><b>distribution system</b><span>booking, queues, availability cache, ticketing, NDC endpoint</span><i>its own book; its load is the booking load, so it scales with demand and not with the schedule</i></div>
+        <div class="box link"><b>datalink and ATS endpoints</b><span>ACARS OOOI in, MVT out; AFTN in and out</span><i>different networks, different partners; they can sit with operations rather than reservations</i></div>
+        <div class="box obs"><b>consoles, insights, reporting</b><span>read-only views of the message log and records</span><i>off the primary: a read replica takes every query that scans</i></div>
+        <div class="box db"><b>the book of record</b><span>one database per legal entity; one node view per system inside it</span><i>never two databases that both think they are it; never two worlds in one small cluster</i></div>
+        <div class="box"><b>retention, exports, load tests</b><span>retire by daily partition, weekly logical export, wholesky against staging</span><i>scheduled jobs and a pipeline step, not application side effects</i></div>
+      </div>
+    </div>
+    <p class="prose muted">The rule for a split is that nothing crosses it but a message the industry already defines. That is what lets a departure-control system move to the airport, a switch move to a network provider, or a carrier's host move to a hosting company, without either side learning a private API.</p>
+  </div>
+</section>
+
+<section id="ha">
+  <div class="wrap">
+    <div class="eyebrow">availability engineering</div>
+    <h2>Exactly one process may write a system's records at a time</h2>
+    <p class="lead">Optimistic concurrency protects a single database from two writers racing on one record. It does not protect against two processes both believing they own a system's links, because a partner's messages would then be split between them and answered twice. The lease is the answer.</p>
+
+    <div class="diagram">
+      <div class="title">the lease: n+1 warm standbys with leader election per system</div>
+      <div class="tier">
+        <div class="row">
+          <div class="box link"><b>instance 1 · leads BA, AA</b><span>listeners bound · renewing at a third of the 15 s term</span></div>
+          <div class="box link"><b>instance 2 · leads LH</b><span>standby for BA, AA · polling the lease · not ready for them</span></div>
+          <div class="box link"><b>instance 3 · standby for all</b><span>every process running, no listener bound</span></div>
+        </div>
+        <div class="arrow">↓ acquire / renew / release — a row per system in <code>system_lease</code>, in the book's own database, so the lease and the book share one failure domain ↓</div>
+        <div class="row"><div class="box db"><b>system_lease</b><span>holder · expires_at · <code>ON CONFLICT … WHERE expires_at &lt; now() OR holder = EXCLUDED.holder</code></span></div></div>
+        <div class="arrow">leader dies → lease lapses in 5–15 s → a standby takes it and binds → partners redial the same NLB address and land on the new leader</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h3>Zone loss</h3><p>The other two instances hold the load; the lease moves in seconds; partners reconnect through the NLB. The database fails over to its synchronous standby in under a minute with no committed transaction lost. During the failover writes fail; the spool holds inbound messages and the gateway refuses acknowledgements rather than acknowledging what it cannot store. Partners see a pause, not a loss.</p></div>
+      <div class="card"><h3>Instance loss</h3><p>Autohealing recreates it; the lease has already moved. The spool directory is on a persistent disk that outlives the VM and is reattached, or a regional disk if the spool must survive a zone. Unflushed spool entries replay on start.</p></div>
+      <div class="card"><h3>Database saturation</h3><p>The failure mode that actually happens. <code>statement_timeout</code> of 5 seconds on the gateway's pool: the answer to a sell that takes longer is a NAK the partner retries, not a hung link. A queue-depth alert on the pooler. And the outbox: a slow database no longer stalls the read loop of every link; it becomes <code>ErrCongested</code> on the sends that cannot leave, recorded as undeliverable and retried.</p></div>
+      <div class="card"><h3>Slow partner</h3><p>Handled the same way, per link: the outbox fills, sends to that peer fail fast, congestion clears only when the writer has caught up, other links are unaffected. Alert on <code>jetway_outbox_congested_total{peer}</code>; it is a partner problem until it is not.</p></div>
+      <div class="card"><h3>Deploys</h3><p>Rolling, one instance at a time, <code>maxUnavailable=0</code>, <code>maxSurge=1</code>, with a connection drain: mark not-ready, release the leases so standbys take the systems, wait for the outboxes to empty and the spool to flush, then stop. Partners reconnect once per deploy. Never deploy the link tier and a migration in the same window; run migrations from a one-off job first, because a long conversion on a populated book took eight minutes and doubled the table's disk while it ran.</p></div>
+      <div class="card"><h3>Configuration</h3><p>A YAML config in the image or a pinned secret version, never mutable on the instance. Adding a partner is a config change and a SIGHUP: <code>Node.ReloadPeers</code> adds what is new; removing a peer is a restart. Rate limits per peer with a shared cap per ingress, so one flooding partner cannot take the others' share.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="database">
+  <div class="wrap">
+    <div class="eyebrow">database provisioning</div>
+    <h2>The book of record, sized and kept</h2>
+    <div class="numbers">
+      <div><b>2.7 KB</b><span>a live record; 2.2 KB on disk with indexes</span></div>
+      <div><b>5–20M</b><span>live records for a large carrier's host</span></div>
+      <div><b>&lt; 100 GB</b><span>10M records plus a 30-day message log</span></div>
+      <div><b>24</b><span>pool connections per process; 500 on the primary</span></div>
+      <div class="green"><b>24 s</b><span>to COPY a filled Southwest day of 260,000 records</span></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Instance</h3><p>PostgreSQL 17, 16 vCPU and 128 GB primary with a synchronous standby, 500 GB SSD to start because IOPS scale with disk size. The GIN index on the record's state is the expensive one; it makes flight and locator lookups fast and is roughly the size of the data. Encryption with customer-managed keys for both the records and the raw message log, which holds the same personal data.</p></div>
+      <div class="card"><h3>Connections</h3><p>An auth proxy in front of <code>pgbouncer</code> in transaction mode per instance, <code>pool_max_conns</code> 24 per process. jetway sets <code>default_query_exec_mode=cache_describe</code> for transaction pooling and runs <code>COPY</code> inside explicit transactions, both of which work through the pooler; it uses transaction-level advisory locks only, because session-level ones would not.</p></div>
+      <div class="card"><h3>Partitions and retention</h3><p>The message log is partitioned by month and records by their retirement day: the last flight plus the carrier's purge grace, typically three days. A nightly job calls <code>POST /api/admin/retire</code> or <code>jetwayctl retire --before</code>: daily partitions drop, stragglers in the default partition are deleted, orphaned queue items go too. A partition that cannot be created never stops a write, and an occupied default partition is detected under a share lock rather than discovered by a catalogue scan that stops every reader.</p></div>
+      <div class="card"><h3>Migrations</h3><p>Dense-numbered, never edited once applied anywhere. The runner takes an advisory lock and re-checks, so two instances racing to migrate on a rolling deploy is safe; still run them from a one-off job first so a long conversion does not happen inside an instance's startup timeout.</p></div>
+      <div class="card wide"><h3>Two lessons the simulation paid for</h3>
+        <ul>
+          <li><b>Never share one small cluster between worlds.</b> The demo's 518 carriers and the recorded day sat on one 10 GB cluster through a pooler. The recorded day's scans over 1.4 million rows queued behind an exclusive lock, the demo's carriers waited on every write, their read loops stalled, the switch's outboxes to them filled, and it closed the links. Nothing departed for an hour. One database per legal entity, sized for it.</li>
+          <li><b>Never drop a partition by hand under a running process.</b> The process's partition cache believed the partition still existed, 1.4 million rows landed in the default partition, the day's partition could then never be created, and every write tried, scanned and timed out on the booking's own deadline. Retention is <code>retire</code>, and the store now survives the case anyway.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="dr">
+  <div class="wrap">
+    <div class="eyebrow">disaster recovery</div>
+    <h2>A runbook, not automation</h2>
+    <div class="grid">
+      <div class="card"><h3>The cold region</h3><p>A cross-region asynchronous replica (its lag is the RPO, normally under a second) and a cold link tier: the same instance template at size zero, the same load balancer configuration with its own reserved addresses. Region failover changes the addresses partners see and half of them will need a phone call, so it is a runbook: promote the replica, scale the tier up, repoint the partners' alternate address.</p></div>
+      <div class="card"><h3>Day one</h3><p>Most Type B contracts specify a primary and an alternate address. Give partners the DR region's address as the alternate on day one. Accept that in-flight messages at the failed region after the last replicated transaction are lost, which is why the spool is regional and the RPO for this case is replication lag, not zero.</p></div>
+      <div class="card"><h3>Backups</h3><p>Automated daily with 35-day point-in-time recovery, plus a weekly logical export of each system's records to object storage with a retention lock, because the regulator will ask for a booking from four years ago and a PITR window does not answer that. Restore quarterly into a scratch instance and run <code>jetwayctl decode</code> and the console against it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="observe">
+  <div class="wrap">
+    <div class="eyebrow">observability</div>
+    <h2>The alerts, in the order people get woken</h2>
+    <div class="table-wrap"><table>
+      <tr><th>#</th><th>alert</th><th>condition</th><th>action</th></tr>
+      <tr><td class="mono">1</td><td><b>Links down</b></td><td><code>jetway_ingress_links</code> below the contracted count for a partner for 60 s</td><td><span class="tag page">page</span></td></tr>
+      <tr><td class="mono">2</td><td><b>Undeliverable rate</b></td><td>messages a switch or host could not deliver, above a floor and rising for 5 min</td><td><span class="tag page">page</span></td></tr>
+      <tr><td class="mono">3</td><td><b>Reply latency</b></td><td>p99 inbound sell to reply above 5 s; page at 30 s</td><td><span class="tag page">page</span></td></tr>
+      <tr><td class="mono">4</td><td><b>Dead letter queue</b></td><td>anything routed to the DLQ is a message a person must read</td><td><span class="tag open">ticket</span> · page above a rate</td></tr>
+      <tr><td class="mono">5</td><td><b>Spool depth and age</b></td><td><code>jetway_spool_oldest_seconds</code> over 10: the database is not keeping up</td><td><span class="tag page">page</span></td></tr>
+      <tr><td class="mono">6</td><td><b>Outbox congestion per peer</b></td><td><code>jetway_outbox_congested_total{peer}</code></td><td><span class="tag open">ticket</span> · escalate to the partner</td></tr>
+      <tr><td class="mono">7</td><td><b>Divergence queue growth</b></td><td>records the airline and a partner disagree about, growing faster than agents work them</td><td><span class="tag open">ticket daily</span></td></tr>
+      <tr><td class="mono">8</td><td><b>Database</b></td><td>replication lag, connections, lock waits, disk, and the size of <code>pnr_default</code>, which should be near zero</td><td><span class="tag open">standard alerting</span></td></tr>
+    </table></div>
+    <div class="grid" style="margin-top:22px">
+      <div class="card"><h3>SLOs to publish</h3><ul><li><b>Link availability 99.95%</b> per partner per month (22 minutes).</li><li><b>Sell reply p99 under 5 s</b> 99.9% of the time.</li><li><b>Zero acknowledged-and-lost messages</b>, measured by the scenario suite's reconciliation run against production daily in read-only mode.</li></ul></div>
+      <div class="card"><h3>Signals</h3><p><code>/metrics</code> in Prometheus exposition without a client library; OpenTelemetry traces with a trace id in every log line that has one; slog JSON to stdout. Inventory gauges per carrier (sold, waitlisted, full cabins) and decisions by status; store partition failures by day; sequence gaps and repeats per peer.</p></div>
+      <div class="card"><h3>Dashboards</h3><p>The switch console's views are the operator's. The SRE dashboard is wholesky's stats page rebuilt from the same metrics: message rates by class, movements, bookings, sold per second, undeliverables, queue depths, and the number that should be zero, labelled as such.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="loadtest">
+  <div class="wrap">
+    <div class="eyebrow">load testing</div>
+    <h2>wholesky is the release gate</h2>
+    <p class="lead">A day of the world's schedule against a staging instance of the production topology, with the invariant suite as the pass criterion. Every number in this plan is one wholesky measured, and every production defect this year was found by it before a partner could.</p>
+    <div class="numbers">
+      <div class="green"><b>16,315/s</b><span>window-max through one switch on 4 vCPU at warp 60 (res 11,246 · AVS 1,331 · DCS 760 · MVT 448 · PNL 239)</span></div>
+      <div><b>525</b><span>links on that switch</span></div>
+      <div><b>3,510/min</b><span>bookings across three GDS machines: real global reservations volume</span></div>
+      <div><b>259</b><span>carriers' books on one 4 GB host with Postgres</span></div>
+      <div class="amber"><b>0.31–0.39</b><span>vCPU per machine off-peak at warp 6: the load is banks, not average</span></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Three definitions of a day</h3><ul><li><b>Warp 1</b>: real time, real loads; a day is a day and receives 5 million bookings. This is what the recorded Thanksgiving day runs.</li><li><b>Warp 6</b>: a four-hour day at real per-flight loads, demand times six; what the demo runs.</li><li><b>Warp 60</b>: a 24-minute day; the departure banks compress into minutes and the fabric peaks above 16,000 messages a second. This is the stress test.</li></ul></div>
+      <div class="card"><h3>The invariants</h3><ul><li><b>No oversell</b>, including across selling channels: three bookings through one GDS and three through another still confirm at most the capacity.</li><li><b>Message conservation</b>: every message the switch accepted reaches a terminal state, relayed, dead-lettered or refused, never lost.</li><li><b>Interline convergence</b>: a settled interline booking exists at every carrier that operates a leg of it.</li><li><b>A cancelled flight queues every booking</b> on it.</li></ul></div>
+      <div class="card"><h3>The live half</h3><p>Every shard reports its inventories, the core federates them, and <code>skycheck</code> exits non-zero on a cabin holding more than it has or a shard that did not answer, because a machine being down must not read as a pass. Conservation and convergence run in-process, because they need the wire quiet.</p><pre><code>$ go run ./cmd/skycheck https://staging.example
+6 shards, 27639 cabins, 101654 seats sold, 0 oversold</code></pre></div>
+      <div class="card"><h3>The gateway's own driver</h3><p><code>jetwayload</code> runs the end-to-end scenario suite concurrently through the real assembly on real TCP and reports latency. A scenario exists for anything that crosses a link, because unit tests do not catch what only shows up with a partner on the other end.</p></div>
+      <div class="card wide"><h3>What load found, and fixed upstream, with a test watched to fail first</h3>
+        <ul>
+          <li>A family of four folded a Type B line; a filled 737's name list overran the 60-line envelope.</li>
+          <li>Both ends of a link answering from inside their read loops deadlocked under the first full departure bank; the outbox per link replaced the direct write.</li>
+          <li>Frames sent in the same burst as a peer's hello were lost by a handshake reader the link then abandoned.</li>
+          <li>Congestion clearing at half a queue made a slowly draining peer flap, and each flap cost a read loop a full send timeout.</li>
+          <li>A partition that could not be created killed every write on a booking's own deadline; a catalogue scan under lock stalled every reader.</li>
+          <li>A WaitGroup in the drain raced a frame arriving as the drain began.</li>
+          <li>The filler oversold business cabins on Hawaii widebodies; the live gate found it on its first run.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="readiness">
+  <div class="wrap">
+    <div class="eyebrow">readiness</div>
+    <h2>What jetway needed before any of this was true</h2>
+    <p class="lead">In the order a team would build it. Eight of nine are done; the ninth is half done.</p>
+    <div class="table-wrap"><table>
+      <tr><th>#</th><th>item</th><th>state</th><th>what it is</th></tr>
+      <tr><td class="mono">1</td><td>A system lease</td><td><span class="tag done">v0.1.48–51</span></td><td>bind links only while holding the system's row; standbys poll and take over; a holder asked to stop drains first and releases after</td></tr>
+      <tr><td class="mono">2</td><td>Readiness</td><td><span class="tag done">done</span></td><td><code>/readyz</code> fails when the store cannot be reached and while standing by; distinct from <code>/healthz</code></td></tr>
+      <tr><td class="mono">3</td><td>Drain on SIGTERM</td><td><span class="tag done">done</span></td><td>ingresses and HTTP drain with a timeout; the lease is released first</td></tr>
+      <tr><td class="mono">4</td><td>Spool on by default</td><td><span class="tag done">v0.1.52</span></td><td>bounded by <code>spool.max_entries</code>, with depth and oldest-age metrics for the alert</td></tr>
+      <tr><td class="mono">5</td><td>Retire as an operation</td><td><span class="tag done">done</span></td><td><code>POST /api/admin/retire</code> and <code>jetwayctl retire --before</code>, so retention is a scheduled job</td></tr>
+      <tr><td class="mono">6</td><td>Hot peer reload</td><td><span class="tag done">done</span></td><td>SIGHUP re-reads the config and adds new peers; removing one is a restart</td></tr>
+      <tr><td class="mono">7</td><td>Metrics for the outbox and the inventory</td><td><span class="tag done">v0.1.53</span></td><td>outbox depth and congestion per peer; inventory decisions by status and per-carrier gauges</td></tr>
+      <tr><td class="mono">8</td><td>Rate limiting per peer</td><td><span class="tag done">v0.1.53</span></td><td>per-peer pacing with a shared cap per ingress; still open: a different share per peer</td></tr>
+      <tr><td class="mono">9</td><td>Load test as a release gate</td><td><span class="tag open">half</span></td><td>the live invariant check exists (<code>skycheck</code>); not yet a staging topology or a pipeline step</td></tr>
+    </table></div>
+    <h3 style="margin-top:30px">Cost, roughly</h3>
+    <p class="prose muted">Per region at list prices: three 8-vCPU link instances about $600 a month; a 16-vCPU HA database with a read replica about $3,500; the cross-region DR replica another $1,700; load balancing, edge policy, NAT, logging and monitoring a few hundred. Call it $6,500 a month for one region with DR, which is what one Type B circuit from a network provider used to cost per year in the era the protocol was designed, and about a day of one GDS's segment fees for a mid-sized carrier.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>The full plan, with every number's provenance, is <a href="https://github.com/adamf/jetway/blob/main/docs/production-gcp.md">docs/production-gcp.md</a> in jetway. Scaling wholesky itself is <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</div>
+    <div class="mono"><a href="index.html">wholesky</a> · <a href="jetway.html">jetway</a> · <a href="https://github.com/adamf/jetway">github</a></div>
+  </div>
+</footer>
+</body>
+</html>
