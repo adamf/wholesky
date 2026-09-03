@@ -57,6 +57,7 @@ section .lead{font-size:18px;color:var(--muted);max-width:68ch;margin-bottom:22p
 .toc a span{display:block;color:var(--dim);font-family:var(--sans);font-size:13px;margin-top:2px}
 .toc a:hover{border-color:var(--muted);text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.grid .wide{grid-column:1/-1}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
 .card h3{margin-bottom:8px}
 .card p{color:var(--muted);margin-bottom:.6em}
@@ -126,7 +127,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <h2>The whole stack, in one Go module</h2>
     <p class="lead">If you have run a reservations system, a GDS, a departure-control system or a Type B network, this is the list you would write on the whiteboard. Every row is implemented, tested, and exercised daily by a simulation of the world's schedule.</p>
     <div class="grid">
-      <div class="card">
+      <div class="card wide">
         <h3>Messages it sends and receives</h3>
         <div class="table-wrap"><table>
           <tr><th>domain</th><th>messages</th></tr>
