@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/iatci"
+	"github.com/adamf/jetway/pkg/paxlst"
 	"strings"
 	"time"
 
@@ -778,6 +779,12 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	send(checkIn, []string{t.stationAddress(fl.Dest, deptCheckIn)}, cl.PSM, "PSM")
 	send(checkIn, []string{t.stationAddress("HDQ", deptRevenue)}, cl.ETL, "ETL")
 	send(loadControl, []string{t.stationAddress(fl.Dest, deptLoad), t.watch}, []string{cl.LDM}, "LDM")
+	// A border crossed owes the arrival country its passenger list: who is on
+	// board, with the document the record carried, before the aircraft
+	// leaves. The agency's answer, when it has one, is its own message.
+	if err := t.sendAPIS(ctx, cl.Flight); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	send(loadControl, []string{t.stationAddress(fl.Dest, deptLoad)}, []string{cl.CPM}, "CPM")
 	return firstErr
 }
@@ -852,6 +859,9 @@ type Summary struct {
 	Loadsheet string    `json:"loadsheet,omitempty"`
 	// Bags is the door's reconciliation of the hold against the cabin.
 	Bags *dcs.Reconciliation `json:"bags,omitempty"`
+	// APIS is how many travellers the border agency was told about at the
+	// door, when the flight crosses one.
+	APIS int `json:"apis,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -921,7 +931,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {
@@ -1043,4 +1053,38 @@ func (t *Tenant) pullBags(ctx context.Context, key dcs.Key, bags []dcs.BagRef) {
 		}
 	}
 	t.log.Info("unaccompanied bags pulled at the door", "flight", key.Flight, "board", key.Board, "bags", len(bags))
+}
+
+// sendAPIS sends the flight-close passenger list to the border control
+// agency when the flight lands in another country.
+func (t *Tenant) sendAPIS(ctx context.Context, fl *dcs.Flight) error {
+	if t.border == "" || t.countryOf == nil || fl == nil {
+		return nil
+	}
+	from, to := t.countryOf(fl.Board), t.countryOf(fl.Dest)
+	if from == "" || to == "" || from == to {
+		return nil
+	}
+	m := gateway.APISFor(fl, gateway.APISOptions{
+		Function: paxlst.FuncCloseOnBoard, OnBoardOnly: true,
+		TxnRef:         fl.Flight + "-" + fl.Date + "-" + fl.Board,
+		ContactSurname: t.Carrier.Designator + " OPS", ContactGiven: fl.Board,
+	})
+	if len(m.People) == 0 {
+		return nil
+	}
+	peer := &gateway.Peer{Name: "net", Carrier: t.border, Format: store.FormatEDIFACT}
+	if err := t.Gateway.SendAPIS(ctx, peer, m); err != nil {
+		return err
+	}
+	t.groundMu.Lock()
+	t.apisSent[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}] = len(m.People)
+	t.groundMu.Unlock()
+	return nil
+}
+
+func (t *Tenant) apisSentFor(fl *dcs.Flight) int {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.apisSent[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
 }

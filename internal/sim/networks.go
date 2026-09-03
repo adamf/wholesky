@@ -12,8 +12,10 @@ package sim
 import (
 	"context"
 	"fmt"
+	"github.com/adamf/jetway/pkg/paxlst"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +44,48 @@ func atcPeer(shard int) string { return fmt.Sprintf("ATC%d", shard) }
 // provider's communications centre and the ANSP's message switch.
 func dspAddress(shard int) string { return fmt.Sprintf("LONDL%dS", shard) }
 func atcAddress(shard int) string { return fmt.Sprintf("LONAT%dZ", shard) }
+
+// govPeer and govAddress name the border control agency's link and address:
+// where every international departure's passenger list goes.
+func govPeer(shard int) string    { return fmt.Sprintf("GOV%d", shard) }
+func govAddress(shard int) string { return fmt.Sprintf("LONGV%dX", shard) }
+
+// Border is the border control agency: it receives the advance passenger
+// information every international flight sends at the door, and counts what
+// it was told, by the country the flight arrives in.
+type Border struct {
+	*netNode
+	lists   atomic.Int64
+	persons atomic.Int64
+	mu      sync.Mutex
+	byDest  map[string]int64
+}
+
+// Lists is how many passenger lists arrived; Persons how many travellers
+// they named.
+func (b *Border) Lists() int64   { return b.lists.Load() }
+func (b *Border) Persons() int64 { return b.persons.Load() }
+
+// ByArrival is persons reported, by the airport of first arrival.
+func (b *Border) ByArrival() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[string]int64, len(b.byDest))
+	for k, v := range b.byDest {
+		out[k] = v
+	}
+	return out
+}
+
+func (b *Border) receive(ctx context.Context, peer *gateway.Peer, list *paxlst.Message) {
+	b.lists.Add(1)
+	b.persons.Add(int64(len(list.People)))
+	if len(list.Legs) > 0 {
+		b.mu.Lock()
+		b.byDest[list.Legs[0].To] += int64(len(list.People))
+		b.mu.Unlock()
+	}
+}
 
 // netNode is one provider node: a gateway with a link to the switch.
 type netNode struct {
@@ -233,6 +277,12 @@ func (s *Sim) startNetworks(ctx context.Context, shard int, switchAddr string, l
 		return err
 	}
 	s.DSP = &Datalink{netNode: dsp, provider: "SKY"}
+	gov, err := s.startNetNode(ctx, govPeer(shard), "GV", govAddress(shard), "", switchAddr, nil, log.With("node", "border"))
+	if err != nil {
+		return err
+	}
+	s.Border = &Border{netNode: gov, byDest: map[string]int64{}}
+	gov.GW.APIS = s.Border.receive
 	ansp := &ANSP{}
 	node, err := s.startNetNode(ctx, atcPeer(shard), "AT", atcAddress(shard), "XXXXZQZX", switchAddr,
 		gateway.GroundFuncs{OnATS: func(ctx context.Context, m *ats.Message, env *aftn.Message) error {

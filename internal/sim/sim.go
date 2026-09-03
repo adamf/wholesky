@@ -217,6 +217,7 @@ type Sim struct {
 	// service provider: the networks beside the airlines' own.
 	DSP      *Datalink
 	ANSP     *ANSP
+	Border   *Border
 	carriers map[string]world.Carrier
 	// Each GDSNode's up flag flips when its client link is established. The
 	// switch counting a session is not enough: there is a window where the
@@ -487,6 +488,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			Interline:             interlineFor(c.Designator, partners, m.Carriers, flightsByFrom),
 			Marketed:              marketed[c.Designator],
 			OperatorAddresses:     operators[c.Designator],
+			Border:                govPeer(0),
+			CountryOf:             s.countryOf,
 			Capacity:              capacity,
 			BookingDate:           s.BookingDate,
 			MaxMessages:           tenantMaxMsgs,
@@ -1471,6 +1474,13 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, extend fu
 			Name: atcPeer(shard), TTYAddress: atcAddress(shard), Format: "aftn", AFTN: shard == 0,
 			Egress: config.Egress{Type: "tcp_accept"},
 		})
+		// The border control agency receives passenger lists as EDIFACT
+		// interchanges addressed to it, so it is a carrier-like peer: the
+		// switch routes on the UNB recipient.
+		cfg.Peers = append(cfg.Peers, config.Peer{
+			Name: govPeer(shard), Carrier: govPeer(shard), TTYAddress: govAddress(shard), Format: "edifact",
+			Egress: config.Egress{Type: "tcp_accept"},
+		})
 	}
 	for _, slot := range gdsSlots {
 		addPeer(slot.Designator, gdsAddress(slot), "typeb")
@@ -2110,4 +2120,13 @@ func interlineFor(code string, partners map[string][]string, carriers []world.Ca
 		}
 		return out
 	}
+}
+
+// countryOf is the country an airport is in, for deciding whether a flight
+// crosses a border and owes the agency a passenger list.
+func (s *Sim) countryOf(iata string) string {
+	if a, ok := s.airports[iata]; ok {
+		return a.Country
+	}
+	return ""
 }

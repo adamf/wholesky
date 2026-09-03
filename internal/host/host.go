@@ -50,6 +50,9 @@ type Tenant struct {
 	// interline offers other carriers' flights to connect onto; pendingThrough
 	// are through check-in requests awaiting their DCRCKA.
 	interline      func(f world.Flight) []world.Flight
+	border         string
+	countryOf      func(iata string) string
+	apisSent       map[dcs.Key]int
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
 	Carrier        world.Carrier
@@ -123,6 +126,11 @@ type Options struct {
 	// through-checked by the IATCI dialogue. Nil keeps connections on own
 	// metal.
 	Interline func(f world.Flight) []world.Flight
+	// Border is the switch peer standing for the border control agency, and
+	// CountryOf the country an airport is in: a flight whose ends are in
+	// different countries sends the agency its passenger list at the door.
+	Border    string
+	CountryOf func(iata string) string
 	// Capacity, when positive, overrides every cabin's seats: a harness that
 	// wants headroom or a demonstration that wants single digits. Zero
 	// means the aircraft's own cabins, from the fleet data and the schedule.
@@ -274,6 +282,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	gw.ThroughCheckInResponses = t.onThroughCheckIn
 	t.interline = opts.Interline
 	t.pendingThrough = map[string]throughPending{}
+	t.border, t.countryOf = opts.Border, opts.CountryOf
+	t.apisSent = map[dcs.Key]int{}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
