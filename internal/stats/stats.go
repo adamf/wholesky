@@ -301,7 +301,7 @@ func (c *Collector) OnMessage(payload map[string]any) {
 		c.kindPNL++
 	case "BSM", "BPM":
 		c.kindBag++
-	case "PFS", "PTM", "PSM", "ETL", "LDM", "CPM":
+	case "PFS", "PTM", "PSM", "ETL", "LDM", "CPM", "DCQCKI", "DCRCKA":
 		c.kindDCS++
 	case "ACARS":
 		c.kindACARS++

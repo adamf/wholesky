@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/iatci"
 	"strings"
 	"time"
 
@@ -382,25 +384,127 @@ func (t *Tenant) onwardFor(f world.Flight, day time.Time, h int) *dcs.Connection
 	if (h/3)%100 >= 18 {
 		return nil
 	}
-	var cands []world.Flight
 	arr := f.ArrMin % 1440
-	for _, g := range t.flights {
-		if g.From != f.To || g.Carrier != f.Carrier {
-			continue
+	fits := func(g world.Flight) bool {
+		if g.From != f.To {
+			return false
 		}
 		gap := g.DepMin - arr
 		if gap < 0 {
 			gap += 1440
 		}
-		if gap >= minimumConnection && gap <= 300 {
-			cands = append(cands, g)
+		return gap >= minimumConnection && gap <= 300
+	}
+	var own, other []world.Flight
+	for _, g := range t.flights {
+		if g.Carrier == f.Carrier && fits(g) {
+			own = append(own, g)
 		}
+	}
+	if t.interline != nil {
+		for _, g := range t.interline(f) {
+			if g.Carrier != f.Carrier && fits(g) {
+				other = append(other, g)
+			}
+		}
+	}
+	// One connection in four crosses carriers when a partner's flight fits:
+	// those are the ones the IATCI dialogue exists for.
+	cands := own
+	if len(other) > 0 && ((h/11)%4 == 0 || len(own) == 0) {
+		cands = other
 	}
 	if len(cands) == 0 {
 		return nil
 	}
 	g := cands[(h/7)%len(cands)]
-	return &dcs.Connection{Flight: g.Carrier + g.Number, Date: strings.ToUpper(day.Format("02Jan")), Station: f.To, Dest: g.To, Class: "Y"}
+	c := &dcs.Connection{Flight: g.Carrier + g.Number, Date: strings.ToUpper(day.Format("02Jan")), Station: f.To, Dest: g.To, Class: "Y"}
+	if g.Carrier != f.Carrier {
+		c.Carrier = g.Carrier
+	}
+	return c
+}
+
+// throughPending is a through check-in request awaiting the other carrier's
+// answer, keyed by the passenger reference the request carried.
+type throughPending struct {
+	key dcs.Key
+	pid int
+}
+
+// ThroughCheck asks the other carrier's departure control to check the
+// party's connecting passengers in on its flight: the delivering side of
+// IATCI. The request goes to the network addressed to the receiving carrier;
+// the answer arrives as a DCRCKA and lands in onThroughCheckIn.
+func (t *Tenant) ThroughCheck(ctx context.Context, f world.Flight, day time.Time, key dcs.Key, fl *dcs.Flight, pax []*dcs.Passenger) error {
+	byCarrier := map[string][]*dcs.Passenger{}
+	for _, p := range pax {
+		if p.Onward != nil && p.Onward.Carrier != "" && p.Onward.Carrier != t.Carrier.Designator {
+			byCarrier[p.Onward.Carrier] = append(byCarrier[p.Onward.Carrier], p)
+		}
+	}
+	var firstErr error
+	for carrier, ps := range byCarrier {
+		on := ps[0].Onward
+		req := &iatci.CheckInRequest{
+			Requestor: t.Carrier.Designator, RequestorStation: f.From,
+			Inbound:  iatci.Flight{Carrier: f.Carrier, Number: f.Number, Date: day.Add(time.Duration(f.DepMin) * time.Minute), Arrives: day.Add(time.Duration(f.ArrMin) * time.Minute), Board: f.From, Off: f.To},
+			Outbound: iatci.Flight{Carrier: carrier, Number: strings.TrimPrefix(on.Flight, carrier), Date: day, Board: on.Station, Off: on.Dest},
+		}
+		for _, p := range ps {
+			ref := fmt.Sprintf("%d", p.ID)
+			ip := iatci.Passenger{Ref: ref, Surname: p.Surname, Given: p.Given, Type: "A", Locator: p.Locator, Class: on.Class, Pieces: len(p.Bags)}
+			if p.Type == dcs.PaxChild {
+				ip.Type = "C"
+			}
+			for _, b := range p.Bags {
+				ip.Weight += b.Weight
+				ip.Tags = append(ip.Tags, iatci.Tag{Carrier: t.Carrier.Designator, Serial: b.Tag, Count: 1, Dest: on.Dest})
+			}
+			for _, ssr := range p.SSRs {
+				ip.SSRs = append(ip.SSRs, ssr.Code)
+			}
+			req.Passengers = append(req.Passengers, ip)
+			t.pendingMu.Lock()
+			t.pendingThrough[carrier+"/"+ref] = throughPending{key: key, pid: p.ID}
+			t.pendingMu.Unlock()
+		}
+		peer := &gateway.Peer{Name: "net", Carrier: carrier, Format: store.FormatEDIFACT}
+		if err := t.Gateway.RequestThroughCheckIn(ctx, peer, req); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// onThroughCheckIn hears the receiving carrier's answer and writes the seat
+// or the refusal onto the passenger's connection, so the manifest and the
+// transfer message carry it.
+func (t *Tenant) onThroughCheckIn(ctx context.Context, peer *gateway.Peer, res *iatci.CheckInResponse) {
+	for _, r := range res.Passengers {
+		t.pendingMu.Lock()
+		pend, ok := t.pendingThrough[res.Flight.Carrier+"/"+r.Ref]
+		if ok {
+			delete(t.pendingThrough, res.Flight.Carrier+"/"+r.Ref)
+		}
+		t.pendingMu.Unlock()
+		if !ok {
+			continue
+		}
+		refused := ""
+		if r.Status != "" && r.Status != "H" {
+			refused = "refused"
+			if len(r.Errors) > 0 {
+				refused = strings.ToLower(r.Errors[0].Text)
+				if refused == "" {
+					refused = "code " + r.Errors[0].Code
+				}
+			}
+		}
+		if err := t.DCS.RecordOnward(ctx, pend.key, pend.pid, r.Seat, r.Sequence, refused); err != nil {
+			t.log.Debug("through check-in answer not recorded", "flight", pend.key.Flight, "pid", pend.pid, "err", err)
+		}
+	}
 }
 
 // bagsFor decides what a party checks: about six in ten check something,
@@ -455,6 +559,11 @@ func (t *Tenant) CheckIn(ctx context.Context, f world.Flight, day time.Time, min
 		}
 		if len(acc.Tags) > 0 {
 			if err := t.announceBags(ctx, acc.Flight, acc.Passengers[0], ""); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if req.Onward != nil && req.Onward.Carrier != "" {
+			if err := t.ThroughCheck(ctx, f, day, key, acc.Flight, acc.Passengers); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}
@@ -843,6 +952,14 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 				Bags: len(p.Bags), Locator: p.Locator, Reason: p.OffloadReason}
 			if p.Onward != nil {
 				row.Onward = p.Onward.Flight + " " + p.Onward.Dest
+				switch {
+				case p.Onward.Refused != "":
+					row.Onward += " · through check-in refused: " + p.Onward.Refused
+				case p.Onward.Seat != "":
+					row.Onward += " · through-checked, seat " + p.Onward.Seat
+				case p.Onward.Carrier != "":
+					row.Onward += " · through check-in requested"
+				}
 			}
 			if p.Inbound != nil {
 				row.Inbound = p.Inbound.Flight

@@ -796,6 +796,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		capacity = 100000
 	}
 	partners := partnerAddresses(m.Carriers, s.Flights)
+	flightsByFrom := indexByFrom(s.Flights)
 	distribution := distributionAddresses(opts.GDSList)
 	tenantMsgs := opts.TenantMaxMessages
 	if tenantMsgs == 0 {
@@ -840,6 +841,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
+			Interline:             interlineFor(c.Designator, partners, m.Carriers, flightsByFrom),
 			Capacity:              capacity,
 			BookingDate:           s.BookingDate,
 			MaxMessages:           tenantMaxMsgs,

@@ -47,10 +47,15 @@ type link interface {
 }
 
 type Tenant struct {
-	Carrier   world.Carrier
-	Gateway   *gateway.Gateway
-	Store     store.Store
-	Inventory *inventory.Inventory
+	// interline offers other carriers' flights to connect onto; pendingThrough
+	// are through check-in requests awaiting their DCRCKA.
+	interline      func(f world.Flight) []world.Flight
+	pendingMu      sync.Mutex
+	pendingThrough map[string]throughPending
+	Carrier        world.Carrier
+	Gateway        *gateway.Gateway
+	Store          store.Store
+	Inventory      *inventory.Inventory
 
 	flights      []world.Flight
 	client       link
@@ -113,6 +118,11 @@ type Options struct {
 	// free sale between partners is the whole point of AVS, and a partner who
 	// never hears your availability is not a partner.
 	PartnerAddresses []string
+	// Interline lists other carriers' flights a passenger arriving on f can
+	// connect onto, so a share of connections cross carriers and are
+	// through-checked by the IATCI dialogue. Nil keeps connections on own
+	// metal.
+	Interline func(f world.Flight) []world.Flight
 	// Capacity, when positive, overrides every cabin's seats: a harness that
 	// wants headroom or a demonstration that wants single digits. Zero
 	// means the aircraft's own cabins, from the fleet data and the schedule.
@@ -257,6 +267,13 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		gw.AddPeer(&gateway.Peer{Name: code, Carrier: code, Format: store.FormatTypeB, TTYAddress: addr})
 	}
 	gw.Responder = &codeshareResponder{inv: inv, t: t}
+	// Another carrier's departure control may through-check its connecting
+	// passengers onto our flights; ours asks theirs the same way, and hears
+	// the answer here.
+	gw.ThroughCheckIn = throughStation{t}
+	gw.ThroughCheckInResponses = t.onThroughCheckIn
+	t.interline = opts.Interline
+	t.pendingThrough = map[string]throughPending{}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
@@ -922,4 +939,15 @@ func hashOf(s string) int {
 		h = -h
 	}
 	return h
+}
+
+// throughStation hands a through check-in to the tenant's departure control,
+// which is built after the gateway and so cannot be given to it directly.
+type throughStation struct{ t *Tenant }
+
+func (ts throughStation) ThroughCheckIn(ctx context.Context, req dcs.ThroughRequest) (*dcs.ThroughResult, error) {
+	if ts.t.DCS == nil {
+		return &dcs.ThroughResult{}, nil
+	}
+	return ts.t.DCS.ThroughCheckIn(ctx, req)
 }

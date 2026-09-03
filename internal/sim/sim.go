@@ -447,6 +447,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	capacity := opts.Capacity
 	s.capacity = capacity
 	partners := partnerAddresses(m.Carriers, flights)
+	flightsByFrom := indexByFrom(flights)
 	marketed, operators := codeshares(m.Carriers, flights)
 	var distribution []string
 	for _, g := range gdses {
@@ -483,6 +484,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			WatchAddress:          GDSAddress,
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
+			Interline:             interlineFor(c.Designator, partners, m.Carriers, flightsByFrom),
 			Marketed:              marketed[c.Designator],
 			OperatorAddresses:     operators[c.Designator],
 			Capacity:              capacity,
@@ -2067,4 +2069,45 @@ func regHash(f world.Flight) int {
 		h = -h
 	}
 	return h
+}
+
+// indexByFrom lists every carrier's flights by boarding point, for
+// connections that cross carriers.
+func indexByFrom(flights map[string][]world.Flight) map[string][]world.Flight {
+	out := map[string][]world.Flight{}
+	for _, fs := range flights {
+		for _, f := range fs {
+			out[f.From] = append(out[f.From], f)
+		}
+	}
+	return out
+}
+
+// interlineFor is the flights of a carrier's interline partners that leave
+// from where its own flight lands: what a connecting passenger can be
+// through-checked onto. Partners are the carriers whose teletype addresses
+// the carrier holds, resolved back to their codes.
+func interlineFor(code string, partners map[string][]string, carriers []world.Carrier, byFrom map[string][]world.Flight) func(world.Flight) []world.Flight {
+	byAddr := map[string]string{}
+	for _, c := range carriers {
+		byAddr[c.TTYAddress] = c.Designator
+	}
+	partner := map[string]bool{}
+	for _, a := range partners[code] {
+		if p := byAddr[a]; p != "" && p != code {
+			partner[p] = true
+		}
+	}
+	if len(partner) == 0 {
+		return nil
+	}
+	return func(f world.Flight) []world.Flight {
+		var out []world.Flight
+		for _, g := range byFrom[f.To] {
+			if partner[g.Carrier] {
+				out = append(out, g)
+			}
+		}
+		return out
+	}
 }
