@@ -22,7 +22,9 @@ basis codes on segments, amounts on tickets, and make IROPS reaccommodate
 against fare rules rather than only against seats.
 
 **Ticketing and settlement (BSP/ARC, interline billing).** Tickets exist
-as numbers and coupons; nothing is settled. A ticket sold by a GDS through
+as numbers and coupons, and every record now carries what it was sold for
+and can be exported in full (`jetwayctl export`, v0.1.60) -- the input a
+settlement file is built from; nothing is settled. A ticket sold by a GDS through
 an agency is reported to the BSP, paid to the carrier, and prorated
 between carriers on interline itineraries. The recorded day's 7,000
 codeshares are billed between the marketing and operating carriers. This
@@ -51,11 +53,13 @@ with ASM and SSM messages -- equipment changes, time changes, new flights
 -- all of which change bookings. jetway parses SSIM and the schedule
 messages; the world uses one message type of them.
 
-**Baggage reconciliation and tracing (BRS, WorldTracer).** Bags are tagged
-and reported loaded. A reconciliation system matches every bag on the
-aircraft to a boarded passenger and stops the flight if one is not, and
-WorldTracer is the interline system for the bags that got lost. The BSM
-traffic is there; the matching and the tracing are not.
+**Baggage reconciliation and tracing (BRS, WorldTracer).** Reconciliation
+is done (jetway v0.1.59): at the door every bag the hold reported loaded is
+matched to a boarded passenger, unaccompanied bags hold the door until
+sortation is told to pull them, short-shipped bags are named for the rush,
+and the panel shows the count. Tracing is not: WorldTracer is the
+interline system for the bags that got lost, and nothing here loses one
+yet.
 
 **Border and government (APIS, PNRGOV, Secure Flight, timatic).** Every
 international departure sends passenger data to the destination

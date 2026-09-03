@@ -282,7 +282,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="grid">
       <div class="card"><h3>The cold region</h3><p>A cross-region asynchronous replica (its lag is the RPO, normally under a second) and a cold link tier: the same instance template at size zero, the same load balancer configuration with its own reserved addresses. Region failover changes the addresses partners see and half of them will need a phone call, so it is a runbook: promote the replica, scale the tier up, repoint the partners' alternate address.</p></div>
       <div class="card"><h3>Day one</h3><p>Most Type B contracts specify a primary and an alternate address. Give partners the DR region's address as the alternate on day one. Accept that in-flight messages at the failed region after the last replicated transaction are lost, which is why the spool is regional and the RPO for this case is replication lag, not zero.</p></div>
-      <div class="card"><h3>Backups</h3><p>Automated daily with 35-day point-in-time recovery, plus a weekly logical export of each system's records to object storage with a retention lock, because the regulator will ask for a booking from four years ago and a PITR window does not answer that. Restore quarterly into a scratch instance and run <code>jetwayctl decode</code> and the console against it.</p></div>
+      <div class="card"><h3>Backups</h3><p>Automated daily with 35-day point-in-time recovery, plus a weekly logical export of each system's records (<code>GET /api/admin/export</code>, newline-delimited JSON, oldest first) to object storage with a retention lock, because the regulator will ask for a booking from four years ago and a PITR window does not answer that. Restore quarterly into a scratch instance and run <code>jetwayctl decode</code> and the console against it.</p></div>
     </div>
   </div>
 </section>
@@ -347,17 +347,17 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
   <div class="wrap">
     <div class="eyebrow">readiness</div>
     <h2>What jetway needed before any of this was true</h2>
-    <p class="lead">In the order a team would build it. Eight of nine are done; the ninth is half done.</p>
+    <p class="lead">In the order a team would build it. Eight of nine are done in full; the ninth is half done. The weekly archive export the DR section calls for exists too: <code>jetwayctl export --out records.ndjson</code> streams every record a node holds.</p>
     <div class="table-wrap"><table>
       <tr><th>#</th><th>item</th><th>state</th><th>what it is</th></tr>
       <tr><td class="mono">1</td><td>A system lease</td><td><span class="tag done">v0.1.48–51</span></td><td>bind links only while holding the system's row; standbys poll and take over; a holder asked to stop drains first and releases after</td></tr>
-      <tr><td class="mono">2</td><td>Readiness</td><td><span class="tag done">done</span></td><td><code>/readyz</code> fails when the store cannot be reached and while standing by; distinct from <code>/healthz</code></td></tr>
-      <tr><td class="mono">3</td><td>Drain on SIGTERM</td><td><span class="tag done">done</span></td><td>ingresses and HTTP drain with a timeout; the lease is released first</td></tr>
+      <tr><td class="mono">2</td><td>Readiness</td><td><span class="tag done">done</span></td><td><code>/readyz</code> fails when the store cannot be reached, while standing by, and when the spool's oldest entry is older than 30 s; distinct from <code>/healthz</code></td></tr>
+      <tr><td class="mono">3</td><td>Drain on SIGTERM</td><td><span class="tag done">done</span></td><td>in-flight handlers, then every session's outbox, then HTTP; the lease is released after</td></tr>
       <tr><td class="mono">4</td><td>Spool on by default</td><td><span class="tag done">v0.1.52</span></td><td>bounded by <code>spool.max_entries</code>, with depth and oldest-age metrics for the alert</td></tr>
       <tr><td class="mono">5</td><td>Retire as an operation</td><td><span class="tag done">done</span></td><td><code>POST /api/admin/retire</code> and <code>jetwayctl retire --before</code>, so retention is a scheduled job</td></tr>
       <tr><td class="mono">6</td><td>Hot peer reload</td><td><span class="tag done">done</span></td><td>SIGHUP re-reads the config and adds new peers; removing one is a restart</td></tr>
       <tr><td class="mono">7</td><td>Metrics for the outbox and the inventory</td><td><span class="tag done">v0.1.53</span></td><td>outbox depth and congestion per peer; inventory decisions by status and per-carrier gauges</td></tr>
-      <tr><td class="mono">8</td><td>Rate limiting per peer</td><td><span class="tag done">v0.1.53</span></td><td>per-peer pacing with a shared cap per ingress; still open: a different share per peer</td></tr>
+      <tr><td class="mono">8</td><td>Rate limiting per peer</td><td><span class="tag done">v0.1.53</span></td><td>per-peer pacing with a shared cap per ingress, and <code>peers[].rate_limit</code> for a peer's own share</td></tr>
       <tr><td class="mono">9</td><td>Load test as a release gate</td><td><span class="tag open">half</span></td><td>the live invariant check exists (<code>skycheck</code>); not yet a staging topology or a pipeline step</td></tr>
     </table></div>
     <h3 style="margin-top:30px">Cost, roughly</h3>

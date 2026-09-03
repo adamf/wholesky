@@ -347,7 +347,8 @@ system reports the hold as a BPM, and the door closes at T−10 producing
 the final sales back to reservations (no-shows written onto the bookings),
 the transfer and service lists to the arrival station, the ticket list to
 revenue, and the load and container messages with an AHM 560-method
-loadsheet — so the MVT's passenger count is who boarded, not a guess; a
+loadsheet — so the MVT's passenger count is who boarded, not a guess, the hold reconciled against the cabin before the door closes (an
+unaccompanied bag holds it until sortation pulls the bag); a
 connecting passenger misses the flight when the inbound is late enough;
 every carrier answers sells from the aircraft's own seats (jetway's
 `pkg/inventory`: cabins from the fleet's layout, pooled per leg, rebuilt
@@ -380,8 +381,9 @@ irregular operations — when a flight is cancelled, by chaos or by the
 record, the distribution systems' irops engines work the schedule-change
 queue the way a desk does: the next flights over the same city pair, own
 metal first, free sale where the cache offers it and a request to the
-carrier where it does not, each request waited on until the carrier
-answers — a confirmed seat drops the dead leg with a real sell and a real
+carrier where it does not -- own metal first, then the codeshares the
+carrier markets under its own number, then interline -- each request
+waited on until the carrier answers — a confirmed seat drops the dead leg with a real sell and a real
 cancel on the wire, a waitlist is kept and named, a refusal comes off the
 record — while the airport offloads whoever had checked in and pulls their
 bags; what nothing can carry stays on the queue for a person;

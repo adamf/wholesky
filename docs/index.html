@@ -231,7 +231,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="panel" id="tab-carrier" role="tabpanel">
       <div>
         <h3>Carriers: a reservations system and a departure-control system each</h3>
-        <p>Each carrier is a jetway gateway with its own book of record, its own seat inventory, its own locator space and its own console. It answers sells from its cabins, files its schedule changes, and runs its airports: reservations sends the airport the name list at T−180, the counter fills in waves with seat assignments and bag tags to sortation, the ADL goes at T−60, the counter closes, the gate boards, the sortation system reports the hold, the door closes at T−10 and the final sales, transfer, service and load messages and an AHM 560-method loadsheet go out.</p>
+        <p>Each carrier is a jetway gateway with its own book of record, its own seat inventory, its own locator space and its own console. It answers sells from its cabins, files its schedule changes, and runs its airports: reservations sends the airport the name list at T−180, the counter fills in waves with seat assignments and bag tags to sortation, the ADL goes at T−60, the counter closes, the gate boards, the sortation system reports the hold, the door closes at T−10 -- not over a loaded bag whose passenger is not on board; those are named and pulled first -- and the final sales, transfer, service and load messages and an AHM 560-method loadsheet go out.</p>
         <p>The reservations and departure-control halves talk over the network like the separate systems they usually are. A carrier hosted on another machine is asked through federation; the switch cannot tell the difference.</p>
         <div class="tags">
           <span class="tag spec">Type B · IATA whitepaper</span><span class="tag spec">EDIFACT · ISO 9735</span><span class="tag inf">AIRIMP · inferred profile</span><span class="tag inf">PNL/ADL · RP 1708 family</span><span class="tag inf">PSM PTM LDM CPM · worked examples</span><span class="tag spec">MATIP · RFC 2351</span>
@@ -251,7 +251,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <dl class="kv">
           <dt>queues</dt><dd>confirmation · waitlist · unable · divergence · schedule change · ticketing</dd>
           <dt>books</dt><dd>bounded memory, or Postgres with one node view per system</dd>
-          <dt>IROPS</dt><dd>a cancelled flight queues every booking on it; reaccommodation asks the carriers and waits for the answer</dd>
+          <dt>IROPS</dt><dd>a cancelled flight queues every booking on it; reaccommodation protects on own metal, then on the codeshares the carrier markets under its own number, then interlines, and waits for each carrier's answer</dd>
         </dl>
       </div>
       <div>

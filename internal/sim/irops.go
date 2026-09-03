@@ -27,17 +27,31 @@ import (
 // dead segment's city pair departing after it, the carrier's own first, the
 // same day and then the next, nearest first.
 func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candidate, error) {
+	sameNum := func(a, b string) bool { return strings.TrimLeft(a, "0") == strings.TrimLeft(b, "0") }
+	// The dead flight's own departure, whether the passenger held it under
+	// the operator's code or a marketing carrier's.
 	deadDep := -1
 	for _, f := range s.Flights[dead.Carrier] {
-		if f.Number == dead.FlightNum || strings.TrimLeft(f.Number, "0") == strings.TrimLeft(dead.FlightNum, "0") {
+		if sameNum(f.Number, dead.FlightNum) {
 			deadDep = f.DepMin
 			break
 		}
 	}
+	if deadDep < 0 {
+		for _, fs := range s.Flights {
+			for _, f := range fs {
+				if f.Marketing == dead.Carrier && sameNum(f.MarketingNumber, dead.FlightNum) {
+					deadDep = f.DepMin
+				}
+			}
+		}
+	}
 	type cand struct {
-		f      world.Flight
-		day    int // 0 same day, 1 next
-		sortBy int
+		f       world.Flight
+		carrier string // the code the seat is sold under
+		number  string
+		day     int // 0 same day, 1 next
+		sortBy  int
 	}
 	var out []cand
 	for code, fs := range s.Flights {
@@ -48,22 +62,29 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 			if f.Actual != nil && f.Actual.Cancelled {
 				continue // the record says this one did not fly either
 			}
-			if code == dead.Carrier && (f.Number == dead.FlightNum || strings.TrimLeft(f.Number, "0") == strings.TrimLeft(dead.FlightNum, "0")) {
+			isDead := (code == dead.Carrier && sameNum(f.Number, dead.FlightNum)) ||
+				(f.Marketing == dead.Carrier && sameNum(f.MarketingNumber, dead.FlightNum))
+			if isDead {
 				continue
 			}
 			// Own metal first, however much later it leaves: a carrier
 			// protects its stranded passengers on its own flights and
 			// interlines them only when it has nothing, because another
-			// carrier's seat is another carrier's revenue. Within each tier,
-			// the nearest departure.
-			tier := 0
-			if code != dead.Carrier {
-				tier = 1
+			// carrier's seat is another carrier's revenue. Its own code on a
+			// partner's aircraft -- a codeshare it markets -- comes next,
+			// sold under its own number so the booking stays its own.
+			// Within each tier, the nearest departure.
+			carrier, number, tier := code, f.Number, 2
+			switch {
+			case code == dead.Carrier:
+				tier = 0
+			case f.Marketing == dead.Carrier && f.MarketingNumber != "":
+				carrier, number, tier = f.Marketing, f.MarketingNumber, 1
 			}
 			if f.DepMin > deadDep {
-				out = append(out, cand{f: f, day: 0, sortBy: tier*10000 + f.DepMin})
+				out = append(out, cand{f: f, carrier: carrier, number: number, day: 0, sortBy: tier*10000 + f.DepMin})
 			} else {
-				out = append(out, cand{f: f, day: 1, sortBy: tier*10000 + 1440 + f.DepMin})
+				out = append(out, cand{f: f, carrier: carrier, number: number, day: 1, sortBy: tier*10000 + 1440 + f.DepMin})
 			}
 		}
 	}
@@ -75,7 +96,7 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 	for _, c := range out {
 		dep := dead.Depart.AddDate(0, 0, c.day)
 		res = append(res, irops.Candidate{
-			Carrier: c.f.Carrier, FlightNum: c.f.Number, Board: c.f.From, Off: c.f.To,
+			Carrier: c.carrier, FlightNum: c.number, Board: c.f.From, Off: c.f.To,
 			Depart:     dep,
 			DepartTime: hhmm(c.f.DepMin), ArriveTime: hhmm(c.f.ArrMin),
 		})

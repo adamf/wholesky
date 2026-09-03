@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.58</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.60</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -163,7 +163,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li>Opens the flight from the name list; <b>checks in</b> with seat assignments by cabin and bag tags; applies <b>ADL</b> amendments.</li>
           <li><b>Boards</b>, closes the counter and the door on the clock; produces <b>PFS, PTM, PSM, ETL, LDM, CPM</b> to their addresses.</li>
           <li><b>Load control</b> by the AHM 560/565 index method, a legal <b>loadsheet</b> per departure.</li>
-          <li>Reconciles bags reported loaded (<b>BPM</b>) against tags issued (<b>BSM</b>); <b>offloads</b> on cancellation.</li>
+          <li><b>Reconciles the hold against the cabin</b> at the door: a loaded bag whose passenger did not board holds the flight until it is pulled; a boarded passenger's bag never loaded is named for the rush. <b>Offloads</b> on cancellation.</li>
           <li>Derives <b>MVT</b> from the aircraft's OOOI reports; files the <b>flight plan</b> and hears the towers back.</li>
         </ul>
       </div>
@@ -185,7 +185,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <tr><th>selling</th><td class="mono">GET /api/availability · GET /api/flights · GET /api/journeys · POST /ndc</td></tr>
       <tr><th>work</th><td class="mono">GET /api/queues · GET /api/queue/{name} · POST /api/queue/item/{id}/work</td></tr>
       <tr><th>carriers</th><td class="mono">GET /api/carrier/{designator}/pnrs · GET /api/carrier/{designator}/inventory · GET /api/insights</td></tr>
-      <tr><th>operating</th><td class="mono">GET /healthz · GET /readyz · GET /metrics · GET /api/status · POST /api/admin/retire</td></tr>
+      <tr><th>operating</th><td class="mono">GET /healthz · GET /readyz · GET /metrics · GET /api/status · POST /api/admin/retire · GET /api/admin/export</td></tr>
     </table></div>
   </div>
 </section>
@@ -327,6 +327,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>The manifest</b> opened from the name list; check-in in waves with real seat assignments by cabin and bag tags to sortation (BSM), then bags reported loaded from the hold (BPM).</li>
           <li><b>Boarding and close</b>: the counter closes at 45, the gate boards from 30, the door closes at 10, and the airport says so: PFS final sales, PTM transfers, PSM special services, ETL the ticket list, LDM load and CPM container-pallet, to the addresses that receive them.</li>
           <li><b>Load control</b>: the AHM 560/565 index method with a representative fleet, producing a legal loadsheet with fuel, trim and limits.</li>
+          <li><b>Bag reconciliation</b> at the door: every bag the hold reports loaded must belong to a boarded passenger; unaccompanied bags are named and come off the load, short-shipped bags are named to follow, and the door can be held until the hold matches the cabin.</li>
           <li><b>Cancellation</b> offloads whoever had checked in and pulls their bags; the manifest is let go at the hour it would have landed.</li>
         </ul>
       </div>
@@ -361,7 +362,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <ul>
           <li><b>Listeners</b>: framed TCP, MATIP, HTTPS with mutual TLS, and a file drop.</li>
           <li><b>Identity</b> comes from the certificate presented or the circuit arrived on, never from a name asserted.</li>
-          <li><b>Rate limits</b> pace each peer's reader so the partner's own circuit pushes back, with a shared cap per ingress so one flooding peer cannot take the others' share.</li>
+          <li><b>Rate limits</b> pace each peer's reader so the partner's own circuit pushes back, with a shared cap per ingress and a peer's own share where a partner needs one.</li>
           <li><b>Outbox per link</b>: a bounded queue and a writer goroutine, so a read loop never waits on a peer's window; a peer that stops reading gets refusals, not a stall. Frames sent in the same burst as a hello are kept.</li>
         </ul>
       </div>
@@ -379,7 +380,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>A lease</b> so a standby node takes over when the holder stops renewing, and releases after a drain.</li>
           <li><b>Readiness</b> that pings the store and fails while standing by; drains that wait for in-flight work.</li>
           <li><b>Hot peer reload</b> on SIGHUP; peers keyed by name with format, transport and addresses.</li>
-          <li><b>Retention</b>: <code>POST /api/admin/retire</code> and <code>jetwayctl retire --before</code>.</li>
+          <li><b>Retention and archive</b>: <code>jetwayctl retire --before</code> drops the day; <code>jetwayctl export --out</code> streams every record as newline-delimited JSON for the archive a regulator asks about years later.</li>
           <li><b>Metrics</b> in Prometheus exposition with no client library; OpenTelemetry tracing with a hand-rolled OTLP/JSON exporter. A production plan for GCP is in <code>docs/production-gcp.md</code>.</li>
         </ul>
       </div>
