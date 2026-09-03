@@ -107,6 +107,20 @@ func TestSettlementHandsEachAirlineAHOTThatReconciles(t *testing.T) {
 	if tx.Code != bsp.TransSale || len(tx.Segments) == 0 || tx.Passenger == "" || len(tx.Payments) != 1 || tx.Payments[0].Type != bsp.PaymentCash {
 		t.Errorf("first transaction: %+v", tx)
 	}
+	// The distribution system's agent reporting file for the day carries
+	// the same documents, in the handbook's other layout.
+	rec = httptest.NewRecorder()
+	s.serveRET(rec, httptest.NewRequest("GET", "/ret/1G.txt", nil))
+	if rec.Code != 200 {
+		t.Fatalf("RET: %d %s", rec.Code, rec.Body.String())
+	}
+	ret, err := bsp.ParseRET(strings.NewReader(rec.Body.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ret.Transactions) != st.Transactions || ret.System != "1GSL" {
+		t.Errorf("RET carries %d transactions for %s, plan %d", len(ret.Transactions), ret.System, st.Transactions)
+	}
 	// The carriers bill each other for codeshare coupons off the same books.
 	s.Bill(ctx)
 	if b := s.Billing(); b == nil || b.Prorate < 0 {

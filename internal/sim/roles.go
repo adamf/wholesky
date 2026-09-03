@@ -694,6 +694,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)
 	mux.HandleFunc("GET /billing/", s.serveInvoice)
+	mux.HandleFunc("GET /ret/", s.serveRET)
 	mux.HandleFunc("GET /shard/summary.json", func(w http.ResponseWriter, r *http.Request) {
 		sum := shardSummary{Queues: map[string]int{}, Halos: map[string]int64{}}
 		sum.Bookings = bk()

@@ -54,8 +54,11 @@ money went back, so the commission comes back with it. Exchanges are done (jetwa
 reprotects has the ticket reissued over the new itinerary, the old
 document's open coupons marked exchanged, and the plan reports the new
 document with the original issue behind it (BKS46) and the old document's
-value as its form of payment (BKP84 EX). Not done: the RET the agents send
-the plan, ADMs/ACMs, net reporting and card data, the Prorate Manual's provisos (minima, factors,
+value as its form of payment (BKP84 EX). The RET the agents would
+send the plan is written too (jetway v0.1.82, chapter 5 of the same
+handbook; `GET /ret/<gds>.txt` on any machine that holds a distribution
+system's book), though the plan here still reads the books directly rather
+than the file. Not done: ADMs/ACMs, net reporting and card data, the Prorate Manual's provisos (minima, factors,
 special agreements), and rejections and billing memos between the carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):

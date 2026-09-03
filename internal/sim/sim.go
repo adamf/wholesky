@@ -415,6 +415,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
 		mux.HandleFunc("GET /billing/", s.serveInvoice)
+		mux.HandleFunc("GET /ret/", s.serveRET)
 		mux.HandleFunc("GET /invariants.json", func(w http.ResponseWriter, r *http.Request) {
 			s.fedMu.RLock()
 			h := s.invHandler
@@ -1643,6 +1644,39 @@ func (s *Sim) Settlement() *settle.Summary {
 	s.settleMu.Lock()
 	defer s.settleMu.Unlock()
 	return s.settlement
+}
+
+// serveRET hands out one distribution system's agent reporting file for
+// the day: GET /ret/{designator}.txt.
+func (s *Sim) serveRET(w http.ResponseWriter, r *http.Request) {
+	code := strings.ToUpper(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/ret/"), ".txt"))
+	var g *GDSNode
+	for _, x := range s.GDSes {
+		if x.Designator == code {
+			g = x
+		}
+	}
+	if g == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var airlines []settle.Airline
+	for _, c := range s.Manifest.Carriers {
+		airlines = append(airlines, settle.Airline{Designator: c.Designator, Accounting: s.accountingCode(c.Designator)})
+	}
+	p := s.plan
+	if p.BSP == "" {
+		p = settle.Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	}
+	ret, err := p.WriteRET(r.Context(), s.BookingDate, settle.Agent{Designator: g.Designator, Name: g.Name, Store: g.Store}, airlines)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=us-ascii")
+	if err := ret.Write(w); err != nil {
+		s.log.Warn("could not write RET", "gds", code, "err", err)
+	}
 }
 
 func (s *Sim) serveSettlement(w http.ResponseWriter, r *http.Request) {

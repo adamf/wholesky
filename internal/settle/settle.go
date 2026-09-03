@@ -346,6 +346,51 @@ func (p *Plan) Run(ctx context.Context, day time.Time, agents []Agent, airlines 
 	return sum, nil
 }
 
+// WriteRET is the agent's side of the exchange: the Agent Reporting Data
+// file one distribution system would send the plan for the day, every
+// ticketed document in its book as a sale (and, when refunded, a refund),
+// in the handbook's chapter 5 layout. It is what a real plan builds the
+// HOT from; here the plan reads the books directly and the RET is served
+// for the record.
+func (p *Plan) WriteRET(ctx context.Context, day time.Time, ag Agent, airlines []Airline) (*bsp.RET, error) {
+	if ag.Store == nil {
+		return nil, fmt.Errorf("settle: agent %s has no book here", ag.Designator)
+	}
+	byAcct := map[string]Airline{}
+	for _, a := range airlines {
+		byAcct[a.Accounting] = a
+	}
+	recs, err := ag.Store.ListPNRs(ctx, 1_000_000)
+	if err != nil {
+		return nil, fmt.Errorf("settle: list %s records: %w", ag.Designator, err)
+	}
+	ret := &bsp.RET{PeriodEnd: day, System: strings.ToUpper(ag.Designator) + "SL", Country: p.Country, Processed: day.Add(23 * time.Hour), Sequence: 1}
+	for _, rec := range recs {
+		for _, tk := range rec.Tickets {
+			if tk.Type != "" && tk.Type != pnr.DocTicket {
+				continue
+			}
+			if _, ok := byAcct[tk.Number.AirlineCode]; !ok || tk.IssuedAt.After(day.Add(24*time.Hour)) {
+				continue
+			}
+			tx := transactionFor(rec, tk, ag, p)
+			tx.Compute()
+			ret.Transactions = append(ret.Transactions, tx)
+			if r, ok := refundFor(tx, tk, day); ok {
+				r.Compute()
+				ret.Transactions = append(ret.Transactions, r)
+			}
+		}
+	}
+	sort.Slice(ret.Transactions, func(i, j int) bool {
+		if ret.Transactions[i].Document != ret.Transactions[j].Document {
+			return ret.Transactions[i].Document < ret.Transactions[j].Document
+		}
+		return ret.Transactions[i].Code < ret.Transactions[j].Code
+	})
+	return ret, nil
+}
+
 // soldThrough names the agent a record was sold through, when it was: the
 // system that originated it, or one whose locator it carries.
 func soldThrough(rec *pnr.PNR, agents map[string]bool) string {
