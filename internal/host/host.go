@@ -55,6 +55,11 @@ type Tenant struct {
 	substituted    map[dcs.Key]string
 	countryOf      func(iata string) string
 	apisSent       map[dcs.Key]int
+	// pnrgovSent is how many records the last PNR push to the state named,
+	// per flight; retimed is the day's time change on a flight, when the
+	// carrier announced one.
+	pnrgovSent map[dcs.Key]int
+	retimed    map[dcs.Key]string
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
 	Carrier        world.Carrier
@@ -305,6 +310,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.overrides = overrides
 	t.substituted = map[dcs.Key]string{}
 	t.apisSent = map[dcs.Key]int{}
+	t.pnrgovSent = map[dcs.Key]int{}
+	t.retimed = map[dcs.Key]string{}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}

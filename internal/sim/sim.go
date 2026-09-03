@@ -1368,8 +1368,24 @@ var groundEvents = []groundEvent{
 	{180, "pnl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.SendPNL(ctx, f, day)
 	}},
+	{170, "pnr push", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		// A state's PNR regime hears the records before departure and
+		// again at the door; the international flight's first push goes
+		// once the name list has.
+		return t.PushPNRGOV(ctx, f, day)
+	}},
 	{150, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 150)
+	}},
+	{125, "retime", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+		// The day's delay is known to the record (or the hash) from the
+		// start; the carrier learns it about two hours out, and announces
+		// the ones long enough to matter: forty-six minutes and up.
+		dep, arr := flightDelays(f, day)
+		if dep < 46 {
+			return nil
+		}
+		return t.Retime(ctx, f, day, dep, arr)
 	}},
 	{110, "aircraft substitution", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		// One flight in a hundred and fifty goes technical after check-in
@@ -1527,6 +1543,10 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 	}, st, bus, log, []byte("wholesky-"+g.Designator))
 	gw.Avail = avail.NewCache()
 	gw.Tariff = s.tariff
+	// The world keeps every clock on UTC: a flight's times are UTC minutes
+	// and the segments sold from them are written the same way, so a UTC
+	// schedule message applies to a held segment with no offset at all.
+	gw.LocalClock = func(string, time.Time) (time.Duration, bool) { return 0, true }
 	// Without a queue manager a schedule change has nowhere to put the
 	// bookings it touches -- applySchedule quietly does nothing. The halos on
 	// the map are these placements.

@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.60</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.66</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -133,9 +133,11 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <div class="table-wrap"><table>
           <tr><th>domain</th><th>messages</th></tr>
           <tr><td>reservations · Type B</td><td class="mono">AIRIMP sell, reply, cancel, change · SSR · OSI · OSI/locator exchange · ticket numbers · remarks · received-from</td></tr>
-          <tr><td>reservations · EDIFACT</td><td class="mono">PAOREQ · PAORES · TKCREQ · TKCRES · CONTRL · PNRGOV</td></tr>
+          <tr><td>reservations · EDIFACT</td><td class="mono">PAOREQ · PAORES · TKCREQ · TKCRES · CONTRL</td></tr>
+          <tr><td>government · EDIFACT</td><td class="mono">PAXLST (APIS, WCO/IATA/ICAO guide) · PNRGOV push (PADIS guide, with the check-in group)</td></tr>
+          <tr><td>airport ↔ airport · EDIFACT</td><td class="mono">DCQCKI · DCRCKA (IATCI through check-in)</td></tr>
           <tr><td>distribution · HTTP</td><td class="mono">NDC OrderCreateRQ · OrderRetrieveRQ · OrderCancelRQ · OrderViewRS</td></tr>
-          <tr><td>availability &amp; schedule</td><td class="mono">AVS · SSM · ASM · SSIM</td></tr>
+          <tr><td>availability &amp; schedule</td><td class="mono">AVS · SSM · ASM (CNL, EQT, TIM applied) · SSIM</td></tr>
           <tr><td>reservations → airport</td><td class="mono">PNL (multi-part) · ADL</td></tr>
           <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · loadsheet (AHM 560)</td></tr>
           <tr><td>aircraft &amp; operations</td><td class="mono">MVT · MVA · DIV · ACARS OOOI (OUT OFF ON IN)</td></tr>
@@ -164,6 +166,9 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>Boards</b>, closes the counter and the door on the clock; produces <b>PFS, PTM, PSM, ETL, LDM, CPM</b> to their addresses.</li>
           <li><b>Load control</b> by the AHM 560/565 index method, a legal <b>loadsheet</b> per departure.</li>
           <li><b>Reconciles the hold against the cabin</b> at the door: a loaded bag whose passenger did not board holds the flight until it is pulled; a boarded passenger's bag never loaded is named for the rush. <b>Offloads</b> on cancellation.</li>
+          <li><b>Through check-in</b> across carriers over IATCI: accepts another airline's connecting passengers by name, seats them and answers per passenger; asks the onward carrier for its own passengers and records the seat it gave.</li>
+          <li><b>Changes the aircraft</b> under a checked-in flight: rebuilds the cabin from the new type, keeps every seat that still exists, re-seats the rest and puts whoever no longer fits on standby with a denied-boarding alert.</li>
+          <li><b>Tells the state</b>: the APIS passenger list at the door (PAXLST) and the PNR push with each traveller's seat, sequence and bags (PNRGOV), both to the public guides.</li>
           <li>Derives <b>MVT</b> from the aircraft's OOOI reports; files the <b>flight plan</b> and hears the towers back.</li>
         </ul>
       </div>
@@ -229,7 +234,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       </div>
       <div class="card">
         <h3>Schedules <span class="tag inf">SSIM inferred</span></h3>
-        <p>SSM and ASM schedule messages as an extensible profile; SSIM parsing. A cancellation as ASM reaches distribution and the airport, and the bookings under a marketing carrier's code are told under that code.</p>
+        <p>SSM and ASM schedule messages as an extensible profile; SSIM parsing. A cancellation as ASM reaches distribution and the airport, and the bookings under a marketing carrier's code are told under that code. An equipment change (EQT) queues the holdings for reprotection; a time change (TIM) moves the held segments to the new times at TK, on the station's clock when the message is in UTC, and queues the advice.</p>
       </div>
     </div>
   </div>
@@ -329,6 +334,9 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>Load control</b>: the AHM 560/565 index method with a representative fleet, producing a legal loadsheet with fuel, trim and limits.</li>
           <li><b>Bag reconciliation</b> at the door: every bag the hold reports loaded must belong to a boarded passenger; unaccompanied bags are named and come off the load, short-shipped bags are named to follow, and the door can be held until the hold matches the cabin.</li>
           <li><b>Cancellation</b> offloads whoever had checked in and pulls their bags; the manifest is let go at the hour it would have landed.</li>
+          <li><b>Aircraft substitution</b>: a smaller type takes a checked-in flight; the cabin is rebuilt, seats kept where they exist, the rest re-seated, the overflow denied boarding by name, and distribution hears the ASM EQT under every code the flight sells under.</li>
+          <li><b>Through check-in</b> (IATCI, DCQCKI/DCRCKA): connecting passengers checked in onto another carrier's flight by the delivering station, refusals per passenger in the standard vocabulary, the onward seat recorded on the manifest.</li>
+          <li><b>The state's messages</b>: the APIS list at the door to the WCO/IATA/ICAO PAXLST guide, and the PNRGOV push, records as booked before departure and with the check-in group at the door, to the IATA PADIS guide, both tested on the guides' own worked examples.</li>
         </ul>
       </div>
       <div class="card">

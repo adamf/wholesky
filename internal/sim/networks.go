@@ -12,6 +12,7 @@ package sim
 import (
 	"context"
 	"fmt"
+	"github.com/adamf/jetway/pkg/padis"
 	"github.com/adamf/jetway/pkg/paxlst"
 	"log/slog"
 	"strings"
@@ -57,8 +58,27 @@ type Border struct {
 	*netNode
 	lists   atomic.Int64
 	persons atomic.Int64
+	pushes  atomic.Int64
+	records atomic.Int64
+	checked atomic.Int64
 	mu      sync.Mutex
 	byDest  map[string]int64
+}
+
+// Pushes is how many PNR pushes arrived; Records how many records they
+// carried; CheckedIn how many of those records came with check-in data.
+func (b *Border) Pushes() int64    { return b.pushes.Load() }
+func (b *Border) Records() int64   { return b.records.Load() }
+func (b *Border) CheckedIn() int64 { return b.checked.Load() }
+
+func (b *Border) receivePush(ctx context.Context, peer *gateway.Peer, push *padis.GovPush) {
+	b.pushes.Add(1)
+	b.records.Add(int64(len(push.Records)))
+	for _, r := range push.Records {
+		if len(r.CheckIn) > 0 {
+			b.checked.Add(1)
+		}
+	}
 }
 
 // Lists is how many passenger lists arrived; Persons how many travellers
@@ -283,6 +303,7 @@ func (s *Sim) startNetworks(ctx context.Context, shard int, switchAddr string, l
 	}
 	s.Border = &Border{netNode: gov, byDest: map[string]int64{}}
 	gov.GW.APIS = s.Border.receive
+	gov.GW.PNRGOV = s.Border.receivePush
 	ansp := &ANSP{}
 	node, err := s.startNetNode(ctx, atcPeer(shard), "AT", atcAddress(shard), "XXXXZQZX", switchAddr,
 		gateway.GroundFuncs{OnATS: func(ctx context.Context, m *ats.Message, env *aftn.Message) error {

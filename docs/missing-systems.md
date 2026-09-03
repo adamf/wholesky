@@ -51,8 +51,11 @@ going technical is now a story (jetway v0.1.65): one flight in a hundred
 and fifty is substituted after check-in opens, departure control rebuilds
 the cabin and re-seats or denies boarding, the inventory shrinks to the new
 aircraft, and distribution hears the ASM EQT and queues the bookings. Time
-changes (TIM) and the SSIM file as the schedule's source are not yet
-applied; the world still compiles its own timetable.
+changes are done too (jetway v0.1.66): a flight running forty-six minutes
+or more late is announced about two hours out as an ASM TIM, distribution
+moves the sold segments to the new times at TK and queues the advice, and
+the panel shows STD → ETD. The SSIM file as the schedule's source is not
+yet applied; the world still compiles its own timetable.
 
 **Baggage reconciliation and tracing (BRS, WorldTracer).** Reconciliation
 is done (jetway v0.1.59): at the door every bag the hold reported loaded is
@@ -66,8 +69,12 @@ yet.
 done (jetway v0.1.64, `pkg/paxlst`, specified against the public
 WCO/IATA/ICAO guide and tested on its worked examples): every international
 door close sends the border control agency the flight-close passenger list,
-and the agency counts travellers by arrival. Secure Flight-style vetting
-before a boarding pass, PNRGOV pushes and timatic are not.
+and the agency counts travellers by arrival. PNRGOV is done (jetway v0.1.66,
+`pkg/padis`, specified against the free IATA PADIS PNRGOV guide and tested
+on its worked example): every international flight pushes its records to
+the state once when the name list goes out and again at the door with each
+traveller's seat, sequence and bags. Secure Flight-style vetting before a
+boarding pass and timatic are not.
 
 ## Operations, mostly off the wire
 

@@ -745,7 +745,13 @@ func (t *Tenant) Close(ctx context.Context, f world.Flight, day time.Time) error
 	if err != nil {
 		return err
 	}
-	return t.SendClosure(ctx, cl)
+	err = t.SendClosure(ctx, cl)
+	// And the same state its PNR push at departure: the records as booked,
+	// now with the seat, sequence and bags the door gave each traveller.
+	if perr := t.sendPNRGOV(ctx, f, day, cl.Flight); perr != nil && err == nil {
+		err = perr
+	}
+	return err
 }
 
 // SendClosure transmits a closure's messages. It is also the console's
@@ -864,6 +870,12 @@ type Summary struct {
 	APIS int `json:"apis,omitempty"`
 	// Substituted describes an aircraft change on the day, when there was one.
 	Substituted string `json:"substituted,omitempty"`
+	// PNRGOV is how many records the state's passenger information unit
+	// was pushed for the flight, when it crosses a border.
+	PNRGOV int `json:"pnrgov,omitempty"`
+	// Retimed describes the day's time change, when the carrier announced
+	// one to distribution.
+	Retimed string `json:"retimed,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -933,7 +945,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {
@@ -1120,19 +1132,127 @@ func (t *Tenant) Substitute(ctx context.Context, f world.Flight, day time.Time) 
 	t.groundMu.Lock()
 	t.substituted[key] = fmt.Sprintf("%s → %s, %d re-seated, %d denied boarding", ch.From, ch.To, len(ch.Reseated), len(ch.Displaced))
 	t.groundMu.Unlock()
-	text := fmt.Sprintf("ASM\nUTC\nEQT\n%s%s/%s\nJ %s\n%s%s %s%s %s%s", f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), best,
-		f.From, f.To, f.From, hhmmOf(f.DepMin), f.To, hhmmOf(f.ArrMin))
-	err = t.SendSchedule(ctx, text)
-	if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" {
-		mtext := fmt.Sprintf("ASM\nUTC\nEQT\n%s%s/%s\nJ %s\n%s%s %s%s %s%s", f.Marketing, f.MarketingNumber, strings.ToUpper(day.Format("02Jan")), best,
-			f.From, f.To, f.From, hhmmOf(f.DepMin), f.To, hhmmOf(f.ArrMin))
-		if merr := t.SendSchedule(ctx, mtext); merr != nil && err == nil {
-			err = merr
-		}
-	}
+	err = t.sendASM(ctx, f, day, fmt.Sprintf("EQT\n%s%s/%s\nJ %s\n%s", "%s", "%s", "%s", best, legLine(f, f.DepMin, f.ArrMin)))
 	t.log.Info("aircraft substituted", "flight", key.Flight, "board", key.Board, "from", ch.From, "to", ch.To,
 		"kept", ch.Kept, "reseated", len(ch.Reseated), "displaced", len(ch.Displaced))
 	return best, err
+}
+
+// sendASM sends one ad hoc schedule message about a flight to every
+// distribution system, and the same again under the marketing carrier's
+// code when the leg is a codeshare: a change only the operating code hears
+// about strands the codeshare's bookings. The body names the flight with
+// three %s verbs for carrier, number and date.
+func (t *Tenant) sendASM(ctx context.Context, f world.Flight, day time.Time, body string) error {
+	date := strings.ToUpper(day.Format("02Jan"))
+	err := t.SendSchedule(ctx, "ASM\nUTC\n"+fmt.Sprintf(body, f.Carrier, f.Number, date))
+	if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" {
+		if merr := t.SendSchedule(ctx, "ASM\nUTC\n"+fmt.Sprintf(body, f.Marketing, f.MarketingNumber, date)); merr != nil && err == nil {
+			err = merr
+		}
+	}
+	return err
+}
+
+// legLine is the schedule message's leg: board point and time, off point
+// and time, the way the SSIM chapter 7 leg line reads them.
+func legLine(f world.Flight, depMin, arrMin int) string {
+	return fmt.Sprintf("%s%s %s%s", f.From, hhmmOf(depMin), f.To, hhmmOf(arrMin))
+}
+
+// Retime is the carrier learning, a couple of hours out, that the flight
+// will leave late enough to tell people: an ASM TIM with the new times goes
+// to every distribution system, whose held segments move to the new times
+// at TK -- confirming, advise times changed -- and whose agents get the
+// task. Short delays are not announced; the movement message says what
+// happened, the schedule change says what will.
+func (t *Tenant) Retime(ctx context.Context, f world.Flight, day time.Time, depDelay, arrDelay int) error {
+	if depDelay <= 0 || t.isCancelled(f, day) {
+		return nil
+	}
+	key := flightKey(f, day)
+	t.groundMu.Lock()
+	_, done := t.retimed[key]
+	t.groundMu.Unlock()
+	if done {
+		return nil
+	}
+	if arrDelay < 0 {
+		arrDelay = 0
+	}
+	err := t.sendASM(ctx, f, day, fmt.Sprintf("TIM\n%s%s/%s\n%s", "%s", "%s", "%s", legLine(f, f.DepMin+depDelay, f.ArrMin+arrDelay)))
+	if err != nil {
+		return err
+	}
+	t.groundMu.Lock()
+	t.retimed[key] = fmt.Sprintf("STD %s → ETD %s (+%d), ASM TIM to distribution", hhmmOf(f.DepMin), hhmmOf(f.DepMin+depDelay), depDelay)
+	t.groundMu.Unlock()
+	t.log.Info("flight retimed", "flight", key.Flight, "board", key.Board, "delay", depDelay)
+	return nil
+}
+
+func (t *Tenant) retimedFor(fl *dcs.Flight) string {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.retimed[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
+}
+
+// PushPNRGOV is the reservations push a state's PNR regime takes before
+// departure -- here once, when the name list goes to the airport -- with
+// the records as booked and no check-in data yet. The door's push follows
+// at close with the seats and bags.
+func (t *Tenant) PushPNRGOV(ctx context.Context, f world.Flight, day time.Time) error {
+	if t.isCancelled(f, day) || !t.crossesBorder(f.From, f.To) {
+		return nil
+	}
+	key := flightKey(f, day)
+	fl, err := t.DCS.Flight(key)
+	if err != nil {
+		// Not under control yet: the push is the reservation's alone.
+		fl = &dcs.Flight{Key: key, Carrier: f.Carrier, Dest: f.To}
+	}
+	return t.sendPNRGOV(ctx, f, day, fl)
+}
+
+// crossesBorder reports whether a sector leaves one country for another,
+// as far as the world's country table knows.
+func (t *Tenant) crossesBorder(from, to string) bool {
+	if t.border == "" || t.countryOf == nil {
+		return false
+	}
+	a, b := t.countryOf(from), t.countryOf(to)
+	return a != "" && b != "" && a != b
+}
+
+// sendPNRGOV pushes the flight's records to the state, and remembers how
+// many for the panel.
+func (t *Tenant) sendPNRGOV(ctx context.Context, f world.Flight, day time.Time, fl *dcs.Flight) error {
+	if fl == nil || !t.crossesBorder(fl.Board, fl.Dest) {
+		return nil
+	}
+	push, err := t.Gateway.PNRGOVFor(ctx, fl, gateway.PNRGOVOptions{
+		Departs: day.Add(time.Duration(f.DepMin) * time.Minute), Arrives: day.Add(time.Duration(f.ArrMin) * time.Minute), Station: f.From,
+	})
+	if err != nil {
+		return err
+	}
+	if len(push.Records) == 0 {
+		return nil
+	}
+	peer := &gateway.Peer{Name: "net", Carrier: t.border, Format: store.FormatEDIFACT}
+	if err := t.Gateway.SendPNRGOV(ctx, peer, push); err != nil {
+		return err
+	}
+	t.groundMu.Lock()
+	t.pnrgovSent[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}] = len(push.Records)
+	t.groundMu.Unlock()
+	return nil
+}
+
+func (t *Tenant) pnrgovSentFor(fl *dcs.Flight) int {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.pnrgovSent[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
 }
 
 func hhmmOf(min int) string {

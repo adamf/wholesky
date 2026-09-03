@@ -386,7 +386,18 @@ carrier markets under its own number, then interline -- each request
 waited on until the carrier answers — a confirmed seat drops the dead leg with a real sell and a real
 cancel on the wire, a waitlist is kept and named, a refusal comes off the
 record — while the airport offloads whoever had checked in and pulls their
-bags; what nothing can carry stays on the queue for a person;
+bags; what nothing can carry stays on the queue for a person; the
+other airline's connecting passengers through-checked over IATCI, one
+interline connection in four, the onward seat on the manifest; every
+international door close telling the state who is on board (APIS, to the
+public PAXLST guide) and pushing the records with seats and bags (PNRGOV,
+to the public PADIS guide), with a reservations-only push when the name
+list goes out; one flight in a hundred and fifty going technical after
+check-in opens, a smaller aircraft taking it, the cabin re-seated, the
+overflow denied boarding by name, the inventory shrunk and distribution
+told by ASM EQT; a flight running forty-six minutes or more late
+announced two hours out as an ASM TIM, the sold segments moved to the new
+times at TK on every distribution system;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across
