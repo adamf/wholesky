@@ -86,6 +86,9 @@ type Eye struct {
 	// everything the day's purchases came to. Both in minor units.
 	Aloft func(keys []string) int64
 	Sold  func() int64
+	// Settled is what the settlement plan's latest day came to: the gross
+	// of every HOT handed to an airline, in minor units.
+	Settled func() int64
 
 	// FlightDCS answers the other half of the drill-through: what departure
 	// control says about the flight, or nil when this machine does not run
@@ -786,6 +789,9 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			if e.Sold != nil {
 				ev["sold"] = e.Sold()
+			}
+			if e.Settled != nil {
+				ev["settled"] = e.Settled()
 			}
 			e.mu.Lock()
 

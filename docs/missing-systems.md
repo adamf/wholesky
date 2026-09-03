@@ -21,14 +21,19 @@ easy) and a pricing step in the GDS before the sell. It would put fare
 basis codes on segments, amounts on tickets, and make IROPS reaccommodate
 against fare rules rather than only against seats.
 
-**Ticketing and settlement (BSP/ARC, interline billing).** Tickets exist
-as numbers and coupons, and every record now carries what it was sold for
-and can be exported in full (`jetwayctl export`, v0.1.60) -- the input a
-settlement file is built from; nothing is settled. A ticket sold by a GDS through
-an agency is reported to the BSP, paid to the carrier, and prorated
-between carriers on interline itineraries. The recorded day's 7,000
-codeshares are billed between the marketing and operating carriers. This
-is a batch system of files, not messages, and it is where the money is.
+**Ticketing and settlement (BSP/ARC, interline billing).** The BSP side
+is done (jetway v0.1.72 `pkg/bsp`, specified against IATA's public DISH 23
+handbook; wholesky `internal/settle`): a settlement plan runs at boot and
+at every day wrap over what the distribution systems ticketed, hands each
+airline its HOT -- headers, a transaction per document with amounts,
+commission, coupons, passenger and payment, office and file totals,
+over-punch signed -- and reconciles it against the carrier's own book.
+Teletype carriers hear their ticket numbers as SSR TKNE (v0.1.73) so the
+books agree; the files are served at `/settlement/<carrier>.hot`, the day's
+gross sits on the globe's money bar. Not done: the RET the agents send the
+plan, refunds and ADMs/ACMs as transactions, net reporting and card data,
+and interline billing -- the recorded day's 7,000 codeshares are still not
+prorated between the marketing and operating carriers.
 
 **Revenue management.** Done as far as the method goes (jetway v0.1.67):
 `pkg/inventory` sells under nested class authorisations, and an EMSR-b

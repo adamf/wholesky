@@ -8,6 +8,7 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,6 +42,7 @@ import (
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/revenue"
+	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
@@ -201,6 +203,11 @@ type Sim struct {
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
 	Switches []*node.Node
+	// plan is the settlement plan and settlement its latest day: the HOT
+	// each airline was handed, and how it reconciled.
+	plan       settle.Plan
+	settleMu   sync.Mutex
+	settlement *settle.Summary
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
 	// first, which is also the movement watcher.
 	GDSes       []*GDSNode
@@ -368,6 +375,12 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		}
 		return s.Stats.RevenueTotal()
 	}
+	s.Eye.Settled = func() int64 {
+		if sum := s.Settlement(); sum != nil {
+			return sum.Gross
+		}
+		return 0
+	}
 	s.Eye.WarpNow = s.clock.Warp
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp
@@ -391,6 +404,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		// here after boot; every other shape 404s the path.
 		// The invariant check is federated the same way when a core is
 		// installed, and answers for this process's carriers otherwise.
+		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
+		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /invariants.json", func(w http.ResponseWriter, r *http.Request) {
 			s.fedMu.RLock()
 			h := s.invHandler
@@ -1205,6 +1220,10 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	}
 	s.rebuildInventories(ctx)
 	s.rebuildLedger(ctx)
+	// The plan settles what was sold for the day: the advance sales the
+	// agents ticketed, handed to each airline as its HOT before the day
+	// flies, the way yesterday's sales reach an airline's accountants.
+	s.Settle(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -1228,6 +1247,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				s.fillDay(ctx)
 				s.rebuildInventories(ctx)
 				s.rebuildLedger(ctx)
+				s.Settle(ctx)
 			}()
 		}
 		if cur-prev > maxCatchUp {
@@ -1439,6 +1459,97 @@ var groundEvents = []groundEvent{
 	{10, "close", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.Close(ctx, f, day)
 	}},
+}
+
+// Settle runs the settlement plan over the day the agents have sold: one
+// HOT per airline from the distribution systems' ticketed records, each
+// reconciled against the carrier's own book when this process runs the
+// carrier. The result is kept for the instruments and served as files.
+func (s *Sim) Settle(ctx context.Context) {
+	if len(s.GDSes) == 0 {
+		return
+	}
+	agents := make([]settle.Agent, 0, len(s.GDSes))
+	for _, g := range s.GDSes {
+		agents = append(agents, settle.Agent{Designator: g.Designator, Name: g.Name, Store: g.Store})
+	}
+	var airlines []settle.Airline
+	for _, c := range s.Manifest.Carriers {
+		a := settle.Airline{Designator: c.Designator, Accounting: s.accountingCode(c.Designator)}
+		if t, ok := s.Tenants[c.Designator]; ok {
+			a.Store = t.Store
+		}
+		airlines = append(airlines, a)
+	}
+	if s.plan.BSP == "" {
+		s.plan = settle.Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	}
+	sum, err := s.plan.Run(ctx, s.BookingDate, agents, airlines)
+	if err != nil {
+		s.log.Warn("settlement failed", "err", err)
+		return
+	}
+	s.settleMu.Lock()
+	s.settlement = sum
+	s.settleMu.Unlock()
+	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
+		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown)
+}
+
+// Settlement is the latest settlement summary, or nil before the first.
+func (s *Sim) Settlement() *settle.Summary {
+	s.settleMu.Lock()
+	defer s.settleMu.Unlock()
+	return s.settlement
+}
+
+func (s *Sim) serveSettlement(w http.ResponseWriter, r *http.Request) {
+	sum := s.Settlement()
+	if sum == nil {
+		http.Error(w, "no settlement yet", http.StatusNotFound)
+		return
+	}
+	type row struct {
+		Airline      string `json:"airline"`
+		Transactions int    `json:"transactions"`
+		Gross        int64  `json:"gross"`
+		Remittance   int64  `json:"remittance"`
+		Commission   int64  `json:"commission"`
+		Matched      int    `json:"matched"`
+		Unreported   int    `json:"unreported"`
+		Unknown      int    `json:"unknown"`
+		File         string `json:"file"`
+	}
+	out := struct {
+		*settle.Summary
+		Rows []row `json:"airlines_detail"`
+	}{Summary: sum}
+	for code, st := range sum.Statements {
+		out.Rows = append(out.Rows, row{Airline: code, Transactions: st.Transactions, Gross: st.Gross, Remittance: st.Remittance,
+			Commission: st.Commission, Matched: st.Matched, Unreported: st.Unreported, Unknown: st.Unknown, File: "/settlement/" + code + ".hot"})
+	}
+	sort.Slice(out.Rows, func(i, j int) bool { return out.Rows[i].Gross > out.Rows[j].Gross })
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out) //nolint:errcheck
+}
+
+// serveHOT hands out one airline's file as the plan produced it.
+func (s *Sim) serveHOT(w http.ResponseWriter, r *http.Request) {
+	code := strings.ToUpper(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/settlement/"), ".hot"))
+	sum := s.Settlement()
+	if sum == nil {
+		http.NotFound(w, r)
+		return
+	}
+	st, ok := sum.Statements[code]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=us-ascii")
+	if err := st.File.Write(w); err != nil {
+		s.log.Warn("could not write HOT", "airline", code, "err", err)
+	}
 }
 
 // switchCount is how many switches the options ask for, at least one.

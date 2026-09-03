@@ -403,7 +403,13 @@ an SSIM chapter 7 file (`worldc -ssim`) and flown from one (`skyd -ssim`),
 so a carrier's own schedule file is a source; two message switches joined
 by a trunk (`skyd -switches 2`), every carrier homed on one by hash, so a
 booking on a carrier across the trunk sells and settles the way traffic
-between the real network's providers does;
+between the real network's providers does; a settlement plan that hands
+every airline its BSP HOT file (jetway's `pkg/bsp`, to IATA's public DISH
+23 handbook) for the day the agents sold, at boot and at every day wrap,
+reconciled against the carrier's own book -- teletype carriers now hear
+their ticket numbers as SSR TKNE so the books agree -- served at
+`/settlement.json` and `/settlement/<carrier>.hot`, with the day's gross
+on the globe's money bar;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across

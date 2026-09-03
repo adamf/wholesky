@@ -134,6 +134,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <tr><th>domain</th><th>messages</th></tr>
           <tr><td>reservations · Type B</td><td class="mono">AIRIMP sell, reply, cancel, change · SSR · OSI · OSI/locator exchange · ticket numbers · remarks · received-from</td></tr>
           <tr><td>reservations · EDIFACT</td><td class="mono">PAOREQ · PAORES · TKCREQ · TKCRES · CONTRL</td></tr>
+          <tr><td>settlement · file</td><td class="mono">BSP HOT (DISH 23): BFH01 BCH02 BOH03 · BKT06 BKS24 BKS30 BKS39 BKI63 BAR64 BAR65 BKP84 · BOT93 BOT94 BCT95 BFT99</td></tr>
           <tr><td>government · EDIFACT</td><td class="mono">PAXLST (APIS, WCO/IATA/ICAO guide) · PNRGOV push (PADIS guide, with the check-in group)</td></tr>
           <tr><td>airport ↔ airport · EDIFACT</td><td class="mono">DCQCKI · DCRCKA (IATCI through check-in)</td></tr>
           <tr><td>distribution · HTTP</td><td class="mono">NDC OrderCreateRQ · OrderRetrieveRQ · OrderCancelRQ · OrderViewRS</td></tr>
@@ -303,6 +304,10 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>Passenger types</b> ADT, CHD and INF at their discounts.</li>
           <li><b>Pricing</b> sells each segment under the cheapest fare whose rules the trip meets as of the purchase date, and says why when nothing does.</li>
         </ul>
+      </div>
+      <div class="card">
+        <h3>pkg/bsp <span class="tag spec">DISH 23 specified</span></h3>
+        <p>Settlement: the Airline Accounting/Sales data file (HOT) a Billing and Settlement Plan hands each airline for its agents' sales, written and read to IATA's public handbook, column by column. Over-punch signing, the document-amount, commission and remittance arithmetic of section 6.7, office, cycle and file totals; tested against the handbook's own worked figures. Ticket numbers reach teletype carriers as SSR TKNE so their books reconcile.</p>
       </div>
       <div class="card">
         <h3>pkg/inventory <span class="tag spec">method specified</span></h3>

@@ -68,7 +68,7 @@ const pageHTML = `<!doctype html>
     day <i id="simclk">--:--</i>
     <a id="w0" title="pause the day">⏸</a><a id="w60" title="one hour per minute">▶</a><a id="w300" title="five hours per minute">▶▶</a><a id="w600" title="ten hours per minute">▶▶▶</a></span>
   <span class="tot" title="running totals since this world booted">since boot — msgs <i id="msg">0</i> · mvts <i id="mvt">0</i> · bkgs <i id="bkg">0</i></span>
-  <span class="tot" id="money" title="aloft: what every ticket on an aircraft in the air was sold for, synthetic tariff · sold: everything purchased since boot" style="display:none">aloft <i id="aloft">$0</i> · sold <i id="sold">$0</i></span>
+  <span class="tot" id="money" title="aloft: what every ticket on an aircraft in the air was sold for, synthetic tariff · sold: everything purchased since boot" style="display:none">aloft <i id="aloft">$0</i> · sold <i id="sold">$0</i><span id="settledwrap" style="display:none"> · <a href="/settlement.json" style="color:inherit" title="settled: the BSP's daily HOT to every airline, gross of the documents the agents sold">settled <i id="settled">$0</i></a></span></span>
   <a class="nav" id="legendlink">what is this? →</a>
   <a class="nav" href="/fleet">fleet →</a>
   <a class="nav" href="/stats">stats →</a>
@@ -210,7 +210,8 @@ function connect(){
       bkg.textContent=fmtN(d.bookings); msg.textContent=fmtN(d.messages);
       if(d.aloft!==undefined||d.sold!==undefined){ document.getElementById("money").style.display="";
         const usd=c=>"$"+Math.round((c||0)/100).toLocaleString();
-        document.getElementById("aloft").textContent=usd(d.aloft); document.getElementById("sold").textContent=usd(d.sold); }
+        document.getElementById("aloft").textContent=usd(d.aloft); document.getElementById("sold").textContent=usd(d.sold);
+        if(d.settled){ document.getElementById("settledwrap").style.display=""; document.getElementById("settled").textContent=usd(d.settled); } }
       /* live rate: the delta between two-second snapshots, lightly smoothed */
       const nowW=Date.now();
       if(prevMsgTotal!==null && nowW>prevMsgAt){
