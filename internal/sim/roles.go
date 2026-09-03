@@ -228,7 +228,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
 	s.Fleet.OnOwners = c.SetOwners
-	s.Stats.QueueDepths = c.federatedQueues
+	s.Stats.SetQueueDepths(c.federatedQueues)
 	go c.pollSummaries(ctx)
 	return c, nil
 }

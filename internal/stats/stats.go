@@ -225,8 +225,11 @@ func (c *Collector) Run(stop <-chan struct{}) {
 		// plenty for a chart, and it is read before the lock is taken: a
 		// slow store must not stall every event handler and page behind it.
 		var depths map[string]int
-		if c.QueueDepths != nil && n%5 == 0 {
-			depths = c.QueueDepths()
+		c.mu.Lock()
+		queueDepths := c.QueueDepths
+		c.mu.Unlock()
+		if queueDepths != nil && n%5 == 0 {
+			depths = queueDepths()
 		}
 		c.mu.Lock()
 		per := func(x int64) float64 { return float64(x) / 2 }
@@ -404,6 +407,14 @@ func kindClass(kind string) string {
 func (c *Collector) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /stats", c.page)
 	mux.HandleFunc("GET /stats/data.json", c.data)
+}
+
+// SetQueueDepths installs the queue-depth hook after Run has started, as
+// a core does once its federation is up.
+func (c *Collector) SetQueueDepths(fn func() map[string]int) {
+	c.mu.Lock()
+	c.QueueDepths = fn
+	c.mu.Unlock()
 }
 
 func (c *Collector) data(w http.ResponseWriter, r *http.Request) {
