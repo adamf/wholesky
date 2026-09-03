@@ -1355,7 +1355,12 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	if got := s.Stats.RevenueTotal(); got != rec.Pricing.Total {
 		t.Errorf("revenue counted %d, want the booking's %d", got, rec.Pricing.Total)
 	}
-	// And the ledger holds it against the leg, for the money in the air.
+	// And the ledger holds it against the leg, for the money in the air;
+	// it is posted off the record's bus event, so give it a moment.
+	ledgerDeadline := time.Now().Add(5 * time.Second)
+	for s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}) != rec.Pricing.Total && time.Now().Before(ledgerDeadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
 	if got := s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}); got != rec.Pricing.Total {
 		t.Errorf("the leg's ledger holds %d, want the booking's %d", got, rec.Pricing.Total)
 	}

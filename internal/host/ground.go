@@ -225,6 +225,13 @@ func (t *Tenant) Baggage(ctx context.Context, m *baggage.Message, origin typeb.A
 	case baggage.KindBPM:
 		_, _, err := t.DCS.ApplyBagReport(ctx, m)
 		return err
+	case baggage.KindBUM:
+		// A bag is coming without its passenger: the station it is going
+		// to expects it, counted by the flight's destination.
+		t.groundMu.Lock()
+		t.rushIn[m.Outbound.City] += len(m.Tags)
+		t.groundMu.Unlock()
+		return nil
 	}
 	return nil
 }
@@ -751,7 +758,84 @@ func (t *Tenant) Close(ctx context.Context, f world.Flight, day time.Time) error
 	if perr := t.sendPNRGOV(ctx, f, day, cl.Flight); perr != nil && err == nil {
 		err = perr
 	}
+	// The bags the hold never reported follow on the next flight over the
+	// sector: sortation is told to load them on it and the arrival station
+	// is told to expect a bag without its passenger (a BUM), which is what
+	// a bag office reunites from.
+	if rerr := t.rushBags(ctx, f, day, cl.Flight); rerr != nil && err == nil {
+		err = rerr
+	}
 	return err
+}
+
+// rushBags sends a closed flight's short-shipped bags on the carrier's next
+// flight over the same sector today. Without one, the bags wait for
+// tomorrow and the panel says so.
+func (t *Tenant) rushBags(ctx context.Context, f world.Flight, day time.Time, fl *dcs.Flight) error {
+	if fl == nil || fl.Reconciliation == nil || len(fl.Reconciliation.NotLoaded) == 0 {
+		return nil
+	}
+	short := fl.Reconciliation.NotLoaded
+	key := dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}
+	next, ok := rushFlightFor(t.flights, f)
+	if !ok {
+		t.groundMu.Lock()
+		t.rushed[key] = fmt.Sprintf("%d short-shipped, no later flight today: held for tomorrow", len(short))
+		t.groundMu.Unlock()
+		return nil
+	}
+	wire := strings.ToUpper(day.Format("02Jan"))
+	var firstErr error
+	for _, b := range short {
+		m := &baggage.Message{Kind: baggage.KindBUM, Version: "1" + f.From,
+			Outbound: &baggage.FlightLeg{Flight: next.Carrier + next.Number, Date: wire, City: f.To},
+			Tags:     []baggage.Tag{{Number: b.Tag, Count: 1}}, Surname: b.Surname,
+			Elements: []string{".X/RUSH EX " + fl.Flight}}
+		text, err := baggage.Build(m)
+		if err != nil {
+			return err
+		}
+		// Sortation loads it on the rush flight; the arrival station expects it.
+		if err := t.sendTypeBFrom(ctx, t.stationAddress(f.From, deptCheckIn),
+			[]string{t.stationAddress(f.From, deptBaggage), t.stationAddress(f.To, deptBaggage)}, text, "BUM"); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	t.groundMu.Lock()
+	t.rushed[key] = fmt.Sprintf("%d short-shipped, rushed on %s%s", len(short), next.Carrier, strings.TrimLeft(next.Number, "0"))
+	t.groundMu.Unlock()
+	t.log.Info("bags rushed", "flight", fl.Flight, "board", fl.Board, "bags", len(short), "on", next.Carrier+next.Number)
+	return firstErr
+}
+
+// rushFlightFor is the carrier's next departure over the same sector after
+// the flight given, today.
+func rushFlightFor(flights []world.Flight, f world.Flight) (world.Flight, bool) {
+	var best world.Flight
+	found := false
+	for _, g := range flights {
+		if g.From != f.From || g.To != f.To || g.DepMin <= f.DepMin || g.Carrier != f.Carrier {
+			continue
+		}
+		if !found || g.DepMin < best.DepMin {
+			best, found = g, true
+		}
+	}
+	return best, found
+}
+
+func (t *Tenant) rushedFor(fl *dcs.Flight) string {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.rushed[dcs.Key{Flight: fl.Flight, Date: fl.Date, Board: fl.Board}]
+}
+
+// RushExpected is how many unaccompanied bags a station has been told to
+// expect.
+func (t *Tenant) RushExpected(station string) int {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.rushIn[station]
 }
 
 // SendClosure transmits a closure's messages. It is also the console's
@@ -876,6 +960,8 @@ type Summary struct {
 	// Retimed describes the day's time change, when the carrier announced
 	// one to distribution.
 	Retimed string `json:"retimed,omitempty"`
+	// Rushed describes what became of the door's short-shipped bags.
+	Rushed string `json:"rushed,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -945,7 +1031,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Rushed: t.rushedFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {

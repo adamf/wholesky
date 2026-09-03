@@ -96,9 +96,14 @@ the recorded day, which no schedule file carries.
 is done (jetway v0.1.59): at the door every bag the hold reported loaded is
 matched to a boarded passenger, unaccompanied bags hold the door until
 sortation is told to pull them, short-shipped bags are named for the rush,
-and the panel shows the count. Tracing is not: WorldTracer is the
-interline system for the bags that got lost, and nothing here loses one
-yet.
+and the panel shows the count. The rush is done too: a short-shipped bag
+follows on the carrier's next flight over the sector, sortation is told to
+load it and the arrival station's bag office is told to expect a bag
+without its passenger (a BUM, jetway v0.1.79), and the panel says which
+flight it rode. Tracing files are not: WorldTracer is SITA's system for the
+bags nobody can find (AHL, OHD, FWD), its formats are the vendor's, and the
+only reproductions are training guides; nothing here loses a bag beyond
+the next flight.
 
 **Border and government (APIS, PNRGOV, Secure Flight, timatic).** APIS is
 done (jetway v0.1.64, `pkg/paxlst`, specified against the public

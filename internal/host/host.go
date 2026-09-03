@@ -58,8 +58,13 @@ type Tenant struct {
 	// pnrgovSent is how many records the last PNR push to the state named,
 	// per flight; retimed is the day's time change on a flight, when the
 	// carrier announced one.
-	pnrgovSent     map[dcs.Key]int
-	retimed        map[dcs.Key]string
+	pnrgovSent map[dcs.Key]int
+	retimed    map[dcs.Key]string
+	// rushed describes the short-shipped bags a departure sent on after it,
+	// and rushIn counts the unaccompanied bags each of this carrier's
+	// stations has been told to expect.
+	rushed         map[dcs.Key]string
+	rushIn         map[string]int
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
 	Carrier        world.Carrier
@@ -326,6 +331,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.apisSent = map[dcs.Key]int{}
 	t.pnrgovSent = map[dcs.Key]int{}
 	t.retimed = map[dcs.Key]string{}
+	t.rushed = map[dcs.Key]string{}
+	t.rushIn = map[string]int{}
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}
