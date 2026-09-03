@@ -46,6 +46,7 @@ func main() {
 func run() error {
 	var (
 		worldPath = flag.String("world", "world.json", "compiled manifest to boot")
+		ssimPath  = flag.String("ssim", "", "take the day's schedule from this SSIM chapter 7 file instead of the manifest's flights")
 		carriers  = flag.Int("carriers", 12, "how many carriers to run, largest first; 0 for all")
 		warp      = flag.Int("warp", 60, "sim minutes per real minute for the flight day")
 		demand    = flag.Int("demand", 30, "bookings per minute; 0 disables demand")
@@ -100,6 +101,22 @@ func run() error {
 	var m world.Manifest
 	if err := json.Unmarshal(b, &m); err != nil {
 		return fmt.Errorf("manifest %s: %w", *worldPath, err)
+	}
+	if *ssimPath != "" {
+		// The schedule as the industry files it, in place of the compiler's:
+		// airports and carriers still come from the manifest, the flights
+		// from the file.
+		sf, err := os.Open(*ssimPath)
+		if err != nil {
+			return err
+		}
+		flights, err := world.LoadSSIM(sf, &m)
+		sf.Close()
+		if err != nil {
+			return fmt.Errorf("schedule %s: %w", *ssimPath, err)
+		}
+		m.Flights = flights
+		log.Info("schedule from SSIM", "file", *ssimPath, "flights", len(flights))
 	}
 	sort.Slice(m.Carriers, func(i, j int) bool { return m.Carriers[i].Routes > m.Carriers[j].Routes })
 

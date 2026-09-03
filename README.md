@@ -398,7 +398,9 @@ check-in opens, a smaller aircraft taking it, the cabin re-seated, the
 overflow denied boarding by name, the inventory shrunk and distribution
 told by ASM EQT; a flight running forty-six minutes or more late
 announced two hours out as an ASM TIM, the sold segments moved to the new
-times at TK on every distribution system;
+times at TK on every distribution system; the day's schedule written as
+an SSIM chapter 7 file (`worldc -ssim`) and flown from one (`skyd -ssim`),
+so a carrier's own schedule file is a source;
 tail rotations and a deterministic
 delay model; an adjustable sim clock; chaos that closes airports and cuts
 carrier circuits; an invariant suite (no oversell — including across

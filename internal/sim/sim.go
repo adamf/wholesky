@@ -1323,21 +1323,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 
 // sellingDate is the day the world sells and flies: the recorded day on a
 // replay, thirty days out on a synthetic one.
-func sellingDate(m *world.Manifest) time.Time {
-	if m.Replay != nil && !m.Replay.Date.IsZero() {
-		// The wire carries a day and a month, no year, and every system
-		// resolves 26NOV to the next 26 November. The recorded day is flown
-		// on that date, so the bookings the filler writes, the sells the
-		// distribution systems make and the day the flight day flies all
-		// name the same date.
-		d, err := pnr.ResolveDate(strings.ToUpper(m.Replay.Date.Format("02Jan")), time.Now().UTC())
-		if err == nil {
-			return d
-		}
-		return m.Replay.Date
-	}
-	return time.Now().UTC().AddDate(0, 0, 30)
-}
+func sellingDate(m *world.Manifest) time.Time { return world.SellingDate(m) }
 
 // flightDelays is what the day will do to a flight: the record's delays on
 // a replay, the deterministic model's on a synthetic day.

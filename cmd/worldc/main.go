@@ -31,6 +31,7 @@ func main() {
 		carriers  = flag.Int("carriers", 0, "cap on carrier count, 0 for none")
 		bts       = flag.String("bts", "", "replay: a BTS on-time performance CSV; compiles the recorded day instead of the synthetic one")
 		date      = flag.String("date", "", "replay: the day to compile from the BTS file, YYYY-MM-DD")
+		ssimOut   = flag.String("ssim", "", "also write the schedule as an SSIM chapter 7 file, one carrier after another")
 	)
 	flag.Parse()
 
@@ -69,4 +70,17 @@ func main() {
 	}
 	f.Close()
 	fmt.Printf("%s: %s\n", *out, m.Stats())
+	if *ssimOut != "" {
+		sf, err := os.Create(*ssimOut)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "worldc:", err)
+			os.Exit(1)
+		}
+		if err := world.WriteSSIM(sf, m, world.SellingDate(m)); err != nil {
+			fmt.Fprintln(os.Stderr, "worldc:", err)
+			os.Exit(1)
+		}
+		sf.Close()
+		fmt.Printf("%s: %d flights as SSIM\n", *ssimOut, len(m.Flights))
+	}
 }

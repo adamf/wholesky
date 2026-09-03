@@ -57,8 +57,13 @@ aircraft, and distribution hears the ASM EQT and queues the bookings. Time
 changes are done too (jetway v0.1.66): a flight running forty-six minutes
 or more late is announced about two hours out as an ASM TIM, distribution
 moves the sold segments to the new times at TK and queues the advice, and
-the panel shows STD → ETD. The SSIM file as the schedule's source is not
-yet applied; the world still compiles its own timetable.
+the panel shows STD → ETD. The SSIM file is now a source too (jetway v0.1.68,
+`pkg/ssim` chapter 7 records to the layout two open-source parsers share):
+`worldc -ssim` writes the compiled day as one carrier file after another,
+with codeshares as DEI 050/010 segment data, and `skyd -ssim` takes the
+day's flights from such a file in place of the manifest's, so a carrier's
+own schedule file can fly. Still the compiler's: rotations, delays and
+the recorded day, which no schedule file carries.
 
 **Baggage reconciliation and tracing (BRS, WorldTracer).** Reconciliation
 is done (jetway v0.1.59): at the door every bag the hold reported loaded is
