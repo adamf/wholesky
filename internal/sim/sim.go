@@ -88,6 +88,9 @@ type GDSNode struct {
 type Options struct {
 	// Carriers caps how many carriers run, largest first. Zero runs all.
 	Carriers int
+	// SettleEvery is how often the settlement plan re-runs over the books
+	// this machine holds; zero is every five minutes.
+	SettleEvery time.Duration
 	// Switches is how many message switches the fabric runs, one or two:
 	// with two, every carrier is homed on one by hash and the switches are
 	// joined by a trunk, so a message between carriers on different
@@ -469,11 +472,6 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 			}
 		}()
 	}
-	// The plan settles as the day goes: every few minutes over what the
-	// books hold now, so a machine that only holds agents' books -- a
-	// distribution system's -- builds its statement through the day rather
-	// than at the wrap alone.
-	go s.settleLoop(ctx, 5*time.Minute)
 	return s, nil
 }
 
@@ -609,6 +607,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		return out
 	}
 	go s.Stats.Run(ctx.Done())
+	s.StartSettling(opts.SettleEvery)
 	return s, nil
 }
 
@@ -1509,6 +1508,19 @@ func (s *Sim) Settle(ctx context.Context) {
 	s.settleMu.Unlock()
 	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
 		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown, "unverified", sum.Unverified)
+}
+
+// StartSettling runs the plan on a timer for the life of the world: every
+// few minutes over what the books hold now, so a machine that only holds
+// agents' books -- a distribution system's -- or carriers' books alone
+// builds its statement through the day rather than at the wrap alone.
+// Each role calls it once its books and agents are in place; started any
+// earlier, the loop read them while the boot was still writing them.
+func (s *Sim) StartSettling(every time.Duration) {
+	if every <= 0 {
+		every = 5 * time.Minute
+	}
+	go s.settleLoop(s.ctx, every)
 }
 
 // settleLoop re-runs the plan on a timer; a run still going is not

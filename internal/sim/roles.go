@@ -251,32 +251,38 @@ func (c *Core) pollSettlement(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		views := map[string]settle.View{}
-		var day time.Time
-		for _, p := range c.livePeers() {
-			if p.Role != "region" && p.Role != "gds" {
-				continue
-			}
-			resp, err := client.Get(p.URL + "/settlement.json")
-			if err != nil {
-				continue
-			}
-			var v settle.View
-			err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&v)
-			resp.Body.Close()
-			if err != nil || v.Summary == nil {
-				continue
-			}
-			if day.IsZero() {
-				day = v.Day
-			}
-			views[p.URL] = v
-		}
-		if len(views) == 0 {
+		c.refreshSettlement(client)
+	}
+}
+
+// refreshSettlement asks every shard for its settlement view and installs
+// the merge; it reports how many shards answered.
+func (c *Core) refreshSettlement(client *http.Client) int {
+	views := map[string]settle.View{}
+	var day time.Time
+	for _, p := range c.livePeers() {
+		if p.Role != "region" && p.Role != "gds" {
 			continue
 		}
+		resp, err := client.Get(p.URL + "/settlement.json")
+		if err != nil {
+			continue
+		}
+		var v settle.View
+		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&v)
+		resp.Body.Close()
+		if err != nil || v.Summary == nil {
+			continue
+		}
+		if day.IsZero() {
+			day = v.Day
+		}
+		views[p.URL] = v
+	}
+	if len(views) > 0 {
 		c.Sim.SetSettlement(settle.Merge(day, views))
 	}
+	return len(views)
 }
 
 // Routes mounts the federation surface onto the core's console mux.
@@ -823,6 +829,7 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	// shows: record events at this distribution system, fed off its own bus
 	// -- demand, console bookings and NDC alike.
 	shardRoutes(mux, s, s.Stats.BookingsTotal, s.Stats.RevenueTotal)
+	s.StartSettling(opts.SettleEvery)
 	return &GDSMachine{Sim: s, Node: g, Mux: mux}, nil
 }
 
@@ -944,5 +951,6 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 
 	mux := http.NewServeMux()
 	shardRoutes(mux, s, nil, nil)
+	s.StartSettling(opts.SettleEvery)
 	return &RegionMachine{Sim: s, Mux: mux}, nil
 }
