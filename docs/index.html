@@ -55,6 +55,13 @@ nav.top .live::before{content:"";display:inline-block;width:7px;height:7px;borde
 .btn:hover{border-color:var(--muted);text-decoration:none}
 .btn.primary{background:var(--green);color:#06120b;border-color:var(--green);font-weight:600}
 .btn.primary:hover{background:#79e0a3}
+.engine{display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;margin:26px 0 18px;padding:16px 18px;background:linear-gradient(90deg,#0f1a22,#11161d);border:1px solid #234a3a;border-radius:10px}
+.engine-mark{font:700 22px var(--mono);letter-spacing:.08em;color:var(--green);padding:6px 12px;border:1px solid #2a4a38;border-radius:8px;background:#0b1410}
+.engine-text{color:var(--muted);font-size:15px;line-height:1.5;max-width:70ch}
+.engine-text b{color:var(--text)}
+.engine-cta{display:flex;flex-direction:column;gap:8px}
+@media (max-width:860px){.engine{grid-template-columns:1fr}.engine-cta{flex-direction:row;flex-wrap:wrap}}
+.cta{margin-top:0}
 .shot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000}
 .shot img{display:block;width:100%;height:auto}
 .caption{font-size:13px;color:var(--dim);margin-top:8px}
@@ -137,14 +144,24 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 
 <header class="hero" id="top">
   <div class="wrap">
-    <div class="eyebrow">an open-source simulation · Go · MIT</div>
+    <div class="eyebrow">an open-source simulation, built on the jetway airline messaging gateway · Go · MIT</div>
     <h1>One day of the world's airline network, on the wire.</h1>
     <p class="lede">Every carrier is its own reservations and departure-control system. Three distribution systems sell into them. One switch relays between them. Nothing moves except a real Type B or EDIFACT message over a real socket, and the globe draws only what the messages say.</p>
+    <div class="engine">
+      <div class="engine-mark">jetway</div>
+      <div class="engine-text">
+        <b>Everything under the globe is jetway</b>, an open-source gateway that is also a GDS, a seat inventory, a departure-control system, a fare engine, a datalink and AFTN endpoint and a switch. Type B/AIRIMP, EDIFACT/PADIS, NDC, MATIP; PNRs, tickets, EMDs, queues, IROPS; PNL/ADL, bags, loadsheets, MVT, ACARS, flight plans. Meant to be run for real; wholesky is what proves it can.
+      </div>
+      <div class="engine-cta">
+        <a class="btn primary" href="jetway.html">Everything jetway does →</a>
+        <a class="btn" href="https://github.com/adamf/jetway">github.com/adamf/jetway</a>
+      </div>
+    </div>
     <div class="cta">
-      <a class="btn primary" href="https://wholesky-demo.fly.dev/eye">Watch the whole sky →</a>
+      <a class="btn" href="https://wholesky-demo.fly.dev/eye">Watch the whole sky →</a>
       <a class="btn" href="https://wholesky-thanksgiving.fly.dev/eye">The recorded day: Thanksgiving eve 2025 →</a>
       <a class="btn" href="https://github.com/adamf/wholesky">github.com/adamf/wholesky</a>
-      <a class="btn" href="https://github.com/adamf/jetway">the engine: jetway</a>
+      <a class="btn" href="production.html">deploy to production</a>
     </div>
     <div class="shot"><img src="the-priced-sky.jpg" alt="The globe over the United States during the recorded day's evening banks, with the bar reading what the aircraft in the air were sold for and what has been bought since boot"></div>
     <p class="caption">The recorded day's evening banks. Every aircraft is a movement message that crossed the switch; the bar at the top is what the aircraft in the air were sold for.</p>
