@@ -97,6 +97,7 @@ type Tenant struct {
 	client       link
 	watch        string // teletype address operational messages are copied to
 	distribution []string
+	distMu       sync.Mutex
 	partners     []string
 	log          *slog.Logger
 
@@ -636,7 +637,26 @@ func (t *Tenant) SendSchedule(ctx context.Context, text string) error {
 
 // distributionList is every distribution address, or the watcher alone when
 // none were configured.
+// AddDistribution adds an address every schedule and operational message
+// is copied to from now on: a joined world's watcher, so its globe sees
+// this carrier's aircraft.
+func (t *Tenant) AddDistribution(addr string) {
+	if addr == "" {
+		return
+	}
+	t.distMu.Lock()
+	defer t.distMu.Unlock()
+	for _, a := range t.distribution {
+		if a == addr {
+			return
+		}
+	}
+	t.distribution = append(t.distribution, addr)
+}
+
 func (t *Tenant) distributionList() []string {
+	t.distMu.Lock()
+	defer t.distMu.Unlock()
 	if len(t.distribution) > 0 {
 		return append([]string(nil), t.distribution...)
 	}

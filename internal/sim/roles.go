@@ -196,9 +196,9 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	// Hubs for the logical web: the distribution systems this deployment
 	// actually runs. Listing slots that never register drew phantom green
 	// hubs with no conversations.
-	for _, addr := range distributionAddresses(opts.GDSList) {
+	for _, addr := range distributionAddresses(gdsCityOf(opts), opts.GDSList) {
 		for _, slot := range gdsSlots {
-			if gdsAddress(slot) == addr {
+			if c.Sim.gdsAddr(slot) == addr {
 				s.Eye.Hubs = append(s.Eye.Hubs, slot.Designator)
 			}
 		}
@@ -896,7 +896,7 @@ func airportOfReason(reason string) string {
 // deployment running three channels must not have its tenants broadcasting
 // availability at two that do not exist: every such message is an
 // undeliverable the switch retries forever.
-func distributionAddresses(list []string) []string {
+func distributionAddresses(city string, list []string) []string {
 	if len(list) == 0 {
 		for _, slot := range gdsSlots {
 			list = append(list, slot.Designator)
@@ -906,7 +906,7 @@ func distributionAddresses(list []string) []string {
 	for _, d := range list {
 		for _, slot := range gdsSlots {
 			if slot.Designator == d {
-				out = append(out, gdsAddress(slot))
+				out = append(out, gdsAddressIn(city, slot))
 			}
 		}
 	}
@@ -947,7 +947,7 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 		return nil, err
 	}
 
-	g := &GDSNode{Designator: slot.Designator, Address: gdsAddress(*slot), Name: slot.Name}
+	g := &GDSNode{Designator: slot.Designator, Address: s.gdsAddr(*slot), Name: slot.Name}
 	s.GDSes = []*GDSNode{g}
 	s.Eye.Hubs = []string{designator}
 	gdsStore, err := s.gdsStores(ctx, opts.GDSDSN, opts.MaxMessages)
@@ -1010,7 +1010,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	}
 	partners := partnerAddresses(m.Carriers, s.Flights)
 	flightsByFrom := indexByFrom(s.Flights)
-	distribution := distributionAddresses(opts.GDSList)
+	distribution := distributionAddresses(gdsCityOf(opts), opts.GDSList)
 	tenantMsgs := opts.TenantMaxMessages
 	if tenantMsgs == 0 {
 		tenantMsgs = opts.MaxMessages
@@ -1061,7 +1061,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			SwitchAddr:            switchAddr,
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
-			WatchAddress:          GDSAddress,
+			WatchAddress:          s.watcher(),
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
 			Interline:             interlineFor(c.Designator, partners, m.Carriers, flightsByFrom),

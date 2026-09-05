@@ -352,6 +352,9 @@ token and SSIM schedule for your own `jetwayd` to dial in as BA -- on the
 demo, over the internet, at `wholesky-demo.fly.dev:7000`. With jetway's
 operations desk (`pkg/ops`, in the pack's configuration) your node opens
 its flights from its own name lists and files the MVTs the globe draws.
+And worlds join worlds: `skyd -peer-world URL` trunks two skies' switches,
+each sells the other's flights, and a seat sold in one lands in the other's
+carrier's book over the trunk.
 
 ## Status
 

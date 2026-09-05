@@ -81,6 +81,44 @@ func gdsAddress(slot struct{ Designator, City, Name string }) string {
 	return slot.City + "DD" + slot.Designator
 }
 
+// gdsAddressIn is a slot's address in a world with the given city ("" for
+// the slot's own).
+func gdsAddressIn(city string, slot struct{ Designator, City, Name string }) string {
+	if city != "" {
+		return city + "DD" + slot.Designator
+	}
+	return gdsAddress(slot)
+}
+
+// gdsAddr is a distribution system's address in this world: the slot's
+// city unless the world has its own, so two joined worlds' systems differ.
+func (s *Sim) gdsAddr(slot struct{ Designator, City, Name string }) string {
+	if s.gdsCity != "" {
+		return s.gdsCity + "DD" + slot.Designator
+	}
+	return gdsAddress(slot)
+}
+
+// watcher is the address operational messages are copied to: the first
+// distribution system's.
+func (s *Sim) watcher() string { return s.gdsAddr(gdsSlots[0]) }
+
+// worldCodeOf is the first switch's designator for a set of options.
+func worldCodeOf(opts Options) string {
+	if c := strings.ToUpper(strings.TrimSpace(opts.WorldCode)); len(c) == 2 {
+		return c
+	}
+	return "1X"
+}
+
+// gdsCityOf is the distribution systems' city for a set of options.
+func gdsCityOf(opts Options) string {
+	if c := strings.ToUpper(strings.TrimSpace(opts.WorldCity)); len(c) == 3 {
+		return c
+	}
+	return ""
+}
+
 // GDSNode is one running distribution system.
 type GDSNode struct {
 	Designator string
@@ -110,6 +148,17 @@ type Options struct {
 	// can be published for nodes on the internet to dial; zero picks a
 	// free port.
 	LinkPort int
+	// A world among worlds. WorldName names it to its peers; WorldCode is
+	// its first switch's designator (1X unless set; a joined world needs its
+	// own); WorldCity is the city its distribution systems' addresses
+	// carry (LON unless set; joined worlds' GDS addresses must differ);
+	// PublicURL is where peers reach this world's HTTP; PeerWorlds are the
+	// worlds to join at boot, by URL. See docs/run-a-carrier.md.
+	WorldName  string
+	WorldCode  string
+	WorldCity  string
+	PublicURL  string
+	PeerWorlds []string
 	// DecisionWindow is how long a seat has to answer a decision before the
 	// autopilot's default, in real time; zero is forty-five seconds.
 	DecisionWindow time.Duration
@@ -242,7 +291,15 @@ type Sim struct {
 	scoreAt     time.Time
 	revenueMu   sync.RWMutex
 	revenueFeed map[string]int64
-	externalMu  sync.RWMutex
+	// The world's own name and codes, and the worlds it has joined.
+	worldName  string
+	worldCode  string
+	gdsCity    string
+	publicURL  string
+	flightsMu  sync.RWMutex
+	foreignMu  sync.RWMutex
+	foreign    map[string]*foreignWorld
+	externalMu sync.RWMutex
 	// On a machine without switches: where each carrier's switch is, the
 	// core's URL, and the addresses the internet dials, from the welcome.
 	switchOf     map[string]string
@@ -387,7 +444,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	var gdses []*GDSNode
 	for _, slot := range gdsSlots[:gdsCount] {
 		gdses = append(gdses, &GDSNode{
-			Designator: slot.Designator, Address: gdsAddress(slot), Name: slot.Name,
+			Designator: slot.Designator, Address: gdsAddressIn(gdsCityOf(opts), slot), Name: slot.Name,
 		})
 	}
 
@@ -457,6 +514,11 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		}
 	}
 	s.linkSecret, s.publicSwitch = opts.LinkSecret, opts.PublicSwitch
+	s.worldName, s.worldCode, s.gdsCity, s.publicURL = opts.WorldName, worldCodeOf(opts), gdsCityOf(opts), opts.PublicURL
+	if s.worldName == "" {
+		s.worldName = s.worldCode
+	}
+	s.foreign = map[string]*foreignWorld{}
 	if s.linkSecret == "" {
 		b := make([]byte, 16)
 		rand.Read(b) //nolint:errcheck
@@ -491,6 +553,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 		mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
 		mux.HandleFunc("POST /carrier/{carrier}/claim", s.serveClaim)
+		mux.HandleFunc("GET /world/manifest.json", s.serveManifest)
+		mux.HandleFunc("POST /federation/world", s.serveJoinWorld)
 		mux.HandleFunc("POST /carrier/{carrier}/unclaim", s.serveClaim)
 		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
@@ -598,6 +662,9 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		s.Stop()
 		return nil, err
 	}
+	if len(opts.PeerWorlds) > 0 {
+		s.joinPeerWorlds(ctx, opts.PeerWorlds)
+	}
 	for _, c := range m.Carriers {
 		if s.external[c.Designator] {
 			continue // run by someone's own jetway node; see Options.External
@@ -616,7 +683,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			SwitchAddr:            switchAddr,
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
-			WatchAddress:          GDSAddress,
+			WatchAddress:          s.watcher(),
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
 			Interline:             interlineFor(c.Designator, partners, m.Carriers, flightsByFrom),
@@ -1680,7 +1747,7 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 		switchAddr = s.switchOf[code]
 		s.externalMu.RUnlock()
 	}
-	firstDesignator, firstTTY := switchIdentity(home)
+	firstDesignator, firstTTY := switchIdentity(home, s.worldCode)
 	cfg := config.Default()
 	cfg.Identity = config.Identity{Designator: code, TTYAddress: c.TTYAddress, Name: c.Name}
 	cfg.Store = config.Store{Backend: "mem"}
@@ -1697,9 +1764,9 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 	// The operations desk: the schedule beside the configuration, movements
 	// to the distribution systems and the world's watcher, the way the
 	// world's own tenants file theirs.
-	movementsTo := []string{GDSAddress}
+	movementsTo := []string{s.watcher()}
 	for _, g := range s.GDSes {
-		if g.Address != GDSAddress {
+		if g.Address != s.watcher() {
 			movementsTo = append(movementsTo, g.Address)
 		}
 	}
@@ -2221,8 +2288,11 @@ func homeSwitch(designator string, n int) int {
 }
 
 // switchIdentity names switch k: 1X is the first, 1Y the second.
-func switchIdentity(k int) (designator, tty string) {
-	d := "1" + string(rune('X'+k))
+func switchIdentity(k int, code string) (designator, tty string) {
+	if len(code) != 2 {
+		code = "1X"
+	}
+	d := code[:1] + string(rune(code[1])+rune(k))
 	return d, "XCHDD" + d
 }
 
@@ -2238,13 +2308,13 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 	if k > 0 {
 		console = ""
 	}
-	firstDesignator, firstTTY := switchIdentity(0)
+	firstDesignator, firstTTY := switchIdentity(0, worldCodeOf(opts))
 	cfg := config.Default()
 	// jetway spools every inbound message to disk by default, which is
 	// right for a carrier and wrong for a switch relaying sixteen thousand a
 	// second on a machine that forgets its day at midnight anyway.
 	cfg.Spool.Enabled = false
-	designator, tty := switchIdentity(k)
+	designator, tty := switchIdentity(k, worldCodeOf(opts))
 	name := "wholesky switch"
 	if n > 1 {
 		name = fmt.Sprintf("wholesky switch %d of %d", k+1, n)
@@ -2258,7 +2328,7 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 			return config.Egress{Type: "tcp_accept"}
 		}
 		if k == 0 {
-			d, _ := switchIdentity(home)
+			d, _ := switchIdentity(home, worldCodeOf(opts))
 			return config.Egress{Type: "via", Via: d}
 		}
 		return config.Egress{Type: "via", Via: firstDesignator}
@@ -2339,13 +2409,13 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 		})
 	}
 	for _, slot := range gdsSlots {
-		addPeer(slot.Designator, gdsAddress(slot), "typeb", 0)
+		addPeer(slot.Designator, gdsAddressIn(gdsCityOf(opts), slot), "typeb", 0)
 	}
 	// The trunks. The first switch accepts each later switch's link; a
 	// later switch holds its link to the first open itself.
 	if k == 0 {
 		for j := 1; j < n; j++ {
-			d, t := switchIdentity(j)
+			d, t := switchIdentity(j, worldCodeOf(opts))
 			cfg.Peers = append(cfg.Peers, config.Peer{Name: d, Carrier: d, TTYAddress: t, Format: "typeb", Trunk: true,
 				Egress: config.Egress{Type: "tcp_accept"}})
 		}
@@ -2406,7 +2476,8 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 		return err
 	}
 	client.OnUp = func() { g.up.Store(true) }
-	gw.AddPeer(&gateway.Peer{Name: "net", Format: store.FormatTypeB, TTYAddress: "XCHDD1X"})
+	_, netTTY := switchIdentity(0, s.worldCode)
+	gw.AddPeer(&gateway.Peer{Name: "net", Format: store.FormatTypeB, TTYAddress: netTTY})
 	for _, c := range m.Carriers {
 		format := store.FormatTypeB
 		if c.Format == "edifact" {

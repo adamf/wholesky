@@ -60,6 +60,11 @@ func run() error {
 		avsEvery   = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
 		external   = flag.String("external", "", "carriers this world does not run itself, comma-separated: someone's own jetway node dials in as each, with the token from /carrier/XX/pack")
 		pubSwitch  = flag.String("public-switch", "", "the switch address external nodes dial, when not the listener's own (host:port)")
+		worldName  = flag.String("world-name", "", "this world's name to the worlds it joins")
+		worldCode  = flag.String("world-code", "", "this world's first switch designator, e.g. 1Z; 1X unless set, and joined worlds must differ")
+		worldCity  = flag.String("world-city", "", "the city in this world's distribution systems' addresses, e.g. MAD; the slots' own unless set, and joined worlds must differ")
+		publicURL  = flag.String("public-url", "", "where other worlds reach this one's HTTP, for the manifest and the handshake")
+		peerWorld  = flag.String("peer-world", "", "worlds to join at boot, by URL, comma-separated")
 		linkPort   = flag.Int("link-port", 0, "port the first switch's subscriber listener binds (the second's is one higher); 0 picks a free port")
 		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
 		decision   = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
@@ -137,7 +142,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

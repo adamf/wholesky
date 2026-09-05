@@ -72,6 +72,19 @@ type Synthetic struct {
 	mult map[string]float64
 }
 
+// AddFlights files fares for markets the tariff did not know: a joined
+// world's flights, so this world's sellers can price them.
+func (t *Synthetic) AddFlights(flights []world.Flight) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, f := range flights {
+		k := f.Carrier + "/" + f.From + "/" + f.To
+		if _, ok := t.km[k]; !ok {
+			t.km[k] = f.KM
+		}
+	}
+}
+
 // SetMultiplier scales every fare a carrier files, from now on; 0 or a
 // negative value restores the filing.
 func (t *Synthetic) SetMultiplier(carrier string, mult float64) {
@@ -131,7 +144,9 @@ func fullFare(carrier string, km int) int64 {
 
 // Fares implements fare.Tariff.
 func (t *Synthetic) Fares(carrier, origin, destination string) []fare.Fare {
+	t.mu.RLock()
 	km, ok := t.km[strings.ToUpper(carrier+"/"+origin+"/"+destination)]
+	t.mu.RUnlock()
 	if !ok {
 		return nil
 	}

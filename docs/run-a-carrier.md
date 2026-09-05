@@ -162,11 +162,36 @@ switch anywhere on the internet. So:
    the player's own systems. A missed PNL is a flight the airport never
    opens. The messages have to be right.
 
-**Worlds joined to worlds** is the step after: two `skyd` instances trunk
-their switches (`link_dial` with `Trunk: true`, v0.1.71), exchange manifests
-over `/federation/register`, and each world's carriers can sell and fly into
-the other's airports. Then the regions are continents, the operators are
-people, and the sky is whoever showed up.
+**Worlds joined to worlds** works. Two `skyd` instances -- two skies, each
+with its own carriers, distribution systems, switch and day -- become one
+network the way two real networks do. The second is told where the first
+is:
+
+```sh
+skyd -world eu.json  -world-name europe  -console :8080 -public-url http://eu.example:8080 -link-port 7000
+skyd -world am.json  -world-name americas -world-code 1Z -world-city MIA -console :8081 -public-url http://am.example:8081 -link-port 7100 -peer-world http://eu.example:8080
+```
+
+The handshake (`POST /federation/world`) carries what each side needs: its
+switch's designator and address, a token for the trunk, the address its
+globe watches, its carriers and distribution systems, and where its
+manifest is. Each side adds the other's switch as a trunk (one accepts, one
+dials, jetway v0.1.90 dialling a link added while running), routes the
+other's carriers and distribution systems down it, fetches the other's
+manifest so its own distribution systems sell the other's flights, prices
+those markets, and tells its carriers to copy their movements to the
+other's globe. The traffic itself is Type B and EDIFACT over the trunk,
+exactly as within one world.
+
+Three things must differ between worlds, because in this network they are
+addresses: the carriers' designators (the join is refused where they
+overlap), the switches' codes (`-world-code`), and the distribution
+systems' cities (`-world-city`). Tested with two compiled worlds in one
+process: the trunk comes up both ways and a seat sold by each world's
+distribution system on the other's carrier lands in that carrier's book.
+
+Then the regions are continents, the operators are people, and the sky is
+whoever showed up.
 
 Steps 1 to 3 work, and on the demo. Two ways in:
 
@@ -206,9 +231,11 @@ distribution system.
 Still missing: an external carrier's scorecard from the switch's ledger
 (the lobby shows a claimed carrier, but its passengers are now in your
 book, not the world's), a timetable that drives your node's ground story
-for you if you want the autopilot's help, and the manifest exchange
-between worlds. None of it is a new protocol; all of it is jetway doing
-what it does across a longer wire.
+for you if you want the autopilot's help, joined worlds' carriers on each
+other's leaderboards, and the join from a federated core to its regions'
+tenants (today a joined world's watcher reaches the tenants on the machine
+that holds the switch). None of it is a new protocol; all of it is jetway
+doing what it does across a longer wire.
 
 ## Bring your own jetway
 

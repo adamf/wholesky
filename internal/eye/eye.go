@@ -66,6 +66,7 @@ type Eye struct {
 	// byFlight resolves "U2"+"0123" to a scheduled leg; byLeg adds the
 	// boarding point, because a number flies several legs in a day.
 	byFlight map[string]world.Flight
+	indexMu  sync.RWMutex
 	byLeg    map[string]world.Flight
 	warp     int
 
@@ -504,6 +505,31 @@ var flightRe = regexp.MustCompile(`\b([A-Z][A-Z0-9]\d{1,4})\b`)
 
 // lookup resolves a wire flight designator ("U2123") to its scheduled leg.
 // The wire drops leading zeros; the manifest pads to four.
+// AddFlights teaches the globe legs it did not compile: a joined world's,
+// so its carriers' movements are placed.
+func (e *Eye) AddFlights(fs []world.Flight) {
+	e.indexMu.Lock()
+	defer e.indexMu.Unlock()
+	for _, f := range fs {
+		if _, ok := e.byFlight[f.Carrier+f.Number]; !ok {
+			e.byFlight[f.Carrier+f.Number] = f
+		}
+	}
+}
+
+// AddAirports adds airports the globe did not compile, for a joined
+// world's legs to land on.
+func (e *Eye) AddAirports(as []world.Airport) {
+	e.indexMu.Lock()
+	defer e.indexMu.Unlock()
+	for i := range as {
+		a := as[i]
+		if _, ok := e.airports[a.IATA]; !ok {
+			e.airports[a.IATA] = &a
+		}
+	}
+}
+
 func (e *Eye) lookup(flight string) (world.Flight, bool) {
 	if len(flight) < 3 {
 		return world.Flight{}, false
@@ -512,7 +538,9 @@ func (e *Eye) lookup(flight string) (world.Flight, bool) {
 	for len(num) < 4 {
 		num = "0" + num
 	}
+	e.indexMu.RLock()
 	f, ok := e.byFlight[carrier+num]
+	e.indexMu.RUnlock()
 	return f, ok
 }
 
