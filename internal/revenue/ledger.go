@@ -22,13 +22,14 @@ type Ledger struct {
 
 	mu    sync.Mutex
 	legs  map[string]int64
+	seats map[string]int
 	total int64
 }
 
 // Reset forgets everything, before a rebuild from the book.
 func (l *Ledger) Reset() {
 	l.mu.Lock()
-	l.legs, l.total = map[string]int64{}, 0
+	l.legs, l.seats, l.total = map[string]int64{}, map[string]int{}, 0
 	l.mu.Unlock()
 }
 
@@ -50,7 +51,7 @@ func (l *Ledger) key(carrier, number, board string) string {
 }
 
 // New returns an empty ledger.
-func New() *Ledger { return &Ledger{legs: map[string]int64{}} }
+func New() *Ledger { return &Ledger{legs: map[string]int64{}, seats: map[string]int{}} }
 
 // Key names a leg: the operating carrier, the flight number without
 // leading zeros, and the boarding point, which is how the globe names an
@@ -102,9 +103,44 @@ func (l *Ledger) Record(r *pnr.PNR) {
 				cents += pp.Segments[idx] + pp.Taxes/int64(air)
 			}
 		}
-		l.Add(l.key(carrier, s.FlightNum, s.Board), cents)
+		key := l.key(carrier, s.FlightNum, s.Board)
+		l.Add(key, cents)
+		l.AddSeats(key, max(s.Seats, len(r.Passengers)))
 		idx++
 	}
+}
+
+// AddSeats counts passengers sold on a leg, for the carriers whose books
+// are not here: an external node's, a joined world's.
+func (l *Ledger) AddSeats(key string, n int) {
+	l.mu.Lock()
+	if l.seats == nil {
+		l.seats = map[string]int{}
+	}
+	l.seats[key] += n
+	l.mu.Unlock()
+}
+
+// Seats is the passengers sold over the legs named.
+func (l *Ledger) Seats(keys []string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, k := range keys {
+		n += l.seats[k]
+	}
+	return n
+}
+
+// SeatsByLeg is every leg's passenger count.
+func (l *Ledger) SeatsByLeg() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make(map[string]int, len(l.seats))
+	for k, v := range l.seats {
+		out[k] = v
+	}
+	return out
 }
 
 // Sum is the total over the legs named.

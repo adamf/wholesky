@@ -91,6 +91,18 @@ func TestAJetwayNodeFromThePackFliesTheCarrier(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	// The scorecard of a carrier whose book is not here reads the sale
+	// from the distribution system's ledger.
+	booked := 0
+	for _, st := range (seatWorld{s}).Flights(code) {
+		if st.Flight == f.Carrier+f.Number && st.From == f.From {
+			booked = st.Booked
+		}
+	}
+	if booked < 1 {
+		t.Errorf("the external carrier's board shows %d booked on the sold flight", booked)
+	}
+
 	// The world flies the aircraft: the datalink provider reports the
 	// departure to the carrier -- the node -- whose operations desk turns
 	// it into the MVT the distribution system reads. The globe draws that.

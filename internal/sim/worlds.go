@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/config"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/store"
+	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -63,6 +65,10 @@ type foreignWorld struct {
 	carriers map[string]world.Carrier
 	flights  map[string][]world.Flight
 	byOrigin map[string][]world.Flight
+	// lobby is the world's own carriers with scores, as last fetched.
+	lobbyMu sync.Mutex
+	lobby   []airline.CarrierInfo
+	lobbyAt time.Time
 }
 
 // hello is this world as it introduces itself.
@@ -182,11 +188,94 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	if _, err := s.Switch.ReloadPeers(peers); err != nil {
 		return fmt.Errorf("joining %s: %w", h.Name, err)
 	}
+	if s.onWorldJoined != nil {
+		go s.onWorldJoined(h)
+	}
 	s.log.Info("world joined", "world", h.Name, "code", h.Code, "carriers", len(h.Carriers), "flights", len(flights), "accepting", accepting)
 	if s.Airline != nil {
 		s.Airline.Emit("", "world", fmt.Sprintf("world %s joined: %d carriers, %d flights now sellable here", h.Name, len(h.Carriers), len(flights)), nil)
 	}
 	return nil
+}
+
+// serveShardWorld is POST /shard/world: the core telling a peer machine
+// about a world it joined. A distribution system's machine takes the other
+// world's carriers as peers and its flights to sell; a region tells its
+// tenants to copy their movements to the other world's watcher.
+func (s *Sim) serveShardWorld(w http.ResponseWriter, r *http.Request) {
+	var h worldHello
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&h); err != nil || h.Code == "" {
+		http.Error(w, "malformed world hello", http.StatusBadRequest)
+		return
+	}
+	var flights []world.Flight
+	if h.URL != "" && len(s.GDSes) > 0 {
+		client := &http.Client{Timeout: 60 * time.Second}
+		if resp, err := client.Get(strings.TrimRight(h.URL, "/") + "/world/manifest.json"); err == nil {
+			var m world.Manifest
+			if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
+				flights = m.Flights
+			}
+			resp.Body.Close()
+		}
+	}
+	s.addForeign(h, flights)
+	for _, t := range s.Tenants {
+		t.AddDistribution(h.Watcher)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// joinedCarriers is every joined world's own carriers with their scores,
+// labelled with the world, from each world's lobby; cached briefly.
+func (s *Sim) joinedCarriers() []airline.CarrierInfo {
+	s.foreignMu.RLock()
+	worlds := make([]*foreignWorld, 0, len(s.foreign))
+	for _, fw := range s.foreign {
+		worlds = append(worlds, fw)
+	}
+	s.foreignMu.RUnlock()
+	var out []airline.CarrierInfo
+	client := &http.Client{Timeout: 8 * time.Second}
+	for _, fw := range worlds {
+		if fw.Hello.URL == "" {
+			continue
+		}
+		fw.lobbyMu.Lock()
+		if time.Since(fw.lobbyAt) > 10*time.Second {
+			if resp, err := client.Get(strings.TrimRight(fw.Hello.URL, "/") + "/carriers.json?own=1"); err == nil {
+				var body struct {
+					Carriers []airline.CarrierInfo `json:"carriers"`
+				}
+				json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+				resp.Body.Close()
+				fw.lobby = fw.lobby[:0]
+				for _, c := range body.Carriers {
+					if c.World != "" {
+						continue // that world's view of a third world, or of us
+					}
+					c.World = fw.Hello.Name
+					fw.lobby = append(fw.lobby, c)
+				}
+			}
+			fw.lobbyAt = time.Now()
+		}
+		out = append(out, fw.lobby...)
+		fw.lobbyMu.Unlock()
+	}
+	return out
+}
+
+// worldURLOf is the URL of the joined world a carrier belongs to.
+func (s *Sim) worldURLOf(code string) string {
+	s.foreignMu.RLock()
+	defer s.foreignMu.RUnlock()
+	for _, fw := range s.foreign {
+		if _, ok := fw.carriers[code]; ok {
+			return fw.Hello.URL
+		}
+	}
+	return ""
 }
 
 // addForeign records a joined world and merges its carriers and flights

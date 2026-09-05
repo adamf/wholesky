@@ -255,6 +255,19 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.Stats.SetQueueDepths(c.federatedQueues)
 	go c.pollSummaries(ctx)
 	go c.pollRevenue(ctx)
+	// A world joined at the core reaches the machines that sell and fly:
+	// every peer hears the hello and takes the other world's flights.
+	s.onWorldJoined = func(h worldHello) {
+		body, _ := json.Marshal(h)
+		client := &http.Client{Timeout: 20 * time.Second}
+		for _, p := range c.livePeers() {
+			if resp, err := client.Post(p.URL+"/shard/world", "application/json", bytes.NewReader(body)); err == nil {
+				resp.Body.Close()
+			} else {
+				s.log.Warn("peer did not take the joined world", "peer", p.Name, "err", err)
+			}
+		}
+	}
 	go c.pollSettlement(ctx)
 	return c, nil
 }
@@ -466,7 +479,7 @@ func (c *Core) pollRevenue(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		total := map[string]int64{}
+		total := LegFeed{Revenue: map[string]int64{}, Seats: map[string]int{}}
 		var regions []registration
 		for _, p := range c.livePeers() {
 			switch p.Role {
@@ -475,17 +488,20 @@ func (c *Core) pollRevenue(ctx context.Context) {
 				if err != nil {
 					continue
 				}
-				var m map[string]int64
-				json.NewDecoder(resp.Body).Decode(&m) //nolint:errcheck
+				var f LegFeed
+				json.NewDecoder(resp.Body).Decode(&f) //nolint:errcheck
 				resp.Body.Close()
-				for k, v := range m {
-					total[k] += v
+				for k, v := range f.Revenue {
+					total.Revenue[k] += v
+				}
+				for k, v := range f.Seats {
+					total.Seats[k] += v
 				}
 			case "region":
 				regions = append(regions, p)
 			}
 		}
-		if len(total) == 0 {
+		if len(total.Revenue) == 0 && len(total.Seats) == 0 {
 			continue
 		}
 		c.Sim.SetRevenueFeed(total)
@@ -812,6 +828,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("POST /carrier/{carrier}/unclaim", s.serveClaim)
 	mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 	mux.HandleFunc("/shard/revenue", s.serveRevenue)
+	mux.HandleFunc("POST /shard/world", s.serveShardWorld)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)

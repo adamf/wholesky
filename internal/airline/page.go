@@ -63,7 +63,7 @@ const mmz=m=>String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(Math.floor(m
 async function load(){
   const d=await fetch("/carriers.json").then(r=>r.json());
   $("#clock").textContent=mmz(d.pos); $("#warp").textContent=d.warp; $("#n").textContent=d.carriers.length;
-  $("#rows").innerHTML=d.carriers.map((c,i)=>{ const s=c.score; return "<tr><td class='rank'>"+(i+1)+"</td><td><a href='/ops/"+c.code+"'>"+c.code+"</a> <span class='muted'>"+esc(c.name||"")+"</span></td><td>"+c.hub+"</td><td>"+c.flights+"</td><td>"+s.flown+"</td><td>"+s.cancelled+"</td><td>"+pct(s.otp)+"</td><td>"+pct(s.load_factor)+"</td><td>"+money(s.revenue)+"</td><td>"+money(s.profit)+"</td><td><b>"+s.score.toFixed(1)+"</b></td><td>"+(c.seat?esc(c.seat.holder):"<span class='muted'>autopilot</span>")+"</td><td>"+(c.seat?"":"<button onclick='take(\""+c.code+"\")'>take</button>")+"</td></tr>"; }).join("");
+  $("#rows").innerHTML=d.carriers.map((c,i)=>{ const s=c.score; return "<tr><td class='rank'>"+(i+1)+"</td><td><a href='/ops/"+c.code+"'>"+c.code+"</a> <span class='muted'>"+esc(c.name||"")+(c.world?" · "+esc(c.world):"")+(c.external?" · external":"")+"</span></td><td>"+c.hub+"</td><td>"+c.flights+"</td><td>"+s.flown+"</td><td>"+s.cancelled+"</td><td>"+pct(s.otp)+"</td><td>"+pct(s.load_factor)+"</td><td>"+money(s.revenue)+"</td><td>"+money(s.profit)+"</td><td><b>"+s.score.toFixed(1)+"</b></td><td>"+(c.seat?esc(c.seat.holder):"<span class='muted'>autopilot</span>")+"</td><td>"+(c.seat?"":"<button onclick='take(\""+c.code+"\")'>take</button>")+"</td></tr>"; }).join("");
 }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 async function take(code){

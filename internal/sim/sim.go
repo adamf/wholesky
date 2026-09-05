@@ -291,15 +291,18 @@ type Sim struct {
 	scoreAt     time.Time
 	revenueMu   sync.RWMutex
 	revenueFeed map[string]int64
+	seatsFeed   map[string]int
 	// The world's own name and codes, and the worlds it has joined.
-	worldName  string
-	worldCode  string
-	gdsCity    string
-	publicURL  string
-	flightsMu  sync.RWMutex
-	foreignMu  sync.RWMutex
-	foreign    map[string]*foreignWorld
-	externalMu sync.RWMutex
+	worldName string
+	worldCode string
+	gdsCity   string
+	publicURL string
+	flightsMu sync.RWMutex
+	foreignMu sync.RWMutex
+	foreign   map[string]*foreignWorld
+	// onWorldJoined, on a core, relays a joined world to its peers.
+	onWorldJoined func(worldHello)
+	externalMu    sync.RWMutex
 	// On a machine without switches: where each carrier's switch is, the
 	// core's URL, and the addresses the internet dials, from the welcome.
 	switchOf     map[string]string
@@ -1564,6 +1567,9 @@ func (s *Sim) runsCarrier(code string) bool {
 // proxyCarrier forwards a seat's request to the machine that runs the
 // carrier, when this one federates; false when nobody does.
 func (s *Sim) proxyCarrier(w http.ResponseWriter, r *http.Request, code string) bool {
+	if u := s.worldURLOf(code); u != "" {
+		return proxyPass(w, r, strings.TrimRight(u, "/"))
+	}
 	if s.ConsoleProxy == nil {
 		return false
 	}

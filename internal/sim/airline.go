@@ -53,6 +53,15 @@ func (w seatWorld) Clock() (float64, int) {
 // scorecards from the last pass -- a machine runs hundreds, and a lobby
 // that computed each on every request would not answer in time.
 func (w seatWorld) Carriers() []airline.CarrierInfo {
+	out := append(w.OwnCarriers(), w.s.joinedCarriers()...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
+}
+
+// OwnCarriers implements airline.OwnCarriers: this world's carriers alone,
+// with no request to any joined world -- which is what a joined world asks
+// for, so two lobbies never ask each other in a loop.
+func (w seatWorld) OwnCarriers() []airline.CarrierInfo {
 	scores := w.s.scores()
 	var out []airline.CarrierInfo
 	codes := map[string]bool{}
@@ -134,8 +143,10 @@ func (w seatWorld) flightStatus(f world.Flight, fate dayplan.Flight, pos float64
 
 func (w seatWorld) booked(f world.Flight) (booked, seats int) {
 	t := w.s.Tenants[f.Carrier]
-	if t == nil || t.Inventory == nil {
-		return 0, f.Seats
+	if t == nil || t.Inventory == nil || w.s.External(f.Carrier) {
+		// No book of the carrier's here: what the distribution systems
+		// sold on the leg, from the ledger or the core's feed.
+		return w.s.legSeats(f), f.Seats
 	}
 	wire := strings.ToUpper(w.s.BookingDate.Format("02Jan"))
 	for comp, n := range host.Cabins(f, w.s.capacity) {
@@ -482,16 +493,36 @@ func (s *Sim) legRevenue(f world.Flight) int64 {
 	return s.Ledger.Sum([]string{key})
 }
 
-// RevenueByLeg is this machine's ledger, leg by leg, for the core to
-// federate: on a distribution system's machine it is what that system
-// sold on every leg of the world.
-func (s *Sim) RevenueByLeg() map[string]int64 {
-	out := map[string]int64{}
+// legSeats is how many passengers a leg was sold to, from the core's feed
+// where it has one, else this machine's ledger.
+func (s *Sim) legSeats(f world.Flight) int {
+	key := revenue.Key(f.Carrier, f.Number, f.From)
+	s.revenueMu.RLock()
+	v, ok := s.seatsFeed[key]
+	s.revenueMu.RUnlock()
+	if ok {
+		return v
+	}
+	return s.Ledger.Seats([]string{key})
+}
+
+// LegFeed is what the distribution systems sold on every leg: money and
+// passengers. On a distribution system's machine it is that system's word
+// for every leg of the world; the core sums the systems' and hands the
+// total to every region.
+type LegFeed struct {
+	Revenue map[string]int64 `json:"revenue"`
+	Seats   map[string]int   `json:"seats"`
+}
+
+// RevenueByLeg is this machine's ledger as a feed.
+func (s *Sim) RevenueByLeg() LegFeed {
+	out := LegFeed{Revenue: map[string]int64{}, Seats: s.Ledger.SeatsByLeg()}
 	for _, fs := range s.Flights {
 		for _, f := range fs {
 			key := revenue.Key(f.Carrier, f.Number, f.From)
 			if v := s.Ledger.Sum([]string{key}); v != 0 {
-				out[key] = v
+				out.Revenue[key] = v
 			}
 		}
 	}
@@ -500,9 +531,9 @@ func (s *Sim) RevenueByLeg() map[string]int64 {
 
 // SetRevenueFeed installs the core's federated view of what every leg was
 // sold for, which the scorecards then read instead of the local ledger.
-func (s *Sim) SetRevenueFeed(m map[string]int64) {
+func (s *Sim) SetRevenueFeed(f LegFeed) {
 	s.revenueMu.Lock()
-	s.revenueFeed = m
+	s.revenueFeed, s.seatsFeed = f.Revenue, f.Seats
 	s.revenueMu.Unlock()
 	s.scoreMu.Lock()
 	s.scoreAt = time.Time{}
@@ -512,12 +543,12 @@ func (s *Sim) SetRevenueFeed(m map[string]int64) {
 // serveRevenue is GET /shard/revenue.json and POST /shard/revenue.
 func (s *Sim) serveRevenue(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		var m map[string]int64
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&m); err != nil {
+		var f LegFeed
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&f); err != nil {
 			http.Error(w, "malformed revenue feed", http.StatusBadRequest)
 			return
 		}
-		s.SetRevenueFeed(m)
+		s.SetRevenueFeed(f)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -534,7 +565,16 @@ type federatedCarriers struct {
 	at    time.Time
 }
 
+// Carriers is the core's merged lobby: every peer's carriers, then the
+// joined worlds'.
 func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
+	out := append(f.OwnCarriers(), f.s.joinedCarriers()...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
+}
+
+// OwnCarriers is every peer's carriers merged, without the joined worlds'.
+func (f *federatedCarriers) OwnCarriers() []airline.CarrierInfo {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if time.Since(f.at) < 5*time.Second {
@@ -563,7 +603,7 @@ func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
 			out = append(out, c)
 		}
 	}
-	for _, c := range f.seatWorld.Carriers() {
+	for _, c := range f.seatWorld.OwnCarriers() {
 		if _, seen := byCode[c.Code]; !seen {
 			byCode[c.Code] = len(out)
 			out = append(out, c)

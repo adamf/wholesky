@@ -228,14 +228,18 @@ sells on one of its flights lands in the node's own book, and when the
 world's datalink reports the departure the node's MVT reaches the
 distribution system.
 
-Still missing: an external carrier's scorecard from the switch's ledger
-(the lobby shows a claimed carrier, but its passengers are now in your
-book, not the world's), a timetable that drives your node's ground story
-for you if you want the autopilot's help, joined worlds' carriers on each
-other's leaderboards, and the join from a federated core to its regions'
-tenants (today a joined world's watcher reaches the tenants on the machine
-that holds the switch). None of it is a new protocol; all of it is jetway
-doing what it does across a longer wire.
+A claimed carrier's scorecard reads what the distribution systems sold
+on its legs -- money and passengers, from their ledgers, federated by the
+core -- since its own book is now on your node. Joined worlds' carriers
+appear on each other's leaderboards, labelled with their world, and a
+seat's request for one of them is answered by that world. A join made at
+a federated core reaches its peers: the distribution systems' machines
+take the other world's carriers and flights to sell, the regions' tenants
+copy their movements to the other world's globe.
+
+Still missing: a timetable that drives your node's ground story for you if
+you want the autopilot's help. None of it is a new protocol; all of it is
+jetway doing what it does across a longer wire.
 
 ## Bring your own jetway
 

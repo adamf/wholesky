@@ -20,8 +20,10 @@ type CarrierInfo struct {
 	Seat    *Seat     `json:"seat,omitempty"`
 	Score   Scorecard `json:"score"`
 	// External says someone's own jetway node flies the carrier, not
-	// this world.
-	External bool `json:"external,omitempty"`
+	// this world. World names the joined world a carrier belongs to, when
+	// it is not this one.
+	External bool   `json:"external,omitempty"`
+	World    string `json:"world,omitempty"`
 }
 
 // FlightState is one of the carrier's flights today as the seat sees it.
@@ -221,8 +223,20 @@ func (s *Server) token(r *http.Request) string {
 	return r.URL.Query().Get("token")
 }
 
+// OwnCarriers is the optional half of World a federating lobby needs: this
+// world's carriers alone, without the joined worlds' rows, so two worlds
+// asking each other for their lobbies do not ask forever.
+type OwnCarriers interface {
+	OwnCarriers() []CarrierInfo
+}
+
 func (s *Server) carriers(w http.ResponseWriter, r *http.Request) {
-	list := s.view().Carriers()
+	var list []CarrierInfo
+	if own, ok := s.view().(OwnCarriers); ok && r.URL.Query().Get("own") == "1" {
+		list = own.OwnCarriers()
+	} else {
+		list = s.view().Carriers()
+	}
 	for i := range list {
 		if seat, ok := s.Reg.Seat(list[i].Code); ok {
 			list[i].Seat = &seat

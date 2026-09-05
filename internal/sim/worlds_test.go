@@ -1,9 +1,13 @@
 package sim
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +107,32 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 		t.Errorf("worlds: alpha %v bravo %v", a.Worlds(), b.Worlds())
 	}
 
+	// Each lobby lists the other world's carriers, labelled, and a seat's
+	// request for one of them is answered by that world.
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		found := false
+		for _, c := range (seatWorld{a}).Carriers() {
+			if c.Code == cB && c.World == "bravo" {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("alpha's lobby never listed bravo's %s", cB)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	mux := http.NewServeMux()
+	a.airlineSrv.Routes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/carrier/"+cB+"/state", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"carrier":"`+cB+`"`) {
+		t.Fatalf("alpha did not forward a seat's request to bravo: %d %s", rec.Code, rec.Body.String()[:min(200, len(rec.Body.String()))])
+	}
+
 	// Bravo's distribution system sells a seat on alpha's carrier; the sell
 	// crosses the trunk, alpha's tenant books it, the reply crosses back.
 	fA := b.foreignFlights(cA)[0]
@@ -153,5 +183,25 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 			t.Fatalf("the booking %s never reached bravo's %s", res.PNR.RecordLocator, cB)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// A peer machine told of a joined world by its core takes the other
+// world's carriers as sellable without a switch of its own.
+func TestShardWorldTakesAJoinedWorld(t *testing.T) {
+	s := bootWorld(t, Options{})
+	h := worldHello{Name: "charlie", Code: "1C", SwitchTTY: "XCHDD1C", Watcher: "MIADD1G",
+		Carriers: []world.Carrier{{Designator: "ZQ", TTYAddress: "MIARMZQ", Format: "typeb"}}}
+	body, _ := json.Marshal(h)
+	rec := httptest.NewRecorder()
+	s.serveShardWorld(rec, httptest.NewRequest("POST", "/shard/world", bytes.NewReader(body)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("shard world: %d", rec.Code)
+	}
+	if name, ok := s.foreignCarrier("ZQ"); !ok || name != "charlie" {
+		t.Errorf("ZQ not taken as charlie's: %q %v", name, ok)
+	}
+	if s.GDS.Peer("ZQ") == nil {
+		t.Error("the distribution system has no peer for the joined carrier")
 	}
 }
