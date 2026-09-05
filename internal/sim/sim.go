@@ -239,6 +239,7 @@ type Sim struct {
 	linkSecret   string
 	publicSwitch string
 	announced    sync.Map
+	ledgerSeen   sync.Map
 	Switch       *node.Node
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
@@ -871,6 +872,8 @@ func marketedIndex(m *world.Manifest) map[string]string {
 // what each leg's priced records paid, from the carriers' books and the
 // distribution systems' alike. The live sells add to it from here on.
 func (s *Sim) rebuildLedger(ctx context.Context) {
+	// A rebuilt ledger starts the tenant-side count over.
+	s.ledgerSeen.Range(func(k, _ any) bool { s.ledgerSeen.Delete(k); return true })
 	started := time.Now()
 	s.Ledger.Reset()
 	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
@@ -1594,8 +1597,13 @@ func (s *Sim) tapTenantRevenue(ctx context.Context, bus *gateway.Bus) {
 			return
 		}
 		if p, ok := ev.Data.(map[string]any); ok {
-			if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Version <= 1 && rec.Origin.Channel != "codeshare" {
-				s.Ledger.Record(rec)
+			// The carrier's copy is priced when the fare reaches it, which
+			// may be a version or two after the sell; count each record the
+			// first time it is seen priced.
+			if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Origin.Channel != "codeshare" {
+				if _, seen := s.ledgerSeen.LoadOrStore(rec.RecordLocator, true); !seen {
+					s.Ledger.Record(rec)
+				}
 			}
 		}
 	})
