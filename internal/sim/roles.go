@@ -86,6 +86,9 @@ type welcome struct {
 	// SwitchAddrs names the listener each carrier dials when the fabric
 	// runs more than one switch: a carrier is homed on one of them.
 	SwitchAddrs map[string]string `json:"switch_addrs,omitempty"`
+	// PublicSwitch is the address list nodes on the internet dial, one per
+	// switch, for the start packs the regions hand out.
+	PublicSwitch string `json:"public_switch,omitempty"`
 	// MATIPAddrs maps each MATIP carrier to its own listener.
 	MATIPAddrs map[string]string `json:"matip_addrs"`
 	Warp       int               `json:"warp"`
@@ -327,6 +330,33 @@ func (c *Core) refreshSettlement(client *http.Client) int {
 // Routes mounts the federation surface onto the core's console mux.
 func (c *Core) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /federation/register", c.register)
+	mux.HandleFunc("POST /federation/token", c.token)
+}
+
+// token is a region asking the core's switches to demand (or stop
+// demanding) a carrier's link token: the region claimed the carrier for
+// someone's own node, and the switches are here.
+func (c *Core) token(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Carrier string `json:"carrier"`
+		Token   string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Carrier == "" {
+		http.Error(w, "a token request names a carrier", http.StatusBadRequest)
+		return
+	}
+	code := strings.ToUpper(req.Carrier)
+	for _, sw := range c.Sim.Switches {
+		sw.SetPeerToken(code, req.Token)
+	}
+	c.Sim.externalMu.Lock()
+	if req.Token == "" {
+		delete(c.Sim.external, code)
+	} else {
+		c.Sim.external[code] = true
+	}
+	c.Sim.externalMu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (c *Core) register(w http.ResponseWriter, r *http.Request) {
@@ -353,11 +383,12 @@ func (c *Core) register(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(closed)
 
 	wl := welcome{
-		SwitchAddr: rehost(c.Sim.Switch.Addr("link-net"), c.advertise),
-		MATIPAddrs: map[string]string{},
-		Warp:       c.Sim.clock.Warp(),
-		Pos:        c.Sim.clock.Pos(time.Now()),
-		Closed:     closed,
+		SwitchAddr:   rehost(c.Sim.Switch.Addr("link-net"), c.advertise),
+		PublicSwitch: c.Sim.publicSwitch,
+		MATIPAddrs:   map[string]string{},
+		Warp:         c.Sim.clock.Warp(),
+		Pos:          c.Sim.clock.Pos(time.Now()),
+		Closed:       closed,
 	}
 	if len(c.Sim.Switches) > 1 {
 		wl.SwitchAddrs = map[string]string{}
@@ -1010,6 +1041,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		if a, ok := wl.SwitchAddrs[c.Designator]; ok {
 			switchAddr = a
 		}
+		s.rememberSwitch(c.Designator, switchAddr, wl.PublicSwitch, coreURL)
 		if c.Transport == "matip" {
 			addr, ok := wl.MATIPAddrs[c.Designator]
 			if !ok {

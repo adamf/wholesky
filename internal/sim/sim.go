@@ -235,14 +235,18 @@ type Sim struct {
 	fate *dayplan.Plan
 	// Airline is the seats: who runs which carrier, their decisions and
 	// their tape; announced remembers which cancellations went out.
-	Airline      *airline.Registry
-	airlineSrv   *airline.Server
-	scoreMu      sync.Mutex
-	scoreCache   map[string]airline.Scorecard
-	scoreAt      time.Time
-	revenueMu    sync.RWMutex
-	revenueFeed  map[string]int64
-	externalMu   sync.RWMutex
+	Airline     *airline.Registry
+	airlineSrv  *airline.Server
+	scoreMu     sync.Mutex
+	scoreCache  map[string]airline.Scorecard
+	scoreAt     time.Time
+	revenueMu   sync.RWMutex
+	revenueFeed map[string]int64
+	externalMu  sync.RWMutex
+	// On a machine without switches: where each carrier's switch is, the
+	// core's URL, and the addresses the internet dials, from the welcome.
+	switchOf     map[string]string
+	coreURL      string
 	external     map[string]bool
 	linkSecret   string
 	publicSwitch string
@@ -1507,6 +1511,42 @@ func (s *Sim) Externals() []string {
 	return out
 }
 
+// rememberSwitch keeps what a region learned from the core's welcome, for
+// the start packs it hands out and the tokens it asks the core to set.
+func (s *Sim) rememberSwitch(code, internal, public, coreURL string) {
+	s.externalMu.Lock()
+	defer s.externalMu.Unlock()
+	if s.switchOf == nil {
+		s.switchOf = map[string]string{}
+	}
+	s.switchOf[strings.ToUpper(code)] = internal
+	if public != "" {
+		s.publicSwitch = public
+	}
+	s.coreURL = coreURL
+}
+
+// setToken makes every switch demand (or stop demanding) a carrier's
+// token: this machine's switches directly, the core's over HTTP when the
+// switches are elsewhere.
+func (s *Sim) setToken(code, token string) {
+	for _, sw := range s.Switches {
+		sw.SetPeerToken(code, token)
+	}
+	s.externalMu.RLock()
+	core := s.coreURL
+	s.externalMu.RUnlock()
+	if len(s.Switches) == 0 && core != "" {
+		body, _ := json.Marshal(map[string]string{"carrier": code, "token": token})
+		client := &http.Client{Timeout: 5 * time.Second}
+		if resp, err := client.Post(core+"/federation/token", "application/json", bytes.NewReader(body)); err == nil {
+			resp.Body.Close()
+		} else {
+			s.log.Warn("the core did not take the token", "carrier", code, "err", err)
+		}
+	}
+}
+
 // Claim hands a carrier this world runs to someone's own node: the tenant
 // is severed from the switch and stops being driven, every switch demands
 // the carrier's token on the hello from now on, and the start pack comes
@@ -1524,10 +1564,7 @@ func (s *Sim) Claim(code string) (*StartPack, error) {
 	s.external[code] = true
 	s.externalMu.Unlock()
 	t.Sever()
-	token := linkToken(s.linkSecret, code)
-	for _, sw := range s.Switches {
-		sw.SetPeerToken(code, token)
-	}
+	s.setToken(code, linkToken(s.linkSecret, code))
 	if s.Airline != nil {
 		s.Airline.Emit(code, "seat", code+" handed to an external node: the tenant is severed, the switch wants the token", nil)
 	}
@@ -1545,9 +1582,7 @@ func (s *Sim) Unclaim(code string) error {
 	s.externalMu.Lock()
 	delete(s.external, code)
 	s.externalMu.Unlock()
-	for _, sw := range s.Switches {
-		sw.SetPeerToken(code, "")
-	}
+	s.setToken(code, "")
 	t.Restore()
 	if s.Airline != nil {
 		s.Airline.Emit(code, "seat", code+" taken back by the world: the tenant is dialling the switch again", nil)
@@ -1628,6 +1663,10 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 		switchAddr = s.Switches[home].Addr("link-net")
 	} else if s.Switch != nil {
 		switchAddr = s.Switch.Addr("link-net")
+	} else {
+		s.externalMu.RLock()
+		switchAddr = s.switchOf[code]
+		s.externalMu.RUnlock()
 	}
 	firstDesignator, firstTTY := switchIdentity(home)
 	cfg := config.Default()
