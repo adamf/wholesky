@@ -32,7 +32,9 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +45,7 @@ import (
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/queue"
 	jstore "github.com/adamf/jetway/pkg/store"
+	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
@@ -230,6 +233,20 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		return proxyPass(w, r, owner)
 	}
 
+	if s.airlineSrv != nil {
+		// The core's lobby is every peer's carriers; a seat's requests go
+		// to the machine that runs the carrier.
+		s.airlineSrv.World = &federatedCarriers{seatWorld: seatWorld{s}, peers: func() []string {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			var urls []string
+			for _, p := range c.peers {
+				urls = append(urls, p.URL)
+			}
+			sort.Strings(urls)
+			return urls
+		}}
+	}
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
 	s.Fleet.OnOwners = c.SetOwners
@@ -466,19 +483,39 @@ func (c *Core) federatedQueues() map[string]int {
 
 // proxyPass forwards one request to a peer machine, path and query intact.
 func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
-	client := &http.Client{Timeout: 5 * time.Second}
 	url := base + r.URL.Path
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
 	}
-	var resp *http.Response
-	var err error
-	if r.Method == http.MethodPost {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		resp, err = client.Post(url, r.Header.Get("Content-Type"), bytes.NewReader(body))
-	} else {
-		resp, err = client.Get(url)
+	if strings.HasSuffix(r.URL.Path, "/events") || strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		// An event stream stays open: a reverse proxy that flushes as it
+		// goes, for as long as the client does.
+		target, err := neturl.Parse(base)
+		if err != nil {
+			return false
+		}
+		rp := httputil.NewSingleHostReverseProxy(target)
+		rp.FlushInterval = -1
+		rp.ServeHTTP(w, r)
+		return true
 	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	var body io.Reader
+	if r.Method == http.MethodPost {
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, body)
+	if err != nil {
+		return false
+	}
+	for _, h := range []string{"Content-Type", "X-Seat-Token", "Accept"} {
+		if v := r.Header.Get(h); v != "" {
+			req.Header.Set(h, v)
+		}
+	}
+	var resp *http.Response
+	resp, err = client.Do(req)
 	if err != nil {
 		http.Error(w, "the machine holding this node did not answer: "+err.Error(),
 			http.StatusBadGateway)
@@ -692,6 +729,8 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	// settled and proxies for the files.
 	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 	mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
+	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)
 	mux.HandleFunc("GET /billing/", s.serveInvoice)
@@ -947,6 +986,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          s.inboundDelay,
+			RushDecision:          s.askRush,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,

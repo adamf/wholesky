@@ -37,6 +37,7 @@ import (
 	"github.com/adamf/jetway/pkg/irops"
 	"github.com/adamf/jetway/pkg/mvt"
 
+	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fill"
@@ -88,6 +89,9 @@ type GDSNode struct {
 
 // Options configure a boot.
 type Options struct {
+	// DecisionWindow is how long a seat has to answer a decision before the
+	// autopilot's default, in real time; zero is forty-five seconds.
+	DecisionWindow time.Duration
 	// Carriers caps how many carriers run, largest first. Zero runs all.
 	Carriers int
 	// SettleEvery is how often the settlement plan re-runs over the books
@@ -207,8 +211,13 @@ type Sim struct {
 	// fate is the day's plan for every flight -- delays with their causes,
 	// slots, late aircraft, crews -- decided once from the schedule so every
 	// machine agrees; see internal/dayplan.
-	fate   *dayplan.Plan
-	Switch *node.Node
+	fate *dayplan.Plan
+	// Airline is the seats: who runs which carrier, their decisions and
+	// their tape; announced remembers which cancellations went out.
+	Airline    *airline.Registry
+	airlineSrv *airline.Server
+	announced  sync.Map
+	Switch     *node.Node
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
 	Switches []*node.Node
@@ -395,6 +404,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	}
 	s.Eye.WarpNow = s.clock.Warp
 	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
+	s.Airline = airline.New(opts.DecisionWindow)
 	s.Eye.Weather = func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary) {
 		return s.fate.Weather, s.fate.Regulations, s.fate.Summary
 	}
@@ -422,6 +432,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		// installed, and answers for this process's carriers otherwise.
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
+		s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
 		mux.HandleFunc("GET /billing/", s.serveInvoice)
@@ -553,6 +565,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          s.inboundDelay,
+			RushDecision:          s.askRush,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
@@ -1305,31 +1318,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					// nothing departs or arrives, and the manifest is let
 					// go at the hour it would have landed.
 					if w := wrapMin(f.DepMin - cancelledBefore); w > prev && w <= cur {
-						go func(f world.Flight) {
-							text := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
-								f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
-							if err := t.SendSchedule(ctx, text); err != nil {
-								s.log.Debug("recorded cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
-							}
-							// The marketing carrier tells distribution about the
-							// flight it sold: the bookings under its code are the
-							// ones the distribution systems hold.
-							if mt, ok := s.Tenants[f.Marketing]; ok && f.Marketing != "" && f.Marketing != f.Carrier {
-								mtext := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
-									f.Marketing, f.MarketingNumber, strings.ToUpper(day.Format("02Jan")), f.From, f.To)
-								if err := mt.SendSchedule(ctx, mtext); err != nil {
-									s.log.Debug("marketing cancellation not sent", "flight", f.Marketing+f.MarketingNumber, "err", err)
-								}
-							}
-							if err := t.CancelFlight(ctx, f, day, fate.Reason); err != nil {
-								s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
-							}
-							if s.ANSP != nil {
-								if err := s.ANSP.Cancellation(ctx, s.carriers[f.Carrier], f, day); err != nil {
-									s.log.Debug("flight plan cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
-								}
-							}
-						}(f)
+						go s.announceCancellation(ctx, t, f, day, fate.Reason)
 					}
 					if a := f.ArrMin; a > prev && a <= cur {
 						t.Forget(ctx, f, day)
@@ -1342,7 +1331,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 						go func(f world.Flight, fate dayplan.Flight) {
 							if err := s.ANSP.Slot(ctx, s.carriers[f.Carrier], f, day, fate); err != nil {
 								s.log.Debug("slot not sent", "flight", f.Carrier+f.Number, "err", err)
+								return
 							}
+							s.askSlot(ctx, t, f, fate)
 						}(f, fate)
 					}
 				}
@@ -1413,7 +1404,8 @@ const slotBefore = 120
 // the record or the model alone.
 func (s *Sim) flightDelays(f world.Flight, day time.Time) (dep, arr int) {
 	if s.fate != nil {
-		if pf, ok := s.fate.Flights[dayplan.Key(f)]; ok {
+		if _, ok := s.fate.Flights[dayplan.Key(f)]; ok {
+			pf := s.fate.Of(f)
 			return pf.DepDelay, pf.ArrDelay
 		}
 	}
@@ -1421,6 +1413,21 @@ func (s *Sim) flightDelays(f world.Flight, day time.Time) (dep, arr int) {
 		return d, a
 	}
 	return delayFor(f, day)
+}
+
+// runsCarrier says this machine hosts the carrier's tenant.
+func (s *Sim) runsCarrier(code string) bool {
+	_, ok := s.Tenants[strings.ToUpper(code)]
+	return ok
+}
+
+// proxyCarrier forwards a seat's request to the machine that runs the
+// carrier, when this one federates; false when nobody does.
+func (s *Sim) proxyCarrier(w http.ResponseWriter, r *http.Request, code string) bool {
+	if s.ConsoleProxy == nil {
+		return false
+	}
+	return s.ConsoleProxy(w, r, code)
 }
 
 // Fate is the day's plan.
@@ -1500,6 +1507,14 @@ var groundEvents = []groundEvent{
 		// once the name list has.
 		return t.PushPNRGOV(ctx, f, day)
 	}},
+	{150, "crew", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
+		// A crew the plan times out: the seat may call reserves before
+		// the cancellation is announced at two hours.
+		if fate := s.fate.Of(f); fate.Cancelled && strings.HasPrefix(fate.Reason, "crew") {
+			s.askCrew(ctx, f, fate)
+		}
+		return nil
+	}},
 	{150, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 150)
 	}},
@@ -1511,6 +1526,9 @@ var groundEvents = []groundEvent{
 		if dep < 46 {
 			return nil
 		}
+		if !s.askRetime(ctx, f, dep, arr) {
+			return nil
+		}
 		return t.Retime(ctx, f, day, dep, arr)
 	}},
 	{110, "aircraft substitution", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
@@ -1518,6 +1536,13 @@ var groundEvents = []groundEvent{
 		// has opened: a smaller aircraft takes it, the cabin is re-seated,
 		// distribution hears the EQT.
 		if aogHash(f.Carrier+f.Number+day.Format("0102"))%150 != 0 {
+			return nil
+		}
+		if !s.askSubstitute(ctx, f) {
+			s.fate.Update(f, func(pf *dayplan.Flight) {
+				pf.Cancelled, pf.Reason, pf.Code = true, "cancelled: aircraft unserviceable", "A"
+			})
+			s.announceCancellation(ctx, t, f, day, "cancelled: aircraft unserviceable")
 			return nil
 		}
 		_, err := t.Substitute(ctx, f, day)

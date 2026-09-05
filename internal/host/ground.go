@@ -782,6 +782,9 @@ func (t *Tenant) rushBags(ctx context.Context, f world.Flight, day time.Time, fl
 		bags = append(bags, shortBag{tag: b.Tag, surname: b.Surname, ex: key})
 	}
 	next, ok := rushFlightFor(t.flights, f)
+	if ok && t.rushDecision != nil && !t.rushDecision(ctx, f, day, len(short)) {
+		ok = false
+	}
 	if !ok {
 		t.recordShort(f, day, nil, bags)
 		t.groundMu.Lock()
@@ -884,6 +887,13 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	send(loadControl, []string{t.stationAddress(fl.Dest, deptLoad)}, []string{cl.CPM}, "CPM")
 	return firstErr
 }
+
+// Cancelled says whether this carrier's departure control has the flight
+// cancelled today.
+func (t *Tenant) Cancelled(f world.Flight, day time.Time) bool { return t.isCancelled(f, day) }
+
+// Boarded is the departure's boarded count at the door, 0 before it closed.
+func (t *Tenant) Boarded(f world.Flight, day time.Time) int { return t.boardedFor(f, day) }
 
 // boardedFor is the departure's boarded count, for the movement message.
 // A flight departure control never closed -- a boot mid-day, a chaos cut

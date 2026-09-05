@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/atfm"
@@ -102,6 +103,25 @@ type Plan struct {
 	Weather     []Cell
 	Regulations []Regulation
 	Summary     Summary
+	// mu guards Flights once the plan is in use: whoever runs a carrier may
+	// change a flight's fate (call reserves, take a slot improvement) while
+	// the simulation reads it.
+	mu sync.RWMutex
+}
+
+// Update changes one flight's fate under the lock.
+func (p *Plan) Update(f world.Flight, fn func(*Flight)) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pf, ok := p.Flights[Key(f)]
+	if !ok {
+		return false
+	}
+	fn(pf)
+	return true
 }
 
 // Key names a flight the way the plan does: carrier, number and boarding
@@ -113,6 +133,8 @@ func (p *Plan) Of(f world.Flight) Flight {
 	if p == nil {
 		return Flight{}
 	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if pf, ok := p.Flights[Key(f)]; ok {
 		return *pf
 	}

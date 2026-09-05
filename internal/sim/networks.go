@@ -358,6 +358,51 @@ func (a *ANSP) Slot(ctx context.Context, c world.Carrier, f world.Flight, day ti
 	return err
 }
 
+// Ready is the carrier's REA to the Network Manager: the flight is ready
+// before its CTOT and would take an improvement. It goes from the
+// airline's operations address to the NM.
+func (a *ANSP) Ready(ctx context.Context, c world.Carrier, f world.Flight, day time.Time, fate dayplan.Flight) error {
+	dep, dest := a.icao(f.From), a.icao(f.To)
+	if dep == "" || dest == "" {
+		return nil
+	}
+	m := &atfm.Message{Title: atfm.TitleREA, ARCID: host.Callsign(c, f), IFPLID: fmt.Sprintf("AA%08d", aogHash(f.Carrier+f.Number+f.From+day.Format("0102"))%100000000),
+		ADEP: dep, ADES: dest, EOBD: day.Format("020106"), EOBT: hhmmOf(f.DepMin), Other: []atfm.Item{{Key: "MINLINEUP", Value: "0010"}}}
+	return a.sendATFM(ctx, m, dep+c.ICAO+"X", []string{nmAddress})
+}
+
+// Revise is the Network Manager's SRM: a new CTOT for the flight.
+func (a *ANSP) Revise(ctx context.Context, c world.Carrier, f world.Flight, day time.Time, fate dayplan.Flight) error {
+	dep, dest := a.icao(f.From), a.icao(f.To)
+	if dep == "" || dest == "" || fate.CTOT <= 0 {
+		return nil
+	}
+	m := &atfm.Message{Title: atfm.TitleSRM, ARCID: host.Callsign(c, f), IFPLID: fmt.Sprintf("AA%08d", aogHash(f.Carrier+f.Number+f.From+day.Format("0102"))%100000000),
+		ADEP: dep, ADES: dest, EOBD: day.Format("020106"), EOBT: hhmmOf(f.DepMin), NEWCTOT: hhmmOf(fate.CTOT),
+		REGUL: []string{fate.Regulation}, TAXITIME: fmt.Sprintf("%04d", dayplan.TaxiMin), REGCAUSE: fate.Cause}
+	return a.sendATFM(ctx, m, nmAddress, []string{dep + c.ICAO + "X", dep + "ZPZX"})
+}
+
+// sendATFM puts a flow message in an AFTN envelope and sends it.
+func (a *ANSP) sendATFM(ctx context.Context, m *atfm.Message, from string, addressees []string) error {
+	text, err := atfm.Build(m)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	env := &aftn.Message{
+		TransmissionID: fmt.Sprintf("NMA%03d", a.seq.Add(1)%1000),
+		Priority:       aftn.PriorityRegularity, Addressees: addressees,
+		FilingTime: now.Format("021504"), Originator: from, Text: text,
+	}
+	raw, err := env.Encode(aftn.EncodeOptions{CRLF: true})
+	if err != nil {
+		return err
+	}
+	_, err = a.GW.Send(ctx, a.GW.Peer("net"), raw, "ATFM/"+string(m.Title)+"/"+m.ARCID, "", "")
+	return err
+}
+
 // SlotsIssued is how many slots this machine's Network Manager gave out.
 func (a *ANSP) SlotsIssued() int64 { return a.slots.Load() }
 

@@ -329,6 +329,24 @@ bookings through the fabric and runs the flight day at `-warp`, emitting a
 real MVT for every departure and arrival. The switch's console is Jetway's
 own, on `-console`, where every message can be opened and read field by field.
 
+## Running a carrier
+
+Every carrier flies on autopilot. Take one over at `/ops/` (the lobby; then
+`/ops/<code>`): department by department you switch the autopilot off, and
+where it is off the day asks you -- announce this delay or hold it, cancel
+this crew-timed-out flight or call reserves, take this slot or ask for a
+better one, rush these bags or hold them -- with a default that happens if
+you are slow. The levers (cancel, retime, substitute, close a class, move
+the fares, REA, reserves) go out on the wire as the real messages. The
+scorecard -- revenue, the world's cost shape, on-time, cancellations -- is
+the same for every carrier, so the autopilot is the bar.
+
+The same thing for agents: the JSON API under `/carrier/<code>/…`, and
+`cmd/skyagent`, an MCP server over stdio that Claude Code or Claude Desktop
+can start pointed at a world. The design, the API and the road to a
+federated multiplayer sky (bring your own jetway, worlds trunked to worlds)
+are in [docs/run-a-carrier.md](docs/run-a-carrier.md).
+
 ## Status
 
 Works, and `go test ./...` proves it on every run: world compilation at any

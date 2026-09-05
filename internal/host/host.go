@@ -81,6 +81,7 @@ type Tenant struct {
 	tracingSend func(ctx context.Context, from string, addrs []string, text, kind string) error
 	// The network programme (network.go) and what it reads.
 	net            *networkRM
+	rushDecision   func(ctx context.Context, f world.Flight, day time.Time, bags int) bool
 	dayPos         func() float64
 	tariff         fare.Tariff
 	capacity       inventory.Capacity
@@ -188,6 +189,9 @@ type Options struct {
 	// bid-price control hold a connecting passenger's through fare against
 	// the seats it displaces; nil leaves network control off.
 	Tariff fare.Tariff
+	// RushDecision, when set, is asked before short-shipped bags are rushed
+	// on the next flight: false holds them for tomorrow. Nil rushes.
+	RushDecision func(ctx context.Context, f world.Flight, day time.Time, bags int) bool
 	// MaxMessages and MaxRecords bound the tenant's store; zero is unbounded.
 	MaxMessages int
 	MaxRecords  int
@@ -379,6 +383,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.openAHL = map[string]*baggage.TracingFile{}
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
+	t.rushDecision = opts.RushDecision
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
 	}

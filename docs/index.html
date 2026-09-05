@@ -159,6 +159,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     </div>
     <div class="cta">
       <a class="btn" href="https://wholesky-demo.fly.dev/eye">Watch the whole sky →</a>
+      <a class="btn" href="https://wholesky-demo.fly.dev/ops/">Run a carrier →</a>
       <a class="btn" href="https://wholesky-thanksgiving.fly.dev/eye">The recorded day: Thanksgiving eve 2025 →</a>
       <a class="btn" href="https://github.com/adamf/wholesky">github.com/adamf/wholesky</a>
       <a class="btn" href="production.html">deploy to production</a>
@@ -359,6 +360,25 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <p class="muted">Synthetic and labelled: the passengers, the aircraft types inferred from carrier and stage length, seat counts, and the fares. There is no real tariff in this, only the shape of one.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<section id="run">
+  <div class="wrap">
+    <div class="eyebrow">run a carrier</div>
+    <h2>Take one of the 518 and run it. The other 517 are the bar.</h2>
+    <p class="lead">Every carrier flies on autopilot: rules deciding, wherever a real airline has a person deciding, what the airline does. A seat is you taking those decisions instead. Department by department you switch the autopilot off; where it is off, the day stops deciding and asks you -- a situation, options, what each costs, a default, a deadline -- and what you say goes out on the wire as the real messages. Too slow and the default happens. The scorecard is the same for everyone.</p>
+    <div class="two">
+      <div class="card">
+        <h3>For people: the operations centre</h3>
+        <p class="muted">The lobby is a leaderboard: revenue, cost, profit, on-time, cancellations, load factor, score, and who holds the seat. Take a carrier and you get its inbox, its departments as switches (operations, crew, slots, pricing, ground), the levers -- cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, call reserves -- and the departures board with what the day is doing to each flight: the slot and its cause, the crew's legality, the late aircraft, the bags. <a href="https://wholesky-demo.fly.dev/ops/">Open the lobby →</a></p>
+      </div>
+      <div class="card">
+        <h3>For agents: the same API, as MCP tools</h3>
+        <p class="muted">Everything the page does is JSON over HTTP, and <code>cmd/skyagent</code> serves it as MCP tools over stdio -- <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code>, <code>weather</code> -- so Claude Code or Claude Desktop can run an airline against the world with no code at all. Nothing an agent can do is hidden from a person; a seat can be handed between them mid-day.</p>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:14px">Where it goes: bring your own jetway. A carrier is a jetway node with the world's schedule and addresses, and the switch does not care where that node runs -- a player's <code>jetwayd</code> on their own machine dials the world's switch and the booking traffic lands on their socket. Then worlds trunk to worlds. The design and what is still missing for it is in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
   </div>
 </section>
 

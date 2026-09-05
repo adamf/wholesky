@@ -58,6 +58,7 @@ func run() error {
 		tMaxMsgs  = flag.Int("tenant-max-messages", 0, "message cap per carrier tenant; 0 inherits -max-messages")
 		tMaxRecs  = flag.Int("tenant-max-records", 0, "record cap per carrier tenant; 0 inherits -max-records")
 		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
+		decision  = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
 		gdsCount  = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
 		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
 		pprofAddr = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
@@ -132,7 +133,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

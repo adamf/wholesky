@@ -13,10 +13,10 @@
 package tariff
 
 import (
-	"sync"
 	"hash/fnv"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/inventory"
