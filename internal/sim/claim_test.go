@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,35 @@ func TestClaimHandsARunningCarrierToANode(t *testing.T) {
 	}
 	if err := s.Unclaim("ZZ"); err == nil {
 		t.Error("unclaiming a carrier with no tenant is refused")
+	}
+}
+
+// A seat that releases a claimed carrier hands it back to the world rather
+// than leaving it dark: the release goes through the API, and the world
+// unclaims.
+func TestReleasingASeatUnclaimsItsCarrier(t *testing.T) {
+	s := bootWorld(t, Options{LinkSecret: "claim"})
+	code := s.Manifest.Carriers[0].Designator
+	_, token, err := s.Airline.Take(code, "leaver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Claim(code); err != nil {
+		t.Fatal(err)
+	}
+	if !s.External(code) || !s.Tenants[code].Severed() {
+		t.Fatal("not claimed")
+	}
+	mux := http.NewServeMux()
+	s.airlineSrv.Routes(mux)
+	req := httptest.NewRequest("POST", "/carrier/"+code+"/release", nil)
+	req.Header.Set("X-Seat-Token", token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("release %d %s", rec.Code, rec.Body.String())
+	}
+	if s.External(code) || s.Tenants[code].Severed() {
+		t.Errorf("after release: external %v severed %v", s.External(code), s.Tenants[code].Severed())
 	}
 }

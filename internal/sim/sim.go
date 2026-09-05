@@ -441,6 +441,15 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
 	s.Airline = airline.New(opts.DecisionWindow)
 	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	s.airlineSrv.OnRelease = func(code string) {
+		// A seat that leaves while its carrier is claimed would strand it
+		// dark; the world takes the carrier back.
+		if _, ok := s.Tenants[code]; ok && s.External(code) {
+			if err := s.Unclaim(code); err != nil {
+				s.log.Warn("could not take a released carrier back", "carrier", code, "err", err)
+			}
+		}
+	}
 	s.external = map[string]bool{}
 	for _, d := range opts.External {
 		if d = strings.ToUpper(strings.TrimSpace(d)); d != "" {
@@ -1710,7 +1719,10 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 // that does.
 func (s *Sim) serveClaim(w http.ResponseWriter, r *http.Request) {
 	code := strings.ToUpper(r.PathValue("carrier"))
-	if _, local := s.Tenants[code]; !local && !s.External(code) && s.ConsoleProxy != nil {
+	// The machine that runs the tenant holds the seat and answers; a
+	// core forwards, claimed or not. A world booted -external has no tenant
+	// anywhere and no proxy, and answers itself.
+	if _, local := s.Tenants[code]; !local && s.ConsoleProxy != nil {
 		if s.ConsoleProxy(w, r, code) {
 			return
 		}

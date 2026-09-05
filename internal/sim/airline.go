@@ -540,7 +540,10 @@ func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
 	if time.Since(f.at) < 5*time.Second {
 		return f.cache
 	}
-	out := f.seatWorld.Carriers()
+	// The peers' rows first; the core's own view of a carrier (an external
+	// one it only knows the token of) fills in where no peer listed it.
+	byCode := map[string]int{}
+	var out []airline.CarrierInfo
 	client := &http.Client{Timeout: 8 * time.Second}
 	for _, url := range f.peers() {
 		resp, err := client.Get(url + "/carriers.json")
@@ -552,7 +555,19 @@ func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
 		}
 		json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
 		resp.Body.Close()
-		out = append(out, body.Carriers...)
+		for _, c := range body.Carriers {
+			if _, seen := byCode[c.Code]; seen {
+				continue
+			}
+			byCode[c.Code] = len(out)
+			out = append(out, c)
+		}
+	}
+	for _, c := range f.seatWorld.Carriers() {
+		if _, seen := byCode[c.Code]; !seen {
+			byCode[c.Code] = len(out)
+			out = append(out, c)
+		}
 	}
 	f.cache, f.at = out, time.Now()
 	return out

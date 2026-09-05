@@ -155,6 +155,9 @@ type Server struct {
 	// its lobby merges the peers' lists.
 	Local func(carrier string) bool
 	Proxy func(w http.ResponseWriter, r *http.Request, carrier string) bool
+	// OnRelease, when set, is told when a seat is released, so the world
+	// can take back anything the seat had claimed.
+	OnRelease func(carrier string)
 }
 
 // SetWorld replaces the world the server answers from.
@@ -303,6 +306,9 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request) {
 	if err := s.Reg.Release(r.PathValue("carrier"), s.token(r)); err != nil {
 		fail(w, http.StatusForbidden, err)
 		return
+	}
+	if s.OnRelease != nil {
+		s.OnRelease(strings.ToUpper(r.PathValue("carrier")))
 	}
 	writeJSON(w, map[string]string{"ok": "released"})
 }
