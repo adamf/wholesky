@@ -305,7 +305,7 @@ func (c *Collector) OnMessage(payload map[string]any) {
 		c.kindDCS++
 	case "ACARS":
 		c.kindACARS++
-	case "ATS", "AFTN":
+	case "ATS", "AFTN", "ATFM":
 		c.kindATS++
 	default:
 		c.kindOther++

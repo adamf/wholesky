@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -99,6 +100,10 @@ type Eye struct {
 	// ("reopen","LHR"). The Eye owns the page and the halos; what closing an
 	// airport means is the simulation's business, not the observer's.
 	Chaos func(action, iata string) error
+	// Weather is the day plan's weather and flow management, for the globe
+	// to draw the cells and the panel to count the slots; nil for a world
+	// without a plan.
+	Weather func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary)
 
 	mu     sync.Mutex
 	planes map[string]*Plane
@@ -542,11 +547,28 @@ func (e *Eye) Routes(mux *http.ServeMux) {
 		w.Write(coastlineJSON) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /eye/world.json", e.world)
+	mux.HandleFunc("GET /eye/weather.json", e.weather)
 	mux.HandleFunc("GET /eye/planes.json", e.planesNow)
 	mux.HandleFunc("GET /eye/stream", e.stream)
 	mux.HandleFunc("POST /eye/chaos", e.chaos)
 	mux.HandleFunc("GET /eye/flight/{flight}", e.flightRecords)
 	mux.HandleFunc("POST /eye/time", e.time)
+}
+
+// weather is the day's weather cells and regulations, with the clock, so
+// the globe can draw the ones in force.
+func (e *Eye) weather(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if e.Weather == nil {
+		w.Write([]byte(`{"cells":[],"regulations":[]}`)) //nolint:errcheck
+		return
+	}
+	cells, regs, sum := e.Weather()
+	pos := 0.0
+	if e.SimPos != nil {
+		pos = e.SimPos()
+	}
+	json.NewEncoder(w).Encode(map[string]any{"cells": cells, "regulations": regs, "summary": sum, "pos": pos}) //nolint:errcheck
 }
 
 // time is the day's speed control: pause it, run it, race it.

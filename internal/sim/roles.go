@@ -691,6 +691,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	// The plan runs where the books are; the core merges what each shard
 	// settled and proxies for the files.
 	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
+	mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)
 	mux.HandleFunc("GET /billing/", s.serveInvoice)
@@ -945,7 +946,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			MaxMessages:           tenantMaxMsgs,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
-			InboundDelay:          inboundDelay,
+			InboundDelay:          s.inboundDelay,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,

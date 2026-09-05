@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/adamf/jetway/pkg/atfm"
 	"github.com/adamf/jetway/pkg/ats"
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/avs"
@@ -122,6 +123,10 @@ type Tenant struct {
 	day     time.Time
 	icao    func(iata string) string
 	atsSeen map[ats.Type]int
+	// atfmSeen counts the Network Manager's slot messages by title; slots
+	// is the current slot line per flight and date.
+	atfmSeen map[atfm.Title]int
+	slots    map[string]string
 	// atsByFlight is what air traffic services said about each flight, and
 	// filed which flights had a plan lodged: the ops desk's own record.
 	atsByFlight map[string]map[ats.Type]int
@@ -337,6 +342,8 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		pnlSent:      map[string]map[string]nameItem{},
 		arrivals:     map[dcs.Kind]int{},
 		atsSeen:      map[ats.Type]int{},
+		atfmSeen:     map[atfm.Title]int{},
+		slots:        map[string]string{},
 		atsByFlight:  map[string]map[ats.Type]int{},
 		filed:        map[string]bool{},
 		inboundDelay: opts.InboundDelay,

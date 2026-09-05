@@ -139,3 +139,24 @@ func TestPickupFollowsTheBookingCurve(t *testing.T) {
 		t.Errorf("an off-ladder class sold is not forecast: %+v", odd)
 	}
 }
+
+// A carrier's pricing decision scales its whole ladder and nobody else's.
+func TestMultiplierScalesOneCarriersFares(t *testing.T) {
+	m := &world.Manifest{Flights: []world.Flight{
+		{Carrier: "BA", From: "LHR", To: "JFK", KM: 5550}, {Carrier: "VS", From: "LHR", To: "JFK", KM: 5550},
+	}}
+	tf := FromManifest(m)
+	base := tf.Fares("BA", "LHR", "JFK")[0].OneWay
+	other := tf.Fares("VS", "LHR", "JFK")[0].OneWay
+	tf.SetMultiplier("ba", 1.5)
+	if got := tf.Fares("BA", "LHR", "JFK")[0].OneWay; got.Amount != base.Amount*3/2 && got.Amount < base.Amount*14/10 {
+		t.Errorf("BA full fare %v after a 1.5 multiplier on %v", got, base)
+	}
+	if got := tf.Fares("VS", "LHR", "JFK")[0].OneWay; got.Amount != other.Amount {
+		t.Errorf("VS moved: %v -> %v", other, got)
+	}
+	tf.SetMultiplier("BA", 0)
+	if got := tf.Fares("BA", "LHR", "JFK")[0].OneWay; got.Amount != base.Amount || tf.Multiplier("BA") != 1 {
+		t.Errorf("filing not restored: %v", got)
+	}
+}

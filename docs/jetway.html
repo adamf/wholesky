@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.84</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.85</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -141,6 +141,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <tr><td>availability &amp; schedule</td><td class="mono">AVS · SSM · ASM (CNL, EQT, TIM applied) · SSIM</td></tr>
           <tr><td>reservations → airport</td><td class="mono">PNL (multi-part) · ADL</td></tr>
           <tr><td>airport → world</td><td class="mono">PFS · PTM · PSM · ETL · LDM · CPM · BSM · BPM · BUM (rush bag) · AHL · OHD · FWD (tracing files) · loadsheet (AHM 560)</td></tr>
+          <tr><td>Network Manager → world</td><td class="mono">SAM · SRM · SLC · FLS · DES (ATFM slots, ADEXP) · SMM · REA · FCM · SPA · SRJ · RFI · SWM (the operator's replies)</td></tr>
           <tr><td>aircraft &amp; operations</td><td class="mono">MVT · MVA · DIV · ACARS OOOI (OUT OFF ON IN)</td></tr>
           <tr><td>air traffic services</td><td class="mono">AFTN envelope · FPL · DEP · ARR · DLA · CNL · CHG</td></tr>
           <tr><td>transports</td><td class="mono">Type B over framed TCP · MATIP (RFC 2351) · EDIFACT over TCP · HTTPS with mutual TLS · file drop · dialled trunk links between switches (link_dial + via routing)</td></tr>
@@ -305,6 +306,14 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>Passenger types</b> ADT, CHD and INF at their discounts.</li>
           <li><b>Pricing</b> sells each segment under the cheapest fare whose rules the trip meets as of the purchase date, and says why when nothing does.</li>
         </ul>
+      </div>
+      <div class="card">
+        <h3>pkg/atfm <span class="tag spec">ATFCM Users Manual specified</span></h3>
+        <p>Air traffic flow management: the Network Manager's slot allocation (SAM) with its calculated take-off time, the revision, the cancellation of a slot requirement, the suspension and de-suspension of a flight, and the operator's replies, in ADEXP to EUROCONTROL's public manual and tested against its examples verbatim. The regulation cause is the cause letter, the phase of flight and the IATA delay code, correlated as the manual's Annex D has them. A slot inside an AFTN envelope reaches an operations centre through the gateway's Ground seam.</p>
+      </div>
+      <div class="card">
+        <h3>pkg/crew <span class="tag spec">14 CFR 117 specified</span></h3>
+        <p>Flight crew legality: the flight time and flight duty period limits by report time and number of segments, the two-hour extension for unforeseen circumstances and the ten-hour rest, transcribed from the public rule and tested value by value. A duty is a report and its legs at their current times; the check says legal, legal only on the extension, or timed out, and gives the latest departure before the crew does.</p>
       </div>
       <div class="card">
         <h3>pkg/bsp <span class="tag spec">DISH 23 specified</span></h3>

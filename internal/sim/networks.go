@@ -22,12 +22,14 @@ import (
 
 	"github.com/adamf/jetway/pkg/acars"
 	"github.com/adamf/jetway/pkg/aftn"
+	"github.com/adamf/jetway/pkg/atfm"
 	"github.com/adamf/jetway/pkg/ats"
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/jetway/pkg/typeb"
 
+	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -224,6 +226,7 @@ func (d *Datalink) Report(ctx context.Context, c world.Carrier, f world.Flight, 
 type ANSP struct {
 	*netNode
 	plans atomic.Int64
+	slots atomic.Int64
 }
 
 // send puts an ATS message in an envelope from a tower and sends it.
@@ -319,6 +322,44 @@ func (s *Sim) startNetworks(ctx context.Context, shard int, switchAddr string, l
 	s.ANSP = ansp
 	return nil
 }
+
+// nmAddress is the Network Manager's AFTN address, from which slots come.
+const nmAddress = "EUCHZMFP"
+
+// Slot is the Network Manager giving a regulated flight its calculated
+// take-off time: a SAM to the airline's operations at the departure
+// aerodrome and to the tower, two hours before off-block, naming the
+// regulation and its cause. The world's flow management is the day plan's;
+// the message is jetway's pkg/atfm, to the ATFCM Users Manual.
+func (a *ANSP) Slot(ctx context.Context, c world.Carrier, f world.Flight, day time.Time, fate dayplan.Flight) error {
+	dep, dest := a.icao(f.From), a.icao(f.To)
+	if dep == "" || dest == "" || fate.CTOT <= 0 {
+		return nil
+	}
+	m := &atfm.Message{Title: atfm.TitleSAM, ARCID: host.Callsign(c, f), IFPLID: fmt.Sprintf("AA%08d", aogHash(f.Carrier+f.Number+f.From+day.Format("0102"))%100000000),
+		ADEP: dep, ADES: dest, EOBD: day.Format("020106"), EOBT: hhmmOf(f.DepMin), CTOT: hhmmOf(fate.CTOT),
+		REGUL: []string{fate.Regulation}, TAXITIME: fmt.Sprintf("%04d", dayplan.TaxiMin), REGCAUSE: fate.Cause}
+	text, err := atfm.Build(m)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	env := &aftn.Message{
+		TransmissionID: fmt.Sprintf("NMA%03d", a.seq.Add(1)%1000),
+		Priority:       aftn.PriorityRegularity, Addressees: []string{dep + c.ICAO + "X", dep + "ZPZX"},
+		FilingTime: now.Format("021504"), Originator: nmAddress, Text: text,
+	}
+	raw, err := env.Encode(aftn.EncodeOptions{CRLF: true})
+	if err != nil {
+		return err
+	}
+	a.slots.Add(1)
+	_, err = a.GW.Send(ctx, a.GW.Peer("net"), raw, "ATFM/SAM/"+m.ARCID, "", "")
+	return err
+}
+
+// SlotsIssued is how many slots this machine's Network Manager gave out.
+func (a *ANSP) SlotsIssued() int64 { return a.slots.Load() }
 
 // FlightPlansFiled is how many flight plans this machine's ANSP received.
 func (a *ANSP) FlightPlansFiled() int64 { return a.plans.Load() }

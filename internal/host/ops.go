@@ -20,7 +20,9 @@ import (
 
 	"github.com/adamf/jetway/pkg/acars"
 	"github.com/adamf/jetway/pkg/aftn"
+	"github.com/adamf/jetway/pkg/atfm"
 	"github.com/adamf/jetway/pkg/ats"
+	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/typeb"
 
 	"github.com/adamf/wholesky/internal/world"
@@ -217,6 +219,67 @@ func (t *Tenant) ATS(ctx context.Context, m *ats.Message, env *aftn.Message) err
 	}
 	t.groundMu.Unlock()
 	return nil
+}
+
+// ATFM implements gateway.ATFMReceiver: the Network Manager's slot for one
+// of this carrier's flights. Operations files it against the flight; the
+// panel shows the CTOT, the regulation and its cause. A slot for a flight
+// that is not ours is counted and nothing more.
+func (t *Tenant) ATFM(ctx context.Context, m *atfm.Message, env *aftn.Message) error {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	t.atfmSeen[m.Title]++
+	fl := t.flightFromCallsign(m.ARCID)
+	if fl == "" {
+		return nil
+	}
+	date := ""
+	if len(m.EOBD) == 6 {
+		if d, err := time.Parse("020106", m.EOBD); err == nil {
+			date = strings.ToUpper(d.Format("02Jan"))
+		}
+	}
+	key := fl + "/" + date
+	switch m.Title {
+	case atfm.TitleSAM, atfm.TitleSRM:
+		ctot := m.CTOT
+		if m.NEWCTOT != "" {
+			ctot = m.NEWCTOT
+		}
+		line := "CTOT " + ctot
+		if len(m.REGUL) > 0 {
+			line += " · " + m.REGUL[0]
+		}
+		if m.REGCAUSE != nil {
+			line += " · " + m.REGCAUSE.String() + " " + atfm.CauseName(m.REGCAUSE.Code)
+		}
+		t.slots[key] = line
+	case atfm.TitleSLC:
+		t.slots[key] = "slot cancelled (" + m.REASON + ")"
+	case atfm.TitleFLS:
+		t.slots[key] = "suspended: " + m.COMMENT
+	case atfm.TitleDES:
+		delete(t.slots, key)
+	}
+	return nil
+}
+
+// slotFor is the slot line the panel shows for a flight, if one came.
+func (t *Tenant) slotFor(fl *dcs.Flight) string {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	return t.slots[normaliseFlight(fl.Flight)+"/"+fl.Date]
+}
+
+// SlotsHeard is how many slot messages of each title operations received.
+func (t *Tenant) SlotsHeard() map[string]int {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	out := map[string]int{}
+	for k, v := range t.atfmSeen {
+		out[string(k)] = v
+	}
+	return out
 }
 
 // flightFromCallsign turns the callsign air traffic services use (BAW117)

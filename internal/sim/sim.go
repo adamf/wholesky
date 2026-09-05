@@ -37,6 +37,7 @@ import (
 	"github.com/adamf/jetway/pkg/irops"
 	"github.com/adamf/jetway/pkg/mvt"
 
+	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fill"
 	"github.com/adamf/wholesky/internal/fleet"
@@ -203,7 +204,11 @@ type Sim struct {
 	fillSeed   int64
 	refill     bool
 	Manifest   *world.Manifest
-	Switch     *node.Node
+	// fate is the day's plan for every flight -- delays with their causes,
+	// slots, late aircraft, crews -- decided once from the schedule so every
+	// machine agrees; see internal/dayplan.
+	fate   *dayplan.Plan
+	Switch *node.Node
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
 	Switches []*node.Node
@@ -389,6 +394,10 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		return 0
 	}
 	s.Eye.WarpNow = s.clock.Warp
+	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
+	s.Eye.Weather = func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary) {
+		return s.fate.Weather, s.fate.Regulations, s.fate.Summary
+	}
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp
 	for _, g := range gdses {
@@ -412,6 +421,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		// The invariant check is federated the same way when a core is
 		// installed, and answers for this process's carriers otherwise.
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
+		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
 		mux.HandleFunc("GET /billing/", s.serveInvoice)
@@ -542,7 +552,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxMessages:           tenantMaxMsgs,
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
-			InboundDelay:          inboundDelay,
+			InboundDelay:          s.inboundDelay,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
 			Bus:                   tenantBus,
@@ -1278,8 +1288,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				if reg == "" {
 					reg = fmt.Sprintf("SKY%03d", regHash(f)%1000)
 				}
-				depDelay, arrDelay := flightDelays(f, day)
-				cancelled := f.Actual != nil && f.Actual.Cancelled
+				depDelay, arrDelay := s.flightDelays(f, day)
+				fate := s.fate.Of(f)
+				cancelled := fate.Cancelled
 				// The ground story of a departure, at the hours it really
 				// happens: reservations sends the airport the name list,
 				// the counter fills in waves, the amendments follow, the
@@ -1310,7 +1321,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 									s.log.Debug("marketing cancellation not sent", "flight", f.Marketing+f.MarketingNumber, "err", err)
 								}
 							}
-							if err := t.CancelFlight(ctx, f, day, "cancelled as recorded, code "+f.Actual.CancelCode); err != nil {
+							if err := t.CancelFlight(ctx, f, day, fate.Reason); err != nil {
 								s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
 							}
 							if s.ANSP != nil {
@@ -1322,6 +1333,17 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					}
 					if a := f.ArrMin; a > prev && a <= cur {
 						t.Forget(ctx, f, day)
+					}
+				}
+				// Flow management: two hours before off-block the Network
+				// Manager gives a regulated flight its slot.
+				if fate.CTOT > 0 && !cancelled && s.ANSP != nil {
+					if w := wrapMin(f.DepMin - slotBefore); w > prev && w <= cur {
+						go func(f world.Flight, fate dayplan.Flight) {
+							if err := s.ANSP.Slot(ctx, s.carriers[f.Carrier], f, day, fate); err != nil {
+								s.log.Debug("slot not sent", "flight", f.Carrier+f.Number, "err", err)
+							}
+						}(f, fate)
 					}
 				}
 				var due []groundEvent
@@ -1344,7 +1366,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				if len(due) > 0 {
 					go func(f world.Flight, due []groundEvent) {
 						for _, g := range due {
-							err := g.do(ctx, t, f, day)
+							err := g.do(ctx, s, t, f, day)
 							if err == nil || errors.Is(err, dcs.ErrFlightNotFound) {
 								// Not under control: the flight's list went out
 								// before this process started. Nothing to say.
@@ -1381,13 +1403,75 @@ func (s *Sim) FlyDay(ctx context.Context) {
 // replay, thirty days out on a synthetic one.
 func sellingDate(m *world.Manifest) time.Time { return world.SellingDate(m) }
 
-// flightDelays is what the day will do to a flight: the record's delays on
-// a replay, the deterministic model's on a synthetic day.
-func flightDelays(f world.Flight, day time.Time) (dep, arr int) {
+// slotBefore is when the Network Manager issues a regulated flight its
+// slot: two hours before off-block, the manual's SIT1.
+const slotBefore = 120
+
+// flightDelays is what the day will do to a flight: the plan's fate --
+// the record's delays on a replay, the model's with its slots, late
+// aircraft and crews on a synthetic day -- or, before the plan exists,
+// the record or the model alone.
+func (s *Sim) flightDelays(f world.Flight, day time.Time) (dep, arr int) {
+	if s.fate != nil {
+		if pf, ok := s.fate.Flights[dayplan.Key(f)]; ok {
+			return pf.DepDelay, pf.ArrDelay
+		}
+	}
 	if d, a, ok := f.RecordedDelay(); ok {
 		return d, a
 	}
 	return delayFor(f, day)
+}
+
+// Fate is the day's plan.
+func (s *Sim) Fate() *dayplan.Plan { return s.fate }
+
+// serveDayPlan is the day's weather, regulations and fate in numbers.
+func (s *Sim) serveDayPlan(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.fate == nil {
+		w.Write([]byte("{}")) //nolint:errcheck
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		"day": s.fate.Day, "replay": s.fate.Replay, "summary": s.fate.Summary,
+		"weather": s.fate.Weather, "regulations": s.fate.Regulations,
+	})
+}
+
+// fateLines are the panel's lines for a flight's fate: the delay in its
+// parts, and the crew.
+func fateLines(f dayplan.Flight) (delay, crew string) {
+	var parts []string
+	if f.Own > 0 {
+		parts = append(parts, fmt.Sprintf("carrier %dm", f.Own))
+	}
+	if f.ATFM > 0 {
+		parts = append(parts, fmt.Sprintf("slot %dm (%s)", f.ATFM, f.Regulation))
+	}
+	if f.LateAircraft > 0 {
+		parts = append(parts, fmt.Sprintf("late aircraft %dm", f.LateAircraft))
+	}
+	if f.Reserve {
+		parts = append(parts, fmt.Sprintf("reserve crew callout %dm", dayplan.ReserveCall))
+	}
+	if len(parts) > 0 {
+		delay = fmt.Sprintf("%dm: %s", f.DepDelay, strings.Join(parts, " · "))
+	}
+	if f.Duty > 0 {
+		crew = fmt.Sprintf("duty %d of the tail's day", f.Duty)
+		switch {
+		case f.Cancelled && strings.HasPrefix(f.Reason, "crew"):
+			crew += " · timed out, cancelled"
+		case f.Reserve:
+			crew += " · timed out, reserves called at the base"
+		case f.Extended:
+			crew += " · legal on the two-hour extension"
+		default:
+			crew += " · legal"
+		}
+	}
+	return delay, crew
 }
 
 // cancelledBefore is when a recorded cancellation is announced: two hours
@@ -1400,36 +1484,36 @@ const cancelledBefore = 120
 type groundEvent struct {
 	before int
 	what   string
-	do     func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error
+	do     func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error
 }
 
 // groundEvents is the timetable every departure follows. Check-in opens
 // three hours out and closes at forty-five minutes; boarding runs from
 // thirty; the door closes at ten.
 var groundEvents = []groundEvent{
-	{180, "pnl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{180, "pnl", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.SendPNL(ctx, f, day)
 	}},
-	{170, "pnr push", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{170, "pnr push", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		// A state's PNR regime hears the records before departure and
 		// again at the door; the international flight's first push goes
 		// once the name list has.
 		return t.PushPNRGOV(ctx, f, day)
 	}},
-	{150, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{150, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 150)
 	}},
-	{125, "retime", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{125, "retime", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		// The day's delay is known to the record (or the hash) from the
 		// start; the carrier learns it about two hours out, and announces
 		// the ones long enough to matter: forty-six minutes and up.
-		dep, arr := flightDelays(f, day)
+		dep, arr := s.flightDelays(f, day)
 		if dep < 46 {
 			return nil
 		}
 		return t.Retime(ctx, f, day, dep, arr)
 	}},
-	{110, "aircraft substitution", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{110, "aircraft substitution", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		// One flight in a hundred and fifty goes technical after check-in
 		// has opened: a smaller aircraft takes it, the cabin is re-seated,
 		// distribution hears the EQT.
@@ -1439,40 +1523,40 @@ var groundEvents = []groundEvent{
 		_, err := t.Substitute(ctx, f, day)
 		return err
 	}},
-	{120, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{120, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 120)
 	}},
-	{90, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{90, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 90)
 	}},
-	{60, "flight plan", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{60, "flight plan", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.FileFlightPlan(ctx, f, day)
 	}},
-	{60, "adl", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{60, "adl", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.SendADL(ctx, f, day)
 	}},
-	{60, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{60, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 60)
 	}},
-	{46, "check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{46, "check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CheckIn(ctx, f, day, 46)
 	}},
-	{45, "close check-in", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{45, "close check-in", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.CloseCheckIn(ctx, f, day)
 	}},
-	{30, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{30, "boarding", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.Board(ctx, f, day, 30)
 	}},
-	{20, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{20, "boarding", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.Board(ctx, f, day, 20)
 	}},
-	{14, "boarding", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{14, "boarding", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.Board(ctx, f, day, 14)
 	}},
-	{12, "bag report", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{12, "bag report", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.ReportBags(ctx, f, day)
 	}},
-	{10, "close", func(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) error {
+	{10, "close", func(ctx context.Context, s *Sim, t *host.Tenant, f world.Flight, day time.Time) error {
 		return t.Close(ctx, f, day)
 	}},
 }
@@ -2244,8 +2328,8 @@ func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Serv
 
 // inboundDelay is the arrival delay the flight day will give a flight, for
 // the connecting passengers who depend on it.
-func inboundDelay(f world.Flight, day time.Time) int {
-	_, arr := flightDelays(f, day)
+func (s *Sim) inboundDelay(f world.Flight, day time.Time) int {
+	_, arr := s.flightDelays(f, day)
 	return arr
 }
 
@@ -2262,6 +2346,12 @@ func (s *Sim) flightDCS(flight, board string) any {
 	sum, ok := t.Summarise(flight, board)
 	if !ok {
 		return nil
+	}
+	for _, f := range s.Flights[flight[:2]] {
+		if f.Carrier+f.Number == flight && f.From == board {
+			sum.Delay, sum.CrewDuty = fateLines(s.fate.Of(f))
+			break
+		}
 	}
 	return sum
 }

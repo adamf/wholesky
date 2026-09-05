@@ -972,6 +972,13 @@ type Summary struct {
 	// files raised when their passengers arrived without them, and the
 	// matches that forwarded them.
 	Traced string `json:"traced,omitempty"`
+	// Slot is the flow management slot operations heard for the flight;
+	// Delay is the day plan's account of the delay in its parts; Crew is
+	// the crew's legality on the day. The last two are the world's, set
+	// by the simulation, since the carrier does not hold the plan.
+	Slot     string `json:"slot,omitempty"`
+	Delay    string `json:"delay,omitempty"`
+	CrewDuty string `json:"crew_duty,omitempty"`
 
 	// Passengers is the manifest as departure control holds it, first
 	// names first; Total says how long the whole list is.
@@ -1041,7 +1048,7 @@ func (t *Tenant) Summarise(flight, board string) (*Summary, bool) {
 		OpenedAt: fl.OpenedAt, CheckInClosedAt: fl.CheckInClosedAt, ClosedAt: fl.ClosedAt,
 		Cancelled: fl.Cancelled, CancelReason: fl.CancelReason,
 		Parts: len(fl.PartsSeen), Complete: fl.Complete, ADLs: fl.ADLs,
-		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Rushed: t.rushedFor(fl), Traced: t.tracedFor(fl), Total: len(fl.Passengers),
+		AlertList: fl.Alerts, Load: fl.Load, Loadsheet: fl.Loadsheet, Bags: fl.Reconciliation, APIS: t.apisSentFor(fl), Substituted: t.substitutedFor(fl), PNRGOV: t.pnrgovSentFor(fl), Retimed: t.retimedFor(fl), Rushed: t.rushedFor(fl), Traced: t.tracedFor(fl), Slot: t.slotFor(fl), Total: len(fl.Passengers),
 		SSRs: map[string]int{}, Passengers: []PassengerRow{}}
 	listed, flying := map[string]int{}, map[string]int{}
 	for _, p := range fl.Passengers {

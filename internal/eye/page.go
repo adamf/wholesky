@@ -129,6 +129,7 @@ const LEGEND_SKY=
   "<span class='k' style='color:#5fd38d'>·</span> sparks — messages travelling to and from a carrier's home: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#e05a5a'>red</i> schedule<br>"+
   "<span class='k' style='color:#e8eef4'>◌</span> an expanding ring — an arrival<br>"+
   "<span class='k' style='color:#e05a5a'>◎</span> a red halo — a closed airport; its size counts real queue items: bookings an agent now has to rework<br>"+
+  "<span class='k' style='color:#8caadc'>◌</span> a dashed blue disc — a weather system in force; the airports under it take arrivals at the fraction shown, and the Network Manager slots every flight into them (SAM, a calculated take-off time)<br>"+
   "<b>click</b> an airport to close or reopen it · <b>click</b> an aircraft to see the bookings riding it · drag to spin, scroll to zoom";
 const LEGEND_NET=
   "<span class='x' onclick='hideLegend()'>✕</span><b>the logical web</b><br>"+
@@ -150,6 +151,11 @@ document.getElementById("legendlink").onclick=showLegend;
 let seen=false; try{ seen=!!localStorage.getItem("eye-legend-seen"); }catch(e){}
 if(!seen) addEventListener("load",showLegend);
 const closed=new Map(); // iata -> halo count
+let weather={cells:[],regulations:[],pos:0}; // the day plan's weather, refreshed each minute
+let simMin=-1; // the sim day's clock in minutes, from the stream
+const mmz=m=>String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(m%60).padStart(2,"0")+"z";
+function loadWeather(){ fetch("/eye/weather.json").then(r=>r.json()).then(w=>{ weather=w; }).catch(()=>{}); }
+loadWeather(); setInterval(loadWeather, 60000);
 const D=Math.PI/180;
 
 /* view state */
@@ -220,7 +226,7 @@ function connect(){
         qps.textContent=qpsEMA.toFixed(0);
       }
       prevMsgTotal=d.messages; prevMsgAt=nowW;
-      if(d.sim!==undefined) simclk.textContent=d.sim;
+      if(d.sim!==undefined){ simclk.textContent=d.sim; const mm=/^(\d+):(\d+)/.exec(String(d.sim)); if(mm) simMin=+mm[1]*60+ +mm[2]; }
       if(d.warp!==undefined) setWarpUI(d.warp);
       if(d.rates){ rates.clear(); for(const [p,n] of Object.entries(d.rates)) rates.set(p,n/2); }
       if(d.edges){
@@ -387,6 +393,9 @@ async function showFlight(p){
       if(dcs.retimed) h+="<div class='row' style='color:#e0b93c'>retimed: "+esc(dcs.retimed)+"</div>";
       if(dcs.rushed) h+="<div class='row'>bags: "+esc(dcs.rushed)+"</div>";
       if(dcs.traced) h+="<div class='row'>tracing: "+esc(dcs.traced)+"</div>";
+      if(dcs.slot) h+="<div class='row'>slot: "+esc(dcs.slot)+"</div>";
+      if(dcs.delay) h+="<div class='row'>delay: "+esc(dcs.delay)+"</div>";
+      if(dcs.crew_duty) h+="<div class='row'>crew: "+esc(dcs.crew_duty)+"</div>";
       if(dcs.apis) h+="<div class='row'>advance passenger information: "+dcs.apis+" travellers sent to the border agency at the door</div>";
       if(dcs.pnrgov) h+="<div class='row'>PNR push: "+dcs.pnrgov+" records to the state's passenger information unit</div>";
       if(dcs.loadsheet) h+="<div class='row'><a class='tog' onclick=\"const x=this.parentNode.nextSibling;x.style.display=x.style.display==='none'?'block':'none'\">loadsheet</a></div><pre style='display:none'>"+esc(dcs.loadsheet)+"</pre>";
@@ -514,6 +523,23 @@ function draw(){
     const r=Math.min(3.5,0.8+Math.log1p(a.n)/2.6);
     cx.fillStyle="#26364a"; cx.beginPath(); cx.arc(p[0],p[1],r,0,7); cx.fill();
     if(a.n>140&&zoom>0.9){ cx.fillStyle="#4a5b6d"; cx.font="10px ui-monospace"; cx.fillText(a.iata,p[0]+5,p[1]+3); }
+  }
+
+  /* weather: the day plan's cells in force now, and the airports they regulate */
+  if(globe&&weather.cells){
+    const pos=simMin>=0?simMin:weather.pos;
+    for(const c of weather.cells){
+      const active=pos>=c.start&&pos<c.end, soon=!active&&pos<c.start&&c.start-pos<180;
+      if(!active&&!soon) continue;
+      const p=proj(c.lat,c.lon); if(!p[2]) continue;
+      const q=proj(c.lat+c.radius_km/111,c.lon); const r=Math.max(8,Math.hypot(q[0]-p[0],q[1]-p[1]));
+      cx.fillStyle=active?"rgba(120,150,200,.13)":"rgba(120,150,200,.05)";
+      cx.beginPath(); cx.arc(p[0],p[1],r,0,7); cx.fill();
+      cx.strokeStyle=active?"rgba(140,170,220,.55)":"rgba(140,170,220,.25)"; cx.lineWidth=1; cx.setLineDash([4,4]);
+      cx.beginPath(); cx.arc(p[0],p[1],r,0,7); cx.stroke(); cx.setLineDash([]);
+      cx.fillStyle="rgba(160,185,225,.9)"; cx.font="11px ui-monospace";
+      cx.fillText("WX "+c.name+" · arrivals ×"+c.factor.toFixed(2)+(active?"":" from "+mmz(c.start)), p[0]-r*0.7, p[1]-r-6);
+    }
   }
 
   /* closed airports: pulsing rings sized by their queue halo */

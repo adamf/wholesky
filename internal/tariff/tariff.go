@@ -13,6 +13,7 @@
 package tariff
 
 import (
+	"sync"
 	"hash/fnv"
 	"math"
 	"strings"
@@ -64,6 +65,36 @@ func Ladder() []string {
 type Synthetic struct {
 	km       map[string]int // carrier/from/to -> great-circle km
 	airports []string
+	// mult is a carrier's pricing decision over its filed ladder: 1.0 is
+	// the filing, 0.9 a sale, 1.2 a premium. Someone running the carrier
+	// moves it; the autopilot leaves it alone.
+	mu   sync.RWMutex
+	mult map[string]float64
+}
+
+// SetMultiplier scales every fare a carrier files, from now on; 0 or a
+// negative value restores the filing.
+func (t *Synthetic) SetMultiplier(carrier string, mult float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.mult == nil {
+		t.mult = map[string]float64{}
+	}
+	if mult <= 0 {
+		delete(t.mult, strings.ToUpper(carrier))
+		return
+	}
+	t.mult[strings.ToUpper(carrier)] = mult
+}
+
+// Multiplier is a carrier's current pricing multiplier, 1 when unset.
+func (t *Synthetic) Multiplier(carrier string) float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if m, ok := t.mult[strings.ToUpper(carrier)]; ok {
+		return m
+	}
+	return 1
 }
 
 // FromManifest builds the tariff for every market a carrier flies.
@@ -104,7 +135,7 @@ func (t *Synthetic) Fares(carrier, origin, destination string) []fare.Fare {
 	if !ok {
 		return nil
 	}
-	full := fullFare(strings.ToUpper(carrier), km)
+	full := int64(float64(fullFare(strings.ToUpper(carrier), km)) * t.Multiplier(carrier))
 	out := make([]fare.Fare, 0, len(ladder))
 	for _, s := range ladder {
 		out = append(out, fare.Fare{

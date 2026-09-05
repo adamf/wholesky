@@ -152,10 +152,19 @@ boarding pass and timatic are not.
 
 ## Operations, mostly off the wire
 
-**Crew.** No one is flying the aircraft. Crew scheduling, tracking, legality
-(duty limits), and the disruption knock-on when a crew times out are the
-largest single cause of a cancellation after weather. A crew model would
-make the recorded day's delays propagate for the right reasons.
+**Crew.** Done as far as legality goes (jetway v0.1.85 `pkg/crew`,
+wholesky `internal/dayplan`): 14 CFR Part 117's Tables A and B, the
+two-hour extension and the ten-hour rest, transcribed and tested value by
+value. Every tail's rotation is cut into duties as scheduled -- a crew
+flies as many legs as the table allows, then a fresh crew takes the
+aircraft -- and each duty is checked again with the day's delays: one that
+fits only on the extension is noted on the panel, one that does not fit is
+rescued by a reserve crew when the leg leaves the carrier's base (ninety
+minutes more delay) and cancelled for crew, code A, when it does not. On
+the recorded day the duties are reported and nothing new is cancelled.
+Not done: pairings across days, deadheads, rest at outstations, cabin crew
+as distinct from flight crew, and any regime but Part 117 (the rules are a
+value; EASA ORO.FTL would be another table).
 
 **Maintenance and aircraft rotation.** Tails are rotated through the
 schedule; nothing goes technical. An AOG (aircraft on ground) is a
@@ -169,11 +178,25 @@ performance, produces the operational flight plan the crew signs, and
 the loadsheet's fuel figure comes from it. The link to ATC exists
 (`pkg/ats` over `pkg/aftn`); the planning does not.
 
-**Weather and air traffic flow.** Delays are drawn from the record. A
-weather system that closes a region, ground stops and ground delay
-programs (the FAA's CDM messages), and the slot swapping airlines do under
-them, would make the delay model causal and give IROPS the multi-flight
-cascades it exists for.
+**Weather and air traffic flow.** Done in the European form (jetway
+v0.1.85 `pkg/atfm`, wholesky `internal/dayplan`). The synthetic day draws
+two to four weather systems from the date -- a few hundred kilometres
+across a busy airport for three to six hours, arrival rates cut to between
+half and three quarters -- and the Network Manager regulates every airport
+under them: arrivals in the window are held to the reduced rate first come
+first served, and each flight held gets a slot two hours before off-block,
+a SAM with its calculated take-off time, the regulation's name and the
+cause (WA 84, weather at destination) in ADEXP to EUROCONTROL's public
+ATFCM Users Manual, tested against the manual's own examples. The carrier's
+operations centre hears it through jetway's Ground seam and the panel
+shows the CTOT. A late aircraft's delay passes to its next leg after the
+turn (late aircraft, code 93), so the day's delays now chain. On the
+recorded day the record's NAS and weather minutes become the slots that
+explain them. The globe draws the cells in force. Not done: the FAA's CDM
+messages and ground stops, the slot swapping and improvement dialogue
+(SMM, REA, SIP are parsed and built, nobody sends them yet), en-route
+regulations, and weather that closes a region outright rather than slowing
+it.
 
 **Airport systems.** Common-use check-in (CUPPS), gate management, FIDS,
 stand allocation, de-icing. The airport is a set of addresses today. Gate

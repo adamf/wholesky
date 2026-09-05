@@ -438,7 +438,7 @@ watch and each flight carries ten times the bookings. What it would take
 to fly real loads is worked out in [docs/full-throttle.md](docs/full-throttle.md).
 
 The pattern that keeps paying: every time the world gets bigger, it finds
-real bugs in Jetway — eighty-four releases so far, each fix landed upstream with
+real bugs in Jetway — eighty-five releases so far, each fix landed upstream with
 a regression test that was watched to fail first. Not yet: filling a
 recorded day to its real passenger load, weather systems that close regions
 rather than airports, and booking curves with real seasonality. The
