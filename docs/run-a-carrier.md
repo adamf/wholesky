@@ -237,9 +237,18 @@ a federated core reaches its peers: the distribution systems' machines
 take the other world's carriers and flights to sell, the regions' tenants
 copy their movements to the other world's globe.
 
-Still missing: a timetable that drives your node's ground story for you if
-you want the autopilot's help. None of it is a new protocol; all of it is
-jetway doing what it does across a longer wire.
+If you would rather watch than work the counter, tell the world where your
+node answers: `POST /carrier/BA/node {"url": "http://your-node:8080"}` with
+the seat's token. The world then keeps your ground story's hours the way it
+keeps its own tenants' -- three hours before each departure it asks your
+node's desk for the name list (`POST /api/ops/flight/BA0117/26NOV/LHR/pnl`,
+jetway v0.1.93), and forty-five minutes out for the rest (`.../run`: every
+passenger accepted with a bag, the counter closed, the cabin boarded, the
+door closed with the load, the closure's messages sent). Forget the URL
+(`{"url": ""}`) and the hours are yours again.
+
+None of it is a new protocol; all of it is jetway doing what it does
+across a longer wire.
 
 ## Bring your own jetway
 

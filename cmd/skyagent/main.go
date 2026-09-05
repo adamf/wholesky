@@ -120,6 +120,11 @@ type decideArgs struct {
 	Option  string `json:"option" jsonschema:"one of the decision's option keys"`
 }
 
+type nodeArgs struct {
+	Carrier string `json:"carrier,omitempty"`
+	URL     string `json:"url" jsonschema:"where the node's console answers, e.g. http://localhost:8080; empty forgets it"`
+}
+
 type actArgs struct {
 	Carrier    string  `json:"carrier,omitempty"`
 	Kind       string  `json:"kind" jsonschema:"cancel, retime, substitute, class, fares, ready or reserves"`
@@ -276,6 +281,18 @@ func newServer(s *seat) *mcp.Server {
 				return nil, nil, err
 			}
 			out, err := s.call(ctx, "POST", "/carrier/"+code+"/unclaim", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "register_node", Description: "Tell the world where your own jetway node answers HTTP (after claim). The world then keeps your carrier's ground-story hours: the name list three hours before each departure, the counter, the door and the load at forty-five minutes. An empty url forgets it."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a nodeArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "POST", "/carrier/"+code+"/node", map[string]string{"url": a.URL})
 			if err != nil {
 				return nil, nil, err
 			}

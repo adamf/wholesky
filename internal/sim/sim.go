@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -305,7 +306,10 @@ type Sim struct {
 	externalMu    sync.RWMutex
 	// On a machine without switches: where each carrier's switch is, the
 	// core's URL, and the addresses the internet dials, from the welcome.
-	switchOf     map[string]string
+	switchOf map[string]string
+	// nodeURL is where an external carrier's own node answers HTTP, when
+	// its seat gave one, so the world can keep its ground story's hours.
+	nodeURL      map[string]string
 	coreURL      string
 	external     map[string]bool
 	linkSecret   string
@@ -559,6 +563,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /world/manifest.json", s.serveManifest)
 		mux.HandleFunc("POST /federation/world", s.serveJoinWorld)
 		mux.HandleFunc("POST /carrier/{carrier}/unclaim", s.serveClaim)
+		mux.HandleFunc("POST /carrier/{carrier}/node", s.serveNode)
 		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
 		s.airlineSrv.Routes(mux)
@@ -1480,6 +1485,26 @@ func (s *Sim) FlyDay(ctx context.Context) {
 						}(f, fate)
 					}
 				}
+				if external && !cancelled {
+					// The node keeps the carrier's side of the day; where its
+					// seat gave the world its URL, the world keeps the hours.
+					for _, step := range []struct {
+						before int
+						name   string
+					}{{180, "pnl"}, {45, "run"}} {
+						w := f.DepMin - step.before
+						if w < 0 {
+							w += 24 * 60
+						}
+						if w > prev && w <= cur && s.NodeURL(code) != "" {
+							go func(f world.Flight, step string) {
+								if err := s.driveExternal(ctx, f, day, step); err != nil {
+									s.log.Debug("external node did not take the step", "flight", f.Carrier+f.Number, "step", step, "err", err)
+								}
+							}(f, step.name)
+						}
+					}
+				}
 				var due []groundEvent
 				for _, g := range groundEvents {
 					if external || (cancelled && g.before < cancelledBefore) {
@@ -1556,6 +1581,86 @@ func (s *Sim) flightDelays(f world.Flight, day time.Time) (dep, arr int) {
 		return d, a
 	}
 	return delayFor(f, day)
+}
+
+// SetNodeURL remembers where an external carrier's node answers HTTP; ""
+// forgets it. With one, the world drives the node's ground story on the
+// timetable its own tenants keep: the name list three hours out, the
+// counter, the door and the load at forty-five minutes.
+func (s *Sim) SetNodeURL(code, url string) {
+	s.externalMu.Lock()
+	defer s.externalMu.Unlock()
+	if s.nodeURL == nil {
+		s.nodeURL = map[string]string{}
+	}
+	code = strings.ToUpper(code)
+	if url == "" {
+		delete(s.nodeURL, code)
+		return
+	}
+	s.nodeURL[code] = strings.TrimRight(url, "/")
+}
+
+// NodeURL is an external carrier's node, if its seat gave one.
+func (s *Sim) NodeURL(code string) string {
+	s.externalMu.RLock()
+	defer s.externalMu.RUnlock()
+	return s.nodeURL[strings.ToUpper(code)]
+}
+
+// driveExternal asks an external carrier's node to run one step of its
+// ground story: "pnl" sends the name list, "run" does the rest.
+func (s *Sim) driveExternal(ctx context.Context, f world.Flight, day time.Time, step string) error {
+	u := s.NodeURL(f.Carrier)
+	if u == "" {
+		return nil
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	path := fmt.Sprintf("%s/api/ops/flight/%s%s/%s/%s/%s", u, f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, step)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("node answered %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+// serveNode is POST /carrier/{XX}/node: the seat naming its node's URL.
+func (s *Sim) serveNode(w http.ResponseWriter, r *http.Request) {
+	code := strings.ToUpper(r.PathValue("carrier"))
+	if _, local := s.Tenants[code]; !local && s.ConsoleProxy != nil {
+		if s.ConsoleProxy(w, r, code) {
+			return
+		}
+	}
+	token := r.Header.Get("X-Seat-Token")
+	w.Header().Set("Content-Type", "application/json")
+	if s.Airline == nil || !s.Airline.Authorised(code, token) {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "take the seat first; naming a node needs its token"}) //nolint:errcheck
+		return
+	}
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed request"}) //nolint:errcheck
+		return
+	}
+	s.SetNodeURL(code, req.URL)
+	if s.Airline != nil {
+		s.Airline.Emit(code, "seat", code+"'s node is at "+req.URL+"; the world keeps its ground story's hours", nil)
+	}
+	json.NewEncoder(w).Encode(map[string]string{"ok": "node registered", "url": req.URL}) //nolint:errcheck
 }
 
 // runsCarrier says this machine hosts the carrier's tenant.
@@ -1796,6 +1901,7 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 			"The ops block makes your node a carrier: departure control opens your flights from your own name lists, the aircraft's OOOI reports from the world's datalink become the MVTs the globe draws, the towers' and the Network Manager's messages are filed. The ground story -- sending the PNL, checking in, closing the door -- is yours to drive from the console or the API.",
 			"The schedule is the SSIM file; load it into whatever you run, or read it with jetway's pkg/ssim.",
 			"The token is this world's for this carrier and changes when the world restarts unless it was booted with -link-secret.",
+			"Would rather watch than work the counter? POST /carrier/" + code + "/node {\"url\": \"http://your-node:8080\"} with the seat's token and the world keeps your ground story's hours: the name list three hours out, the counter, the door and the load at forty-five minutes.",
 		}}, nil
 }
 

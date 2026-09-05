@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,7 @@ func TestAJetwayNodeFromThePackFliesTheCarrier(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	n, err := node.Build(ctx, cfg, log, node.Options{LocatorSecret: []byte("byo"), SkipConsole: true})
+	n, err := node.Build(ctx, cfg, log, node.Options{LocatorSecret: []byte("byo")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +90,27 @@ func TestAJetwayNodeFromThePackFliesTheCarrier(t *testing.T) {
 			t.Fatalf("the booking %s never reached the node's book; %d messages seen", res.PNR.RecordLocator, len(msgs))
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The seat names its node, and the world keeps the node's hours: the
+	// name list step opens the flight at the node's own station from the
+	// node's own book; the run step closes the door with the load.
+	nodeAPI := httptest.NewServer(n.API.Handler())
+	defer nodeAPI.Close()
+	s.SetNodeURL(code, nodeAPI.URL)
+	if err := s.driveExternal(ctx, f, s.BookingDate, "pnl"); err != nil {
+		t.Fatalf("pnl step: %v", err)
+	}
+	fl, ok := n.Ops.Station.Find(f.Carrier+f.Number, strings.ToUpper(s.BookingDate.Format("02Jan")))
+	if !ok || len(fl.Passengers) < 1 {
+		t.Fatalf("the node's station did not open the flight from its own list: %v", ok)
+	}
+	if err := s.driveExternal(ctx, f, s.BookingDate, "run"); err != nil {
+		t.Fatalf("run step: %v", err)
+	}
+	fl, _ = n.Ops.Station.Find(f.Carrier+f.Number, strings.ToUpper(s.BookingDate.Format("02Jan")))
+	if fl == nil || fl.ClosedAt == nil {
+		t.Fatalf("the node did not close the door: %+v", fl)
 	}
 
 	// The scorecard of a carrier whose book is not here reads the sale
