@@ -257,6 +257,30 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "claim", Description: "Hand the carrier you hold to your own jetway node: the world severs its tenant and returns the start pack (jetway YAML with the switch address and link token, the SSIM schedule). Run jetwayd with the YAML and your node is the carrier. 'unclaim' gives it back."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "POST", "/carrier/"+code+"/claim", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "unclaim", Description: "Give a claimed carrier back to the world: its tenant dials the switch again and the day drives it."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "POST", "/carrier/"+code+"/unclaim", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "weather", Description: "The day's weather systems and the Network Manager's regulations: which airports are slowed, when, and by how much."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
 			out, err := s.call(ctx, "GET", "/dayplan.json", nil)

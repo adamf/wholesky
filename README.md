@@ -346,9 +346,10 @@ The same thing for agents: the JSON API under `/carrier/<code>/…`, and
 can start pointed at a world. The design, the API and the road to a
 federated multiplayer sky (bring your own jetway, worlds trunked to worlds)
 are in [docs/run-a-carrier.md](docs/run-a-carrier.md). The first step of
-that road works: `skyd -external BA` runs the world without BA's tenant, and
-`GET /carrier/BA/pack` hands out the jetway configuration, link token and
-SSIM schedule for your own `jetwayd` to dial in as BA.
+that road works: claim a carrier you hold (`POST /carrier/BA/claim`) and the
+world severs its own tenant and hands you the jetway configuration, link
+token and SSIM schedule for your own `jetwayd` to dial in as BA -- on the
+demo, over the internet, at `wholesky-demo.fly.dev:7000`.
 
 ## Status
 

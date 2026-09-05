@@ -105,6 +105,11 @@ type Options struct {
 	External     []string
 	PublicSwitch string
 	LinkSecret   string
+	// LinkPort, when set, is the port the first switch's subscriber
+	// listener binds (the second switch's is one higher), so an address
+	// can be published for nodes on the internet to dial; zero picks a
+	// free port.
+	LinkPort int
 	// DecisionWindow is how long a seat has to answer a decision before the
 	// autopilot's default, in real time; zero is forty-five seconds.
 	DecisionWindow time.Duration
@@ -237,6 +242,7 @@ type Sim struct {
 	scoreAt      time.Time
 	revenueMu    sync.RWMutex
 	revenueFeed  map[string]int64
+	externalMu   sync.RWMutex
 	external     map[string]bool
 	linkSecret   string
 	publicSwitch string
@@ -471,6 +477,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 		mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
+		mux.HandleFunc("POST /carrier/{carrier}/claim", s.serveClaim)
+		mux.HandleFunc("POST /carrier/{carrier}/unclaim", s.serveClaim)
 		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
 		s.airlineSrv.Routes(mux)
@@ -1339,6 +1347,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			prev = cur - maxCatchUp
 		}
 		for code, t := range s.Tenants {
+			if s.External(code) {
+				continue // someone's own node flies this carrier now
+			}
 			for _, f := range s.Flights[code] {
 				if s.isClosed(f.From, f.To) {
 					continue
@@ -1476,6 +1487,74 @@ func (s *Sim) proxyCarrier(w http.ResponseWriter, r *http.Request, code string) 
 	return s.ConsoleProxy(w, r, code)
 }
 
+// External says whether a carrier is run by someone's own node now:
+// flagged at boot, or claimed since.
+func (s *Sim) External(code string) bool {
+	s.externalMu.RLock()
+	defer s.externalMu.RUnlock()
+	return s.external[strings.ToUpper(code)]
+}
+
+// Externals is every carrier run by someone's own node.
+func (s *Sim) Externals() []string {
+	s.externalMu.RLock()
+	defer s.externalMu.RUnlock()
+	var out []string
+	for c := range s.external {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Claim hands a carrier this world runs to someone's own node: the tenant
+// is severed from the switch and stops being driven, every switch demands
+// the carrier's token on the hello from now on, and the start pack comes
+// back. The seat that holds the carrier is the one that may claim it.
+func (s *Sim) Claim(code string) (*StartPack, error) {
+	code = strings.ToUpper(code)
+	t, ok := s.Tenants[code]
+	if !ok {
+		if s.External(code) {
+			return s.Pack(code)
+		}
+		return nil, fmt.Errorf("this machine does not run %s", code)
+	}
+	s.externalMu.Lock()
+	s.external[code] = true
+	s.externalMu.Unlock()
+	t.Sever()
+	token := linkToken(s.linkSecret, code)
+	for _, sw := range s.Switches {
+		sw.SetPeerToken(code, token)
+	}
+	if s.Airline != nil {
+		s.Airline.Emit(code, "seat", code+" handed to an external node: the tenant is severed, the switch wants the token", nil)
+	}
+	return s.Pack(code)
+}
+
+// Unclaim gives a claimed carrier back to the world: the token is cleared,
+// the tenant dials the switch again and the day drives it as before.
+func (s *Sim) Unclaim(code string) error {
+	code = strings.ToUpper(code)
+	t, ok := s.Tenants[code]
+	if !ok {
+		return fmt.Errorf("%s has no tenant on this machine to give it back to", code)
+	}
+	s.externalMu.Lock()
+	delete(s.external, code)
+	s.externalMu.Unlock()
+	for _, sw := range s.Switches {
+		sw.SetPeerToken(code, "")
+	}
+	t.Restore()
+	if s.Airline != nil {
+		s.Airline.Emit(code, "seat", code+" taken back by the world: the tenant is dialling the switch again", nil)
+	}
+	return nil
+}
+
 // isExternal says a carrier is run by someone's own node, not a tenant.
 func isExternal(opts Options, designator string) bool {
 	for _, d := range opts.External {
@@ -1531,14 +1610,26 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 	if !ok {
 		return nil, fmt.Errorf("no carrier %s in this world", code)
 	}
-	if !s.external[code] {
-		return nil, fmt.Errorf("%s is run by this world; boot with -external %s to hand it to your own node", code, code)
+	if !s.External(code) {
+		return nil, fmt.Errorf("%s is run by this world; claim it (POST /carrier/%s/claim with the seat's token) or boot with -external %s", code, code, code)
 	}
-	switchAddr := s.publicSwitch
-	if switchAddr == "" && s.Switch != nil {
+	// The node dials the carrier's home switch: the one that accepts its
+	// link and routes its traffic.
+	home := 0
+	if len(s.Switches) > 1 {
+		home = homeSwitch(code, len(s.Switches))
+	}
+	switchAddr := ""
+	if pub := strings.Split(s.publicSwitch, ","); len(pub) > home && strings.TrimSpace(pub[home]) != "" {
+		switchAddr = strings.TrimSpace(pub[home])
+	} else if pub[0] != "" {
+		switchAddr = strings.TrimSpace(pub[0])
+	} else if home < len(s.Switches) && s.Switches[home] != nil {
+		switchAddr = s.Switches[home].Addr("link-net")
+	} else if s.Switch != nil {
 		switchAddr = s.Switch.Addr("link-net")
 	}
-	firstDesignator, firstTTY := switchIdentity(0)
+	firstDesignator, firstTTY := switchIdentity(home)
 	cfg := config.Default()
 	cfg.Identity = config.Identity{Designator: code, TTYAddress: c.TTYAddress, Name: c.Name}
 	cfg.Store = config.Store{Backend: "mem"}
@@ -1572,6 +1663,45 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 			"The schedule is the SSIM file; load it into whatever you run, or read it with jetway's pkg/ssim.",
 			"The token is this world's for this carrier and changes when the world restarts unless it was booted with -link-secret.",
 		}}, nil
+}
+
+// serveClaim is POST /carrier/{XX}/claim and /unclaim: the seat that holds
+// the carrier hands it to its own node, or gives it back. Where this
+// machine does not run the carrier the request is forwarded to the one
+// that does.
+func (s *Sim) serveClaim(w http.ResponseWriter, r *http.Request) {
+	code := strings.ToUpper(r.PathValue("carrier"))
+	if _, local := s.Tenants[code]; !local && !s.External(code) && s.ConsoleProxy != nil {
+		if s.ConsoleProxy(w, r, code) {
+			return
+		}
+	}
+	token := r.Header.Get("X-Seat-Token")
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if s.Airline == nil || !s.Airline.Authorised(code, token) {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "take the seat first; claiming needs its token"}) //nolint:errcheck
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/unclaim") {
+		if err := s.Unclaim(code); err != nil {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"ok": "the world flies " + code + " again"}) //nolint:errcheck
+		return
+	}
+	pack, err := s.Claim(code)
+	if err != nil {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+		return
+	}
+	json.NewEncoder(w).Encode(pack) //nolint:errcheck
 }
 
 // servePack hands out a carrier's start pack.
@@ -2091,8 +2221,12 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 	if bind == "" {
 		bind = "127.0.0.1"
 	}
+	linkPort := "0"
+	if opts.LinkPort > 0 {
+		linkPort = fmt.Sprint(opts.LinkPort + k)
+	}
 	cfg.Ingress = append(cfg.Ingress, config.Ingress{
-		Name: "link-net", Type: "tcp", Addr: net.JoinHostPort(bind, "0"),
+		Name: "link-net", Type: "tcp", Addr: net.JoinHostPort(bind, linkPort),
 		Identify: config.Identify{ByHello: true},
 	})
 	addPeer := func(designator, tty, format string, home int) {

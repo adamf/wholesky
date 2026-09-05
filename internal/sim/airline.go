@@ -55,13 +55,26 @@ func (w seatWorld) Clock() (float64, int) {
 func (w seatWorld) Carriers() []airline.CarrierInfo {
 	scores := w.s.scores()
 	var out []airline.CarrierInfo
+	codes := map[string]bool{}
 	for code := range w.s.Tenants {
+		codes[code] = true
+	}
+	for _, code := range w.s.Externals() {
+		if _, known := w.s.carriers[code]; known {
+			codes[code] = true
+		}
+	}
+	for code := range codes {
 		c := w.s.carriers[code]
 		sc, ok := scores[code]
 		if !ok {
 			sc = w.score(code)
 		}
-		out = append(out, airline.CarrierInfo{Code: code, Name: c.Name, Hub: c.Hub, Flights: len(w.s.Flights[code]), Score: sc})
+		info := airline.CarrierInfo{Code: code, Name: c.Name, Hub: c.Hub, Flights: len(w.s.Flights[code]), Score: sc}
+		if w.s.External(code) {
+			info.External = true
+		}
+		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
@@ -80,6 +93,11 @@ func (s *Sim) scores() map[string]airline.Scorecard {
 	for code := range s.Tenants {
 		out[code] = w.score(code)
 	}
+	for _, code := range s.Externals() {
+		if _, ok := out[code]; !ok {
+			out[code] = w.score(code)
+		}
+	}
 	s.scoreCache, s.scoreAt = out, time.Now()
 	return out
 }
@@ -87,7 +105,7 @@ func (s *Sim) scores() map[string]airline.Scorecard {
 // flightStatus is where a flight is in its day.
 func (w seatWorld) flightStatus(f world.Flight, fate dayplan.Flight, pos float64) string {
 	t := w.s.Tenants[f.Carrier]
-	if t != nil && t.Cancelled(f, w.s.BookingDate) {
+	if t != nil && !w.s.External(f.Carrier) && t.Cancelled(f, w.s.BookingDate) {
 		return "cancelled"
 	}
 	if fate.Cancelled {

@@ -168,24 +168,45 @@ over `/federation/register`, and each world's carriers can sell and fly into
 the other's airports. Then the regions are continents, the operators are
 people, and the sky is whoever showed up.
 
-Steps 1 and 2 are done. `skyd -external BA` boots the world without BA's
-tenant and gives BA's switch peer a token; `GET /carrier/BA/pack` returns
-the jetway configuration (YAML, ready for `jetwayd -config`), the token, the
-switch address, the SSIM file and the notes. The token is jetway v0.1.86's
-link token: a hello that names a peer with a token must present it or the
-switch refuses the link before any message. `-link-secret` keeps the tokens
-stable across restarts; `-public-switch host:port` names the address a
-node on the internet dials when it is not the listener's own.
+Steps 1 to 3 work, and on the demo. Two ways in:
 
-Still missing: the demo exposing its switch port on the internet (a Fly TCP
-service; today the pack's switch address is reachable only inside the
-demo's network), the scorecard reading an external carrier from the
-switch's ledger rather than the tenant's (an external carrier has no
-tenant, so the lobby does not yet show it), and the manifest exchange
-between worlds. None of it is a new protocol; all of it is jetway doing
-what it does across a longer wire.
+- **Claim a running carrier.** Take the seat, then
+  `POST /carrier/BA/claim` with the seat's token. The world severs BA's
+  tenant from the switch, every switch starts demanding BA's link token on
+  the hello (jetway v0.1.87 sets it at runtime and cuts the old link), and
+  the start pack comes back: the jetway configuration (YAML, ready for
+  `jetwayd -config`), the token, the switch address, BA's schedule as an
+  SSIM file, and the notes. `POST /carrier/BA/unclaim` gives it back.
+- **Boot without it.** `skyd -external BA` never boots BA's tenant.
 
-## Bring your own jetway, locally
+The demo's switches listen on the internet: `wholesky-demo.fly.dev:7000`
+(the first switch) and `:7001` (the second); the pack names the one that
+homes your carrier. The link secret is a Fly secret, so a token survives a
+restart. jetway v0.1.86's token check means a node that names a carrier
+without its token is refused before any message.
+
+The whole path is tested end to end in `internal/sim/byo_test.go`: a
+jetway node built from nothing but the pack's YAML dials the small world's
+switch, comes up as the carrier, and a seat the world's distribution
+system sells on one of its flights lands in the node's own book.
+
+Still missing: an external carrier's scorecard from the switch's ledger
+(the lobby shows a claimed carrier, but its flights and passengers are
+now in your book, not the world's), the world's ground story driven from
+your DCS (your PNL is the one the airport waits for), and the manifest
+exchange between worlds. None of it is a new protocol; all of it is jetway
+doing what it does across a longer wire.
+
+## Bring your own jetway
+
+Against the demo, with the seat's token from `/ops/`:
+
+```sh
+curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/BA/claim | jq -r .config_yaml > ba.yaml
+go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml     # or `skyagent`'s claim tool
+```
+
+Locally:
 
 ```sh
 go run ./cmd/skyd -world /tmp/world.json -external BA -link-secret dev -console :8080 &

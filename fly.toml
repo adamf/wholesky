@@ -27,7 +27,7 @@ primary_region = "lhr"
 # purged when the simulated day wraps. In memory, 259 reservations systems'
 # records were what the region machines ran out of.
 [processes]
-  core = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role core -switches 2 -carriers 0 -warp 6 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -advertise core.process.wholesky-demo.internal -link-bind :: -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
+  core = "-world /etc/wholesky/whole.json -memlimit 3200MiB -gds-list 1G,1S,1A -role core -switches 2 -carriers 0 -warp 6 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -advertise core.process.wholesky-demo.internal -link-bind :: -link-port 7000 -public-switch wholesky-demo.fly.dev:7000,wholesky-demo.fly.dev:7001 -max-messages 2000 -max-records 4000 -stats-snapshot /tmp/wholesky-stats.json"
   gds1g = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 1 -role gds -gds-designator 1G -carriers 0 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1s = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 2 -role gds -gds-designator 1S -carriers 0 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
   gds1a = "-world /etc/wholesky/whole.json -memlimit 3200MiB -seed 3 -role gds -gds-designator 1A -carriers 0 -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 -core-url http://core.process.wholesky-demo.internal:8080 -demand 1170 -max-messages 2000 -max-records 8000"
@@ -58,6 +58,29 @@ primary_region = "lhr"
     method = "GET"
     timeout = "5s"
     path = "/healthz"
+
+# The switches' subscriber listeners, on the internet: a node running one of
+# the world's carriers (docs/run-a-carrier.md, bring your own jetway) dials
+# 7000 for the first switch or 7001 for the second, with the token from its
+# start pack. The link secret comes from the SKYD_LINK_SECRET secret so the
+# tokens survive a restart.
+[[services]]
+  processes = ["core"]
+  protocol = "tcp"
+  internal_port = 7000
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  [[services.ports]]
+    port = 7000
+
+[[services]]
+  processes = ["core"]
+  protocol = "tcp"
+  internal_port = 7001
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  [[services.ports]]
+    port = 7001
 
 # The whole sky idles around 1.1GB and spends CPU on the morning banks; two
 # shared cores and 2GB carry it at warp 60.

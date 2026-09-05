@@ -60,6 +60,7 @@ func run() error {
 		avsEvery   = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
 		external   = flag.String("external", "", "carriers this world does not run itself, comma-separated: someone's own jetway node dials in as each, with the token from /carrier/XX/pack")
 		pubSwitch  = flag.String("public-switch", "", "the switch address external nodes dial, when not the listener's own (host:port)")
+		linkPort   = flag.Int("link-port", 0, "port the first switch's subscriber listener binds (the second's is one higher); 0 picks a free port")
 		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
 		decision   = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
 		gdsCount   = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
@@ -136,7 +137,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

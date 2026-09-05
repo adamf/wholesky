@@ -64,7 +64,7 @@ func TestToolsRunACarrierOverHTTP(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, want := range []string{"lobby", "take_seat", "carrier_state", "inbox", "set_department", "decide", "act", "tape", "weather", "release_seat", "pack"} {
+	for _, want := range []string{"lobby", "take_seat", "carrier_state", "inbox", "set_department", "decide", "act", "tape", "weather", "release_seat", "pack", "claim", "unclaim"} {
 		if !names[want] {
 			t.Errorf("no tool %s in %v", want, names)
 		}

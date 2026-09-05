@@ -19,6 +19,9 @@ type CarrierInfo struct {
 	Flights int       `json:"flights"`
 	Seat    *Seat     `json:"seat,omitempty"`
 	Score   Scorecard `json:"score"`
+	// External says someone's own jetway node flies the carrier, not
+	// this world.
+	External bool `json:"external,omitempty"`
 }
 
 // FlightState is one of the carrier's flights today as the seat sees it.
