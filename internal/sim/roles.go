@@ -953,6 +953,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		}
 		mine++
 		tenantBus := gateway.NewBus(64)
+		s.tapTenantRevenue(ctx, tenantBus)
 		switchAddr := wl.SwitchAddr
 		if a, ok := wl.SwitchAddrs[c.Designator]; ok {
 			switchAddr = a

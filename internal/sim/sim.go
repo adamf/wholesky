@@ -577,6 +577,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			continue // run by someone's own jetway node; see Options.External
 		}
 		tenantBus := gateway.NewBus(64)
+		s.tapTenantRevenue(ctx, tenantBus)
 		switchAddr := s.switchAddrFor(c)
 		tenantMaxMsgs, tenantMaxRecs := opts.TenantMaxMessages, opts.TenantMaxRecords
 		if tenantMaxMsgs == 0 {
@@ -1577,6 +1578,27 @@ func (s *Sim) servePack(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pack) //nolint:errcheck
+}
+
+// tapTenantRevenue feeds the revenue ledger from a carrier's own book on a
+// machine that runs no distribution system: a region hears each sale as
+// the carrier's copy of the record, priced, and that is the only copy it
+// has. Where a distribution system runs on the same machine its copy is
+// counted instead, once, so the two never double.
+func (s *Sim) tapTenantRevenue(ctx context.Context, bus *gateway.Bus) {
+	if len(s.GDSes) > 0 {
+		return
+	}
+	go s.tapBus(ctx, bus, func(ev gateway.Event) {
+		if ev.Type != gateway.EvPNR {
+			return
+		}
+		if p, ok := ev.Data.(map[string]any); ok {
+			if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Version <= 1 && rec.Origin.Channel != "codeshare" {
+				s.Ledger.Record(rec)
+			}
+		}
+	})
 }
 
 // Fate is the day's plan.

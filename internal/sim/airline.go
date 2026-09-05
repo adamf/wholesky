@@ -87,8 +87,17 @@ func (s *Sim) scores() map[string]airline.Scorecard {
 // flightStatus is where a flight is in its day.
 func (w seatWorld) flightStatus(f world.Flight, fate dayplan.Flight, pos float64) string {
 	t := w.s.Tenants[f.Carrier]
-	if fate.Cancelled || (t != nil && t.Cancelled(f, w.s.BookingDate)) {
+	if t != nil && t.Cancelled(f, w.s.BookingDate) {
 		return "cancelled"
+	}
+	if fate.Cancelled {
+		// The plan's cancellation is a fact of the day only once it has
+		// been announced; until then the flight is scheduled and a seat may
+		// still rescue it.
+		if pos >= float64(f.DepMin-cancelledBefore) {
+			return "cancelled"
+		}
+		return "scheduled"
 	}
 	dep := float64(f.DepMin + fate.DepDelay)
 	arr := float64(f.ArrMin + fate.ArrDelay)
@@ -165,7 +174,7 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		if fate.ATFM > 0 {
 			sc.Slots++
 		}
-		if fate.Reserve {
+		if fate.Reserve && (status == "departed" || status == "landed") {
 			sc.Reserves++
 			sc.Costs["reserves"] += costPerReserveCall
 		}
