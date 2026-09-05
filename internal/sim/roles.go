@@ -251,6 +251,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	s.Fleet.OnOwners = c.SetOwners
 	s.Stats.SetQueueDepths(c.federatedQueues)
 	go c.pollSummaries(ctx)
+	go c.pollRevenue(ctx)
 	go c.pollSettlement(ctx)
 	return c, nil
 }
@@ -419,6 +420,53 @@ func (c *Core) SetOwners(m map[string]string) {
 	c.mu.Lock()
 	c.nodeOwner = m
 	c.mu.Unlock()
+}
+
+// pollRevenue federates what every leg was sold for: the distribution
+// systems' ledgers, summed, handed to every region so the carriers'
+// scorecards there read the sale rather than their own unpriced copy.
+func (c *Core) pollRevenue(ctx context.Context) {
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	client := &http.Client{Timeout: 8 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		total := map[string]int64{}
+		var regions []registration
+		for _, p := range c.livePeers() {
+			switch p.Role {
+			case "gds":
+				resp, err := client.Get(p.URL + "/shard/revenue.json")
+				if err != nil {
+					continue
+				}
+				var m map[string]int64
+				json.NewDecoder(resp.Body).Decode(&m) //nolint:errcheck
+				resp.Body.Close()
+				for k, v := range m {
+					total[k] += v
+				}
+			case "region":
+				regions = append(regions, p)
+			}
+		}
+		if len(total) == 0 {
+			continue
+		}
+		c.Sim.SetRevenueFeed(total)
+		body, _ := json.Marshal(total)
+		for _, p := range regions {
+			resp, err := client.Post(p.URL+"/shard/revenue", "application/json", bytes.NewReader(body))
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+		}
+	}
 }
 
 // pollSummaries keeps the core's instruments fed with the state that lives
@@ -729,6 +777,8 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 	mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 	mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
+	mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
+	mux.HandleFunc("/shard/revenue", s.serveRevenue)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)

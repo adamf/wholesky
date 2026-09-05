@@ -235,6 +235,8 @@ type Sim struct {
 	scoreMu      sync.Mutex
 	scoreCache   map[string]airline.Scorecard
 	scoreAt      time.Time
+	revenueMu    sync.RWMutex
+	revenueFeed  map[string]int64
 	external     map[string]bool
 	linkSecret   string
 	publicSwitch string
@@ -469,6 +471,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
 		mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
+		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
+		mux.HandleFunc("/shard/revenue", s.serveRevenue)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)

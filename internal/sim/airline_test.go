@@ -12,6 +12,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
+	"github.com/adamf/wholesky/internal/world"
 )
 
 // Running a carrier, end to end through the API: the lobby lists the
@@ -91,7 +92,20 @@ func TestSeatRunsACarrier(t *testing.T) {
 
 	// A lever: cancel another flight. It is announced, the plan holds it
 	// cancelled, the board shows it, the scorecard counts it.
-	g := s.Flights[cc][len(s.Flights[cc])-1]
+	// A flight still ahead of the clock, since the small world's day runs
+	// on the wall clock and the test may run at any hour.
+	pos, _ := seatWorld{s}.Clock()
+	var g world.Flight
+	found := false
+	for _, cand := range s.Flights[cc] {
+		if float64(cand.DepMin) > pos+cancelledBefore+10 && cand.Carrier+cand.Number != f.Carrier+f.Number {
+			g, found = cand, true
+			break
+		}
+	}
+	if !found {
+		t.Skip("no departure left in the day to cancel")
+	}
 	code, res := call("POST", "/carrier/"+cc+"/act", token, airline.Action{Kind: "cancel", Flight: g.Carrier + g.Number, Board: g.From, Reason: "ops decision"})
 	if code != 200 {
 		t.Fatalf("cancel %d %v", code, res)
@@ -110,7 +124,7 @@ func TestSeatRunsACarrier(t *testing.T) {
 	if score["cancelled"].(float64) < 1 {
 		t.Errorf("scorecard %v", score)
 	}
-	found := false
+	found = false
 	for _, x := range st["flights"].([]any) {
 		fs := x.(map[string]any)
 		if fs["flight"] == g.Carrier+g.Number && fs["status"] == "cancelled" {

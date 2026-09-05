@@ -140,7 +140,7 @@ func (w seatWorld) Flights(carrier string) []airline.FlightState {
 		booked, seats := w.booked(f)
 		st := airline.FlightState{Flight: f.Carrier + f.Number, From: f.From, To: f.To, STD: hhmm(f.DepMin), ETD: hhmm(f.DepMin + fate.DepDelay), STA: hhmm(f.ArrMin + fate.ArrDelay),
 			DelayMin: fate.DepDelay, Status: w.flightStatus(f, fate, pos), Tail: f.Tail, Type: f.Equipment, Seats: seats, Booked: booked,
-			Revenue: w.s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)})}
+			Revenue: w.s.legRevenue(f)}
 		st.Delay, st.Crew = fateLines(fate)
 		if fate.Cancelled {
 			st.Cancelled = fate.Reason
@@ -169,7 +169,7 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		fate := w.s.fate.Of(f)
 		sc.Flights++
 		booked, seats := w.booked(f)
-		sc.Revenue += w.s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)})
+		sc.Revenue += w.s.legRevenue(f)
 		status := w.flightStatus(f, fate, pos)
 		if fate.ATFM > 0 {
 			sc.Slots++
@@ -448,6 +448,63 @@ func (s *Sim) askRush(ctx context.Context, f world.Flight, day time.Time, bags i
 		Detail:  "Rush them on the next flight over the sector (a BUM ahead of each; the arrival station traces them and delivers), or hold them for tomorrow and let the passengers file.",
 		Options: []airline.Option{{Key: "rush", Label: "rush on the next flight"}, {Key: "hold", Label: "hold for tomorrow", Cost: costPerMishandledBag * int64(bags)}}, Default: "rush"})
 	return choice == "rush"
+}
+
+// legRevenue is what a leg was sold for: the distribution systems' word
+// where the core feeds it (a region's own books may carry no fare), else
+// this machine's ledger.
+func (s *Sim) legRevenue(f world.Flight) int64 {
+	key := revenue.Key(f.Carrier, f.Number, f.From)
+	s.revenueMu.RLock()
+	v, ok := s.revenueFeed[key]
+	s.revenueMu.RUnlock()
+	if ok {
+		return v
+	}
+	return s.Ledger.Sum([]string{key})
+}
+
+// RevenueByLeg is this machine's ledger, leg by leg, for the core to
+// federate: on a distribution system's machine it is what that system
+// sold on every leg of the world.
+func (s *Sim) RevenueByLeg() map[string]int64 {
+	out := map[string]int64{}
+	for _, fs := range s.Flights {
+		for _, f := range fs {
+			key := revenue.Key(f.Carrier, f.Number, f.From)
+			if v := s.Ledger.Sum([]string{key}); v != 0 {
+				out[key] = v
+			}
+		}
+	}
+	return out
+}
+
+// SetRevenueFeed installs the core's federated view of what every leg was
+// sold for, which the scorecards then read instead of the local ledger.
+func (s *Sim) SetRevenueFeed(m map[string]int64) {
+	s.revenueMu.Lock()
+	s.revenueFeed = m
+	s.revenueMu.Unlock()
+	s.scoreMu.Lock()
+	s.scoreAt = time.Time{}
+	s.scoreMu.Unlock()
+}
+
+// serveRevenue is GET /shard/revenue.json and POST /shard/revenue.
+func (s *Sim) serveRevenue(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var m map[string]int64
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&m); err != nil {
+			http.Error(w, "malformed revenue feed", http.StatusBadRequest)
+			return
+		}
+		s.SetRevenueFeed(m)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.RevenueByLeg()) //nolint:errcheck
 }
 
 // federatedCarriers is the core's lobby: every peer's carriers, merged.
