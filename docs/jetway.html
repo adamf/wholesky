@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.85</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.88</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -306,6 +306,10 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li><b>Passenger types</b> ADT, CHD and INF at their discounts.</li>
           <li><b>Pricing</b> sells each segment under the cheapest fare whose rules the trip meets as of the purchase date, and says why when nothing does.</li>
         </ul>
+      </div>
+      <div class="card">
+        <h3>pkg/ops <span class="tag inf">practice</span></h3>
+        <p>A carrier's operations desk, for a node that runs the carrier for real: the schedule from its SSIM file, departure control at its stations as the gateway's Ground so the carrier's own name lists open its flights, the aircraft's OOOI reports turned into the MVTs the network reads (the AD with its ETA, the AA, the delay against schedule), the towers' and the Network Manager's messages filed against the callsign. <code>ops:</code> in the configuration turns a gateway into an airline; it is what lets someone's own jetwayd fly one of wholesky's carriers.</p>
       </div>
       <div class="card">
         <h3>pkg/atfm <span class="tag spec">ATFCM Users Manual specified</span></h3>

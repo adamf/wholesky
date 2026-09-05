@@ -185,17 +185,30 @@ homes your carrier. The link secret is a Fly secret, so a token survives a
 restart. jetway v0.1.86's token check means a node that names a carrier
 without its token is refused before any message.
 
+Your node is a carrier, not only a gateway. The pack's `ops:` block
+(jetway v0.1.88, `pkg/ops`) gives it an operations desk: the schedule from
+the SSIM file beside the configuration, departure control at your stations
+opening flights from your own name lists, the aircraft's OOOI reports from
+the world's datalink provider turned into the MVTs the globe draws, the
+towers' and the Network Manager's messages filed against the callsign. The
+world keeps flying the network side of your day -- the slot two hours out,
+the datalink reports, the towers -- and leaves the carrier's side to you:
+sending the PNL, checking in, closing the door, announcing your own
+cancellations, from the node's console or its API.
+
 The whole path is tested end to end in `internal/sim/byo_test.go`: a
 jetway node built from nothing but the pack's YAML dials the small world's
-switch, comes up as the carrier, and a seat the world's distribution
-system sells on one of its flights lands in the node's own book.
+switch, comes up as the carrier, a seat the world's distribution system
+sells on one of its flights lands in the node's own book, and when the
+world's datalink reports the departure the node's MVT reaches the
+distribution system.
 
 Still missing: an external carrier's scorecard from the switch's ledger
-(the lobby shows a claimed carrier, but its flights and passengers are
-now in your book, not the world's), the world's ground story driven from
-your DCS (your PNL is the one the airport waits for), and the manifest
-exchange between worlds. None of it is a new protocol; all of it is jetway
-doing what it does across a longer wire.
+(the lobby shows a claimed carrier, but its passengers are now in your
+book, not the world's), a timetable that drives your node's ground story
+for you if you want the autopilot's help, and the manifest exchange
+between worlds. None of it is a new protocol; all of it is jetway doing
+what it does across a longer wire.
 
 ## Bring your own jetway
 

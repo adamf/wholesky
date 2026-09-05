@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,13 @@ func TestAJetwayNodeFromThePackFliesTheCarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.HTTP.Addr = "127.0.0.1:0" // the pack says :8080; a test cannot
+	// The schedule the pack carries, saved beside the configuration as the
+	// notes say.
+	schedulePath := filepath.Join(t.TempDir(), cfg.Ops.Schedule)
+	if err := os.WriteFile(schedulePath, []byte(pack.SSIM), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Ops.Schedule = schedulePath
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the pack's configuration does not validate: %v", err)
 	}
@@ -78,6 +87,31 @@ func TestAJetwayNodeFromThePackFliesTheCarrier(t *testing.T) {
 		if time.Now().After(deadline) {
 			msgs, _ := n.Store.ListMessages(ctx, store.MessageFilter{Limit: 20})
 			t.Fatalf("the booking %s never reached the node's book; %d messages seen", res.PNR.RecordLocator, len(msgs))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The world flies the aircraft: the datalink provider reports the
+	// departure to the carrier -- the node -- whose operations desk turns
+	// it into the MVT the distribution system reads. The globe draws that.
+	if n.Ops == nil || len(n.Ops.Legs()) != len(s.Flights[code]) {
+		t.Fatalf("the node's desk holds %d legs, the world %d", len(n.Ops.Legs()), len(s.Flights[code]))
+	}
+	s.departure(ctx, nil, f, s.BookingDate, "N1BYO", 7)
+	deadline = time.Now().Add(20 * time.Second)
+	for {
+		msgs, _ := s.GDSStore.ListMessages(ctx, store.MessageFilter{Limit: 500})
+		found := false
+		for _, m := range msgs {
+			if m.Direction == store.Inbound && strings.HasPrefix(m.Kind, "MVT") && strings.Contains(string(m.Raw), code+strings.TrimLeft(f.Number, "0")) && strings.Contains(string(m.Raw), "N1BYO") {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no MVT from the node reached the distribution system; the desk filed %d movements", n.Ops.Movements())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

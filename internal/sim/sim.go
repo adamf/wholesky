@@ -1360,9 +1360,12 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			prev = cur - maxCatchUp
 		}
 		for code, t := range s.Tenants {
-			if s.External(code) {
-				continue // someone's own node flies this carrier now
-			}
+			// A carrier someone's own node flies: the world still runs the
+			// network side of its day -- the Network Manager's slot, the
+			// aircraft's datalink reports, the towers -- and leaves the
+			// carrier's own story (name lists, check-in, the door, the
+			// cancellation it announces) to the node.
+			external := s.External(code)
 			for _, f := range s.Flights[code] {
 				if s.isClosed(f.From, f.To) {
 					continue
@@ -1382,7 +1385,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				// this tick run in order in one goroutine: at high warp
 				// several fall in one tick, and a door that closed before
 				// the counter opened would be a different story.
-				if cancelled {
+				if cancelled && !external {
 					// The record says this one never went. The airport
 					// hears it two hours out, after the counter opened;
 					// nothing departs or arrives, and the manifest is let
@@ -1409,7 +1412,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				}
 				var due []groundEvent
 				for _, g := range groundEvents {
-					if cancelled && g.before < cancelledBefore {
+					if external || (cancelled && g.before < cancelledBefore) {
 						continue
 					}
 					w := f.DepMin - g.before
@@ -1437,7 +1440,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 						}
 					}(f, due)
 				}
-				if cancelled {
+				if cancelled && !external {
 					continue
 				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
@@ -1691,6 +1694,16 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 	for _, g := range s.GDSes {
 		cfg.Peers = append(cfg.Peers, config.Peer{Name: g.Designator, Carrier: g.Designator, TTYAddress: g.Address, Format: "typeb", Egress: config.Egress{Type: "via", Via: firstDesignator}})
 	}
+	// The operations desk: the schedule beside the configuration, movements
+	// to the distribution systems and the world's watcher, the way the
+	// world's own tenants file theirs.
+	movementsTo := []string{GDSAddress}
+	for _, g := range s.GDSes {
+		if g.Address != GDSAddress {
+			movementsTo = append(movementsTo, g.Address)
+		}
+	}
+	cfg.Ops = config.Ops{Schedule: strings.ToLower(code) + ".ssim", Via: firstDesignator, MovementsTo: movementsTo, AccountingCode: s.accountingCode(code)}
 	cfg.Peers = append(cfg.Peers,
 		config.Peer{Name: dspPeer(0), TTYAddress: dspAddress(0), Format: "typeb", Egress: config.Egress{Type: "via", Via: firstDesignator}},
 		config.Peer{Name: atcPeer(0), TTYAddress: atcAddress(0), Format: "aftn", Egress: config.Egress{Type: "via", Via: firstDesignator}},
@@ -1706,8 +1719,8 @@ func (s *Sim) Pack(designator string) (*StartPack, error) {
 	}
 	return &StartPack{Carrier: code, Name: c.Name, Hub: c.Hub, Switch: switchAddr, Token: linkToken(s.linkSecret, code), Flights: len(s.Flights[code]),
 		ConfigYAML: string(y), SSIM: ssim.String(), Notes: []string{
-			"Run: jetwayd -config carrier.yaml. The node dials the world's switch with link_dial and the token; the world's distribution systems sell into your inventory over the same link.",
-			"Your node is a bare jetway: reservations, inventory, DCS and console. The world's ground story for your flights -- name lists, check-in, closure -- is yours to drive; a PNL the airport never gets is a flight that never opens.",
+			"Save the YAML as carrier.yaml and the SSIM as " + strings.ToLower(code) + ".ssim beside it, then: jetwayd -config carrier.yaml. The node dials the world's switch with link_dial and the token; the world's distribution systems sell into your inventory over the same link.",
+			"The ops block makes your node a carrier: departure control opens your flights from your own name lists, the aircraft's OOOI reports from the world's datalink become the MVTs the globe draws, the towers' and the Network Manager's messages are filed. The ground story -- sending the PNL, checking in, closing the door -- is yours to drive from the console or the API.",
 			"The schedule is the SSIM file; load it into whatever you run, or read it with jetway's pkg/ssim.",
 			"The token is this world's for this carrier and changes when the world restarts unless it was booted with -link-secret.",
 		}}, nil

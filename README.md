@@ -349,7 +349,9 @@ are in [docs/run-a-carrier.md](docs/run-a-carrier.md). The first step of
 that road works: claim a carrier you hold (`POST /carrier/BA/claim`) and the
 world severs its own tenant and hands you the jetway configuration, link
 token and SSIM schedule for your own `jetwayd` to dial in as BA -- on the
-demo, over the internet, at `wholesky-demo.fly.dev:7000`.
+demo, over the internet, at `wholesky-demo.fly.dev:7000`. With jetway's
+operations desk (`pkg/ops`, in the pack's configuration) your node opens
+its flights from its own name lists and files the MVTs the globe draws.
 
 ## Status
 
@@ -460,7 +462,7 @@ watch and each flight carries ten times the bookings. What it would take
 to fly real loads is worked out in [docs/full-throttle.md](docs/full-throttle.md).
 
 The pattern that keeps paying: every time the world gets bigger, it finds
-real bugs in Jetway — eighty-five releases so far, each fix landed upstream with
+real bugs in Jetway — eighty-eight releases so far, each fix landed upstream with
 a regression test that was watched to fail first. Not yet: filling a
 recorded day to its real passenger load, weather systems that close regions
 rather than airports, and booking curves with real seasonality. The
