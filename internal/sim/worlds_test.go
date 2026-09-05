@@ -86,12 +86,18 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 	}
 	// Each world knows the other's carriers and flights.
 	cA := mA.Carriers[1].Designator // the EDIFACT carrier of the small world
-	if _, ok := b.foreignCarrier(cA); !ok || len(b.Flights[cA]) == 0 {
-		t.Fatalf("bravo does not sell alpha's %s: foreign %v flights %d", cA, ok, len(b.Flights[cA]))
-	}
 	cB := mB.Carriers[0].Designator
-	if _, ok := a.foreignCarrier(cB); !ok || len(a.Flights[cB]) == 0 {
-		t.Fatalf("alpha does not sell bravo's %s", cB)
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		_, okA := b.foreignCarrier(cA)
+		_, okB := a.foreignCarrier(cB)
+		if okA && okB && len(b.foreignFlights(cA)) > 0 && len(a.foreignFlights(cB)) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the worlds never learned each other's flights: bravo knows %s %v, alpha knows %s %v", cA, okA, cB, okB)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if len(a.Worlds()) != 1 || len(b.Worlds()) != 1 {
 		t.Errorf("worlds: alpha %v bravo %v", a.Worlds(), b.Worlds())
@@ -99,7 +105,7 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 
 	// Bravo's distribution system sells a seat on alpha's carrier; the sell
 	// crosses the trunk, alpha's tenant books it, the reply crosses back.
-	fA := a.Flights[cA][0]
+	fA := b.foreignFlights(cA)[0]
 	res, err := b.Book(ctx, fA, "Y", 0, "TWOWORLDS")
 	if err != nil {
 		t.Fatalf("book across worlds: %v", err)
@@ -124,7 +130,7 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	// And the other way: alpha sells bravo's carrier.
-	fB := a.Flights[cB][0]
+	fB := a.foreignFlights(cB)[0]
 	res, err = a.Book(ctx, fB, "Y", 0, "BACKAGAIN")
 	if err != nil {
 		t.Fatalf("book back across worlds: %v", err)

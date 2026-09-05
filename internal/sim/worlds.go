@@ -53,11 +53,16 @@ type gdsInfo struct {
 	Address    string `json:"address"`
 }
 
-// foreignWorld is a world this one has joined.
+// foreignWorld is a world this one has joined, with what it flies: kept
+// apart from this world's own schedule maps, which the day loop and the
+// demand read without a lock, and read through the accessors below.
 type foreignWorld struct {
 	Hello    worldHello
 	Flights  int
 	JoinedAt time.Time
+	carriers map[string]world.Carrier
+	flights  map[string][]world.Flight
+	byOrigin map[string][]world.Flight
 }
 
 // hello is this world as it introduces itself.
@@ -149,12 +154,10 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	for _, g := range h.GDS {
 		peers = append(peers, config.Peer{Name: "W:" + g.Designator, Format: "typeb", TTYAddress: g.Address, Egress: config.Egress{Type: "via", Via: trunkName}})
 	}
-	if _, err := s.Switch.ReloadPeers(peers); err != nil {
-		return fmt.Errorf("joining %s: %w", h.Name, err)
-	}
-	// The other world's carriers become sellable here: peers of every
-	// distribution system, flights in the schedule the demand draws from,
-	// markets in the tariff, legs the globe can place.
+	// The other world's carriers become sellable here first -- peers of
+	// every distribution system, flights in the schedule the demand draws
+	// from, markets in the tariff, legs the globe can place -- and the trunk
+	// comes up last, so nothing is routable before it is sellable.
 	var flights []world.Flight
 	if h.URL != "" {
 		client := &http.Client{Timeout: 60 * time.Second}
@@ -176,6 +179,9 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	for _, t := range s.Tenants {
 		t.AddDistribution(h.Watcher)
 	}
+	if _, err := s.Switch.ReloadPeers(peers); err != nil {
+		return fmt.Errorf("joining %s: %w", h.Name, err)
+	}
 	s.log.Info("world joined", "world", h.Name, "code", h.Code, "carriers", len(h.Carriers), "flights", len(flights), "accepting", accepting)
 	if s.Airline != nil {
 		s.Airline.Emit("", "world", fmt.Sprintf("world %s joined: %d carriers, %d flights now sellable here", h.Name, len(h.Carriers), len(flights)), nil)
@@ -186,24 +192,20 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 // addForeign records a joined world and merges its carriers and flights
 // into what this world sells and draws.
 func (s *Sim) addForeign(h worldHello, flights []world.Flight) {
-	s.foreignMu.Lock()
-	s.foreign[h.Code] = &foreignWorld{Hello: h, Flights: len(flights), JoinedAt: time.Now()}
-	s.foreignMu.Unlock()
-	byCarrier := map[string][]world.Flight{}
-	for _, f := range flights {
-		byCarrier[f.Carrier] = append(byCarrier[f.Carrier], f)
-	}
-	s.flightsMu.Lock()
+	fw := &foreignWorld{Hello: h, Flights: len(flights), JoinedAt: time.Now(),
+		carriers: map[string]world.Carrier{}, flights: map[string][]world.Flight{}, byOrigin: map[string][]world.Flight{}}
 	for _, c := range h.Carriers {
-		s.carriers[c.Designator] = c
-		if fs := byCarrier[c.Designator]; len(fs) > 0 {
-			s.Flights[c.Designator] = fs
-			for _, f := range fs {
-				s.flightsByOrigin[f.From] = append(s.flightsByOrigin[f.From], f)
-			}
+		fw.carriers[c.Designator] = c
+	}
+	for _, f := range flights {
+		if _, ok := fw.carriers[f.Carrier]; ok {
+			fw.flights[f.Carrier] = append(fw.flights[f.Carrier], f)
+			fw.byOrigin[f.From] = append(fw.byOrigin[f.From], f)
 		}
 	}
-	s.flightsMu.Unlock()
+	s.foreignMu.Lock()
+	s.foreign[h.Code] = fw
+	s.foreignMu.Unlock()
 	if s.tariff != nil {
 		s.tariff.AddFlights(flights)
 	}
@@ -224,18 +226,72 @@ func (s *Sim) addForeign(h worldHello, flights []world.Flight) {
 	}
 }
 
+// foreignFlights is a joined world's carrier's schedule as this world holds it.
+func (s *Sim) foreignFlights(code string) []world.Flight {
+	s.foreignMu.RLock()
+	defer s.foreignMu.RUnlock()
+	for _, fw := range s.foreign {
+		if fs, ok := fw.flights[code]; ok {
+			return fs
+		}
+	}
+	return nil
+}
+
 // foreignCarrier says whether a carrier belongs to a joined world.
 func (s *Sim) foreignCarrier(code string) (string, bool) {
 	s.foreignMu.RLock()
 	defer s.foreignMu.RUnlock()
 	for _, fw := range s.foreign {
-		for _, c := range fw.Hello.Carriers {
-			if c.Designator == code {
-				return fw.Hello.Name, true
-			}
+		if _, ok := fw.carriers[code]; ok {
+			return fw.Hello.Name, true
 		}
 	}
 	return "", false
+}
+
+// scheduleOf is a carrier's flights, this world's or a joined one's.
+func (s *Sim) scheduleOf(code string) []world.Flight {
+	if fs := s.Flights[code]; len(fs) > 0 {
+		return fs
+	}
+	return s.foreignFlights(code)
+}
+
+// sellableCarriers is the carriers the demand may buy: this world's and
+// every joined world's.
+func (s *Sim) sellableCarriers(local []string) []string {
+	s.foreignMu.RLock()
+	defer s.foreignMu.RUnlock()
+	if len(s.foreign) == 0 {
+		return local
+	}
+	out := append([]string(nil), local...)
+	for _, fw := range s.foreign {
+		for code, fs := range fw.flights {
+			if len(fs) > 0 {
+				out = append(out, code)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// onwardFrom is every flight leaving an airport, this world's and the
+// joined worlds', for a connection.
+func (s *Sim) onwardFrom(iata string) []world.Flight {
+	local := s.flightsByOrigin[iata]
+	s.foreignMu.RLock()
+	defer s.foreignMu.RUnlock()
+	if len(s.foreign) == 0 {
+		return local
+	}
+	out := append([]world.Flight(nil), local...)
+	for _, fw := range s.foreign {
+		out = append(out, fw.byOrigin[iata]...)
+	}
+	return out
 }
 
 // Worlds is the joined worlds, for the instruments.

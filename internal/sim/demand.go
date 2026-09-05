@@ -72,7 +72,7 @@ func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 			sub := rand.New(rand.NewSource(seed<<16 ^ int64(n)))
 			// Travellers spread across the distribution systems, the way real
 			// demand arrives through whichever channel the agent uses.
-			go s.placeDemand(ctx, s.GDSes[n%len(s.GDSes)], sub, carriers, n)
+			go s.placeDemand(ctx, s.GDSes[n%len(s.GDSes)], sub, s.sellableCarriers(carriers), n)
 		}
 	}
 }
@@ -242,7 +242,10 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 // that changes carrier -- the case interline messaging exists for.
 func (s *Sim) chooseItinerary(rng *rand.Rand, carriers []string) []worldFlight {
 	code := carriers[rng.Intn(len(carriers))]
-	fs := s.Flights[code]
+	fs := s.scheduleOf(code)
+	if len(fs) == 0 {
+		return nil
+	}
 	f1 := fs[rng.Intn(len(fs))]
 	if s.isClosed(f1.From, f1.To) {
 		return nil
@@ -252,7 +255,7 @@ func (s *Sim) chooseItinerary(rng *rand.Rand, carriers []string) []worldFlight {
 		return []worldFlight{f1}
 	}
 	wantInterline := roll < 90 // of the connecting share, most change carrier
-	onward := s.flightsByOrigin[f1.To]
+	onward := s.onwardFrom(f1.To)
 	// A bounded scan for a legal connection: departing after arrival plus
 	// minimum connect time, same day, airport open.
 	start := rng.Intn(maxInt(1, len(onward)))
