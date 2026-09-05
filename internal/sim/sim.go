@@ -7,7 +7,12 @@
 package sim
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +54,7 @@ import (
 	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
+	"gopkg.in/yaml.v3"
 )
 
 // The GDS identity for phase one. There is exactly one so far; the design
@@ -89,6 +95,16 @@ type GDSNode struct {
 
 // Options configure a boot.
 type Options struct {
+	// External names carriers this world does not run itself: their
+	// addresses stay in the switch's routing table, their flights in the
+	// schedule, but no tenant is booted -- a player's own jetway node
+	// dials the switch as the carrier, with the token the start pack
+	// (/carrier/XX/pack) gives it. PublicSwitch is the address that node
+	// dials, when it is not the listener's own; LinkSecret keys the tokens
+	// (random per boot when empty).
+	External     []string
+	PublicSwitch string
+	LinkSecret   string
 	// DecisionWindow is how long a seat has to answer a decision before the
 	// autopilot's default, in real time; zero is forty-five seconds.
 	DecisionWindow time.Duration
@@ -214,10 +230,16 @@ type Sim struct {
 	fate *dayplan.Plan
 	// Airline is the seats: who runs which carrier, their decisions and
 	// their tape; announced remembers which cancellations went out.
-	Airline    *airline.Registry
-	airlineSrv *airline.Server
-	announced  sync.Map
-	Switch     *node.Node
+	Airline      *airline.Registry
+	airlineSrv   *airline.Server
+	scoreMu      sync.Mutex
+	scoreCache   map[string]airline.Scorecard
+	scoreAt      time.Time
+	external     map[string]bool
+	linkSecret   string
+	publicSwitch string
+	announced    sync.Map
+	Switch       *node.Node
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
 	Switches []*node.Node
@@ -405,6 +427,19 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Eye.WarpNow = s.clock.Warp
 	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
 	s.Airline = airline.New(opts.DecisionWindow)
+	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	s.external = map[string]bool{}
+	for _, d := range opts.External {
+		if d = strings.ToUpper(strings.TrimSpace(d)); d != "" {
+			s.external[d] = true
+		}
+	}
+	s.linkSecret, s.publicSwitch = opts.LinkSecret, opts.PublicSwitch
+	if s.linkSecret == "" {
+		b := make([]byte, 16)
+		rand.Read(b) //nolint:errcheck
+		s.linkSecret = hex.EncodeToString(b)
+	}
 	s.Eye.Weather = func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary) {
 		return s.fate.Weather, s.fate.Regulations, s.fate.Summary
 	}
@@ -432,7 +467,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		// installed, and answers for this process's carriers otherwise.
 		mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 		mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
-		s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+		mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -538,6 +573,9 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		return nil, err
 	}
 	for _, c := range m.Carriers {
+		if s.external[c.Designator] {
+			continue // run by someone's own jetway node; see Options.External
+		}
 		tenantBus := gateway.NewBus(64)
 		switchAddr := s.switchAddrFor(c)
 		tenantMaxMsgs, tenantMaxRecs := opts.TenantMaxMessages, opts.TenantMaxRecords
@@ -1430,6 +1468,117 @@ func (s *Sim) proxyCarrier(w http.ResponseWriter, r *http.Request, code string) 
 	return s.ConsoleProxy(w, r, code)
 }
 
+// isExternal says a carrier is run by someone's own node, not a tenant.
+func isExternal(opts Options, designator string) bool {
+	for _, d := range opts.External {
+		if strings.EqualFold(strings.TrimSpace(d), designator) {
+			return true
+		}
+	}
+	return false
+}
+
+// processSecret is the per-process link secret when none was configured,
+// so the switch and the start pack agree on the tokens.
+var processSecret = func() string {
+	b := make([]byte, 16)
+	rand.Read(b) //nolint:errcheck
+	return hex.EncodeToString(b)
+}()
+
+func linkSecretOf(opts Options) string {
+	if opts.LinkSecret != "" {
+		return opts.LinkSecret
+	}
+	return processSecret
+}
+
+// linkToken is a carrier's shared secret for its link: an HMAC of the
+// designator under the world's secret, so every machine derives the same.
+func linkToken(secret, designator string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(strings.ToUpper(designator)))
+	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// StartPack is what a player's own jetway node needs to fly one of the
+// world's carriers: the node's configuration, the carrier's schedule as an
+// SSIM file, and the notes that go with them.
+type StartPack struct {
+	Carrier    string   `json:"carrier"`
+	Name       string   `json:"name"`
+	Hub        string   `json:"hub"`
+	Switch     string   `json:"switch"`
+	Token      string   `json:"token"`
+	Flights    int      `json:"flights"`
+	ConfigYAML string   `json:"config_yaml"`
+	SSIM       string   `json:"ssim"`
+	Notes      []string `json:"notes"`
+}
+
+// Pack builds the start pack for an external carrier.
+func (s *Sim) Pack(designator string) (*StartPack, error) {
+	code := strings.ToUpper(designator)
+	c, ok := s.carriers[code]
+	if !ok {
+		return nil, fmt.Errorf("no carrier %s in this world", code)
+	}
+	if !s.external[code] {
+		return nil, fmt.Errorf("%s is run by this world; boot with -external %s to hand it to your own node", code, code)
+	}
+	switchAddr := s.publicSwitch
+	if switchAddr == "" && s.Switch != nil {
+		switchAddr = s.Switch.Addr("link-net")
+	}
+	firstDesignator, firstTTY := switchIdentity(0)
+	cfg := config.Default()
+	cfg.Identity = config.Identity{Designator: code, TTYAddress: c.TTYAddress, Name: c.Name}
+	cfg.Store = config.Store{Backend: "mem"}
+	cfg.Spool.Enabled = false
+	cfg.Demo.Carriers = false
+	cfg.HTTP.Addr = ":8080"
+	cfg.HTTP.Console = true
+	cfg.Ingress = nil
+	cfg.Peers = []config.Peer{{Name: firstDesignator, Carrier: firstDesignator, TTYAddress: firstTTY, Format: "typeb",
+		Token: linkToken(s.linkSecret, code), Egress: config.Egress{Type: "link_dial", Addr: switchAddr, Role: "carrier"}}}
+	for _, g := range s.GDSes {
+		cfg.Peers = append(cfg.Peers, config.Peer{Name: g.Designator, Carrier: g.Designator, TTYAddress: g.Address, Format: "typeb", Egress: config.Egress{Type: "via", Via: firstDesignator}})
+	}
+	cfg.Peers = append(cfg.Peers,
+		config.Peer{Name: dspPeer(0), TTYAddress: dspAddress(0), Format: "typeb", Egress: config.Egress{Type: "via", Via: firstDesignator}},
+		config.Peer{Name: atcPeer(0), TTYAddress: atcAddress(0), Format: "aftn", Egress: config.Egress{Type: "via", Via: firstDesignator}},
+		config.Peer{Name: govPeer(0), Carrier: govPeer(0), TTYAddress: govAddress(0), Format: "edifact", Egress: config.Egress{Type: "via", Via: firstDesignator}})
+	y, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sub := &world.Manifest{Airports: s.Manifest.Airports, Carriers: []world.Carrier{c}, Flights: s.Flights[code]}
+	var ssim bytes.Buffer
+	if err := world.WriteSSIM(&ssim, sub, s.BookingDate); err != nil {
+		return nil, err
+	}
+	return &StartPack{Carrier: code, Name: c.Name, Hub: c.Hub, Switch: switchAddr, Token: linkToken(s.linkSecret, code), Flights: len(s.Flights[code]),
+		ConfigYAML: string(y), SSIM: ssim.String(), Notes: []string{
+			"Run: jetwayd -config carrier.yaml. The node dials the world's switch with link_dial and the token; the world's distribution systems sell into your inventory over the same link.",
+			"Your node is a bare jetway: reservations, inventory, DCS and console. The world's ground story for your flights -- name lists, check-in, closure -- is yours to drive; a PNL the airport never gets is a flight that never opens.",
+			"The schedule is the SSIM file; load it into whatever you run, or read it with jetway's pkg/ssim.",
+			"The token is this world's for this carrier and changes when the world restarts unless it was booted with -link-secret.",
+		}}, nil
+}
+
+// servePack hands out a carrier's start pack.
+func (s *Sim) servePack(w http.ResponseWriter, r *http.Request) {
+	pack, err := s.Pack(r.PathValue("carrier"))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pack) //nolint:errcheck
+}
+
 // Fate is the day's plan.
 func (s *Sim) Fate() *dayplan.Plan { return s.fate }
 
@@ -1930,6 +2079,11 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 		addPeer(c.Designator, c.TTYAddress, c.Format, home)
 		// The carrier's ICAO designator routes its AFTN traffic here too.
 		cfg.Peers[len(cfg.Peers)-1].ICAO = c.ICAO
+		if isExternal(opts, c.Designator) {
+			// Someone else's node will dial in as this carrier: it has to
+			// know the secret.
+			cfg.Peers[len(cfg.Peers)-1].Token = linkToken(linkSecretOf(opts), c.Designator)
+		}
 	}
 	// The other networks: a datalink provider and an ANSP per region shard.
 	for shard := 0; shard < networkShards; shard++ {

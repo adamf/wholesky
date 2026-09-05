@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -141,12 +142,33 @@ type World interface {
 type Server struct {
 	Reg   *Registry
 	World World
+	// world, when set by SetWorld, replaces World: a federating core swaps
+	// its view in after boot, while requests may already be arriving.
+	worldMu sync.RWMutex
+	world   World
 	// Local says whether this machine runs the carrier; Proxy, when set,
 	// forwards a request for one it does not to the machine that does. A
 	// federated world's core runs no carriers and forwards everything;
 	// its lobby merges the peers' lists.
 	Local func(carrier string) bool
 	Proxy func(w http.ResponseWriter, r *http.Request, carrier string) bool
+}
+
+// SetWorld replaces the world the server answers from.
+func (s *Server) SetWorld(w World) {
+	s.worldMu.Lock()
+	defer s.worldMu.Unlock()
+	s.world = w
+}
+
+// view is the world in force.
+func (s *Server) view() World {
+	s.worldMu.RLock()
+	defer s.worldMu.RUnlock()
+	if s.world != nil {
+		return s.world
+	}
+	return s.World
 }
 
 // forwarded handles a carrier-scoped request that belongs to another
@@ -194,7 +216,7 @@ func (s *Server) token(r *http.Request) string {
 }
 
 func (s *Server) carriers(w http.ResponseWriter, r *http.Request) {
-	list := s.World.Carriers()
+	list := s.view().Carriers()
 	for i := range list {
 		if seat, ok := s.Reg.Seat(list[i].Code); ok {
 			list[i].Seat = &seat
@@ -206,7 +228,7 @@ func (s *Server) carriers(w http.ResponseWriter, r *http.Request) {
 		}
 		return list[i].Code < list[j].Code
 	})
-	pos, warp := s.World.Clock()
+	pos, warp := s.view().Clock()
 	writeJSON(w, map[string]any{"carriers": list, "pos": pos, "warp": warp, "departments": Departments, "actions": Actions})
 }
 
@@ -219,10 +241,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if seat, ok := s.Reg.Seat(code); ok {
 		seatp = &seat
 	}
-	pos, warp := s.World.Clock()
+	pos, warp := s.view().Clock()
 	writeJSON(w, map[string]any{
 		"carrier": code, "seat": seatp, "pos": pos, "warp": warp,
-		"score": s.World.Score(code), "flights": s.World.Flights(code),
+		"score": s.view().Score(code), "flights": s.view().Flights(code),
 		"inbox": s.Reg.Inbox(code), "departments": Departments,
 	})
 }
@@ -254,7 +276,7 @@ func (s *Server) take(w http.ResponseWriter, r *http.Request) {
 	}
 	known := false
 	code := strings.ToUpper(r.PathValue("carrier"))
-	for _, c := range s.World.Carriers() {
+	for _, c := range s.view().Carriers() {
 		if c.Code == code {
 			known = true
 		}
@@ -345,7 +367,7 @@ func (s *Server) act(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	result, err := s.World.Act(ctx, code, a)
+	result, err := s.view().Act(ctx, code, a)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return

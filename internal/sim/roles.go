@@ -45,7 +45,6 @@ import (
 	"github.com/adamf/jetway/pkg/gateway"
 	"github.com/adamf/jetway/pkg/queue"
 	jstore "github.com/adamf/jetway/pkg/store"
-	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/eye"
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
@@ -236,7 +235,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	if s.airlineSrv != nil {
 		// The core's lobby is every peer's carriers; a seat's requests go
 		// to the machine that runs the carrier.
-		s.airlineSrv.World = &federatedCarriers{seatWorld: seatWorld{s}, peers: func() []string {
+		s.airlineSrv.SetWorld(&federatedCarriers{seatWorld: seatWorld{s}, peers: func() []string {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			var urls []string
@@ -245,7 +244,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 			}
 			sort.Strings(urls)
 			return urls
-		}}
+		}})
 	}
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
@@ -729,7 +728,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	// settled and proxies for the files.
 	mux.HandleFunc("GET /settlement.json", s.serveSettlement)
 	mux.HandleFunc("GET /dayplan.json", s.serveDayPlan)
-	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -946,6 +945,9 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	s.Fleet.Add(ctx, s.ANSP.Name, "air navigation services", fleet.KindNetwork, "aftn", "", "", 0, s.ANSP.Store, s.ANSP.Bus)
 	mine := 0
 	for _, c := range m.Carriers {
+		if s.external[c.Designator] {
+			continue
+		}
 		if ShardOf(c.Designator, shards) != shard {
 			continue
 		}

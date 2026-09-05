@@ -49,14 +49,38 @@ func (w seatWorld) Clock() (float64, int) {
 	return pos, warp
 }
 
-// Carriers implements airline.World: the carriers this machine runs.
+// Carriers implements airline.World: the carriers this machine runs, with
+// scorecards from the last pass -- a machine runs hundreds, and a lobby
+// that computed each on every request would not answer in time.
 func (w seatWorld) Carriers() []airline.CarrierInfo {
+	scores := w.s.scores()
 	var out []airline.CarrierInfo
 	for code := range w.s.Tenants {
 		c := w.s.carriers[code]
-		out = append(out, airline.CarrierInfo{Code: code, Name: c.Name, Hub: c.Hub, Flights: len(w.s.Flights[code]), Score: w.Score(code)})
+		sc, ok := scores[code]
+		if !ok {
+			sc = w.score(code)
+		}
+		out = append(out, airline.CarrierInfo{Code: code, Name: c.Name, Hub: c.Hub, Flights: len(w.s.Flights[code]), Score: sc})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
+}
+
+// scores is every local carrier's scorecard, recomputed in one pass when
+// the last is more than a few seconds old.
+func (s *Sim) scores() map[string]airline.Scorecard {
+	s.scoreMu.Lock()
+	defer s.scoreMu.Unlock()
+	if time.Since(s.scoreAt) < 10*time.Second && s.scoreCache != nil {
+		return s.scoreCache
+	}
+	out := make(map[string]airline.Scorecard, len(s.Tenants))
+	w := seatWorld{s}
+	for code := range s.Tenants {
+		out[code] = w.score(code)
+	}
+	s.scoreCache, s.scoreAt = out, time.Now()
 	return out
 }
 
@@ -124,8 +148,10 @@ func (w seatWorld) Flights(carrier string) []airline.FlightState {
 	return out
 }
 
-// Score implements airline.World: the carrier's day so far.
-func (w seatWorld) Score(carrier string) airline.Scorecard {
+// Score implements airline.World: the carrier's day so far, fresh.
+func (w seatWorld) Score(carrier string) airline.Scorecard { return w.score(carrier) }
+
+func (w seatWorld) score(carrier string) airline.Scorecard {
 	code := strings.ToUpper(carrier)
 	pos, _ := w.Clock()
 	sc := airline.Scorecard{Carrier: code, Costs: map[string]int64{}}
@@ -431,7 +457,7 @@ func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
 		return f.cache
 	}
 	out := f.seatWorld.Carriers()
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := &http.Client{Timeout: 8 * time.Second}
 	for _, url := range f.peers() {
 		resp, err := client.Get(url + "/carriers.json")
 		if err != nil {

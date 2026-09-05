@@ -245,6 +245,18 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "pack", Description: "The start pack for a carrier the world does not run itself (booted with -external): the jetway node configuration to run as that carrier, the switch address, the link token, and the schedule as an SSIM file. Bring your own jetway."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/pack", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "weather", Description: "The day's weather systems and the Network Manager's regulations: which airports are slowed, when, and by how much."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
 			out, err := s.call(ctx, "GET", "/dayplan.json", nil)

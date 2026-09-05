@@ -168,12 +168,33 @@ over `/federation/register`, and each world's carriers can sell and fly into
 the other's airports. Then the regions are continents, the operators are
 people, and the sky is whoever showed up.
 
-What is missing for 2-4 is listed and small: the `-external` flag and the
-pack endpoint; a link token the switch checks on hello (the switch has
-identify-by-hello, not authentication); the scorecard reading an external
-carrier from the switch's ledger rather than the tenant's; a manifest
-exchange between worlds. None of it is a new protocol; all of it is jetway
-doing what it does across a longer wire.
+Steps 1 and 2 are done. `skyd -external BA` boots the world without BA's
+tenant and gives BA's switch peer a token; `GET /carrier/BA/pack` returns
+the jetway configuration (YAML, ready for `jetwayd -config`), the token, the
+switch address, the SSIM file and the notes. The token is jetway v0.1.86's
+link token: a hello that names a peer with a token must present it or the
+switch refuses the link before any message. `-link-secret` keeps the tokens
+stable across restarts; `-public-switch host:port` names the address a
+node on the internet dials when it is not the listener's own.
+
+Still missing: the demo exposing its switch port on the internet (a Fly TCP
+service; today the pack's switch address is reachable only inside the
+demo's network), the scorecard reading an external carrier from the
+switch's ledger rather than the tenant's (an external carrier has no
+tenant, so the lobby does not yet show it), and the manifest exchange
+between worlds. None of it is a new protocol; all of it is jetway doing
+what it does across a longer wire.
+
+## Bring your own jetway, locally
+
+```sh
+go run ./cmd/skyd -world /tmp/world.json -external BA -link-secret dev -console :8080 &
+curl -s localhost:8080/carrier/BA/pack | jq -r .config_yaml > ba.yaml
+cd ../jetway && go run ./cmd/jetwayd -config ../wholesky/ba.yaml
+```
+
+Your node dials the world's switch as BA; the distribution systems' sells
+for BA's flights land on your socket and your inventory answers them.
 
 ## Try it locally
 

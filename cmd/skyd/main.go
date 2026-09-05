@@ -45,24 +45,27 @@ func main() {
 
 func run() error {
 	var (
-		worldPath = flag.String("world", "world.json", "compiled manifest to boot")
-		switches  = flag.Int("switches", 1, "message switches in the fabric, 1 or 2; two are joined by a trunk and carriers are homed on one by hash")
-		ssimPath  = flag.String("ssim", "", "take the day's schedule from this SSIM chapter 7 file instead of the manifest's flights")
-		carriers  = flag.Int("carriers", 12, "how many carriers to run, largest first; 0 for all")
-		warp      = flag.Int("warp", 60, "sim minutes per real minute for the flight day")
-		demand    = flag.Int("demand", 30, "bookings per minute; 0 disables demand")
-		seed      = flag.Int64("seed", 1, "demand seed")
-		console   = flag.String("console", "127.0.0.1:8090", "switch console address")
-		maxMsgs   = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
-		maxRecs   = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
-		tMaxMsgs  = flag.Int("tenant-max-messages", 0, "message cap per carrier tenant; 0 inherits -max-messages")
-		tMaxRecs  = flag.Int("tenant-max-records", 0, "record cap per carrier tenant; 0 inherits -max-records")
-		avsEvery  = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
-		decision  = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
-		gdsCount  = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
-		statsSnap = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
-		pprofAddr = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
-		verbose   = flag.Bool("v", false, "debug logging")
+		worldPath  = flag.String("world", "world.json", "compiled manifest to boot")
+		switches   = flag.Int("switches", 1, "message switches in the fabric, 1 or 2; two are joined by a trunk and carriers are homed on one by hash")
+		ssimPath   = flag.String("ssim", "", "take the day's schedule from this SSIM chapter 7 file instead of the manifest's flights")
+		carriers   = flag.Int("carriers", 12, "how many carriers to run, largest first; 0 for all")
+		warp       = flag.Int("warp", 60, "sim minutes per real minute for the flight day")
+		demand     = flag.Int("demand", 30, "bookings per minute; 0 disables demand")
+		seed       = flag.Int64("seed", 1, "demand seed")
+		console    = flag.String("console", "127.0.0.1:8090", "switch console address")
+		maxMsgs    = flag.Int("max-messages", 20000, "message-log cap per node; 0 is unbounded")
+		maxRecs    = flag.Int("max-records", 20000, "record cap per node; 0 is unbounded")
+		tMaxMsgs   = flag.Int("tenant-max-messages", 0, "message cap per carrier tenant; 0 inherits -max-messages")
+		tMaxRecs   = flag.Int("tenant-max-records", 0, "record cap per carrier tenant; 0 inherits -max-records")
+		avsEvery   = flag.Duration("avs-interval", 0, "availability rebroadcast interval; 0 uses the default")
+		external   = flag.String("external", "", "carriers this world does not run itself, comma-separated: someone's own jetway node dials in as each, with the token from /carrier/XX/pack")
+		pubSwitch  = flag.String("public-switch", "", "the switch address external nodes dial, when not the listener's own (host:port)")
+		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
+		decision   = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
+		gdsCount   = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
+		statsSnap  = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
+		pprofAddr  = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
+		verbose    = flag.Bool("v", false, "debug logging")
 
 		role      = flag.String("role", "all", "all | core | gds | region: which slice of the world this machine runs")
 		coreURL   = flag.String("core-url", "", "gds/region: the core machine's HTTP base, e.g. http://core.process.app.internal:8080")
@@ -133,7 +136,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,
@@ -268,4 +271,15 @@ func serveAndWatch(ctx context.Context, log *slog.Logger, addr string,
 		}
 	}()
 	return watch(ctx, log, snap)
+}
+
+// splitList is a comma-separated flag as a list, blanks dropped.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
