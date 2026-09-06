@@ -693,7 +693,8 @@ func (f *federatedCarriers) OwnCarriers() []airline.CarrierInfo {
 	var out []airline.CarrierInfo
 	client := &http.Client{Timeout: 8 * time.Second}
 	for _, url := range f.peers() {
-		resp, err := client.Get(url + "/carriers.json")
+		// A peer's own rows only: the core adds the joined worlds' once.
+		resp, err := client.Get(url + "/carriers.json?own=1")
 		if err != nil {
 			continue
 		}
@@ -703,7 +704,7 @@ func (f *federatedCarriers) OwnCarriers() []airline.CarrierInfo {
 		json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
 		resp.Body.Close()
 		for _, c := range body.Carriers {
-			if _, seen := byCode[c.Code]; seen {
+			if _, seen := byCode[c.Code]; seen || c.World != "" {
 				continue
 			}
 			byCode[c.Code] = len(out)
