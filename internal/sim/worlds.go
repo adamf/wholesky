@@ -41,9 +41,11 @@ type worldHello struct {
 	SwitchTTY  string `json:"switch_tty"`
 	SwitchAddr string `json:"switch_addr"`
 	Token      string `json:"token,omitempty"`
-	// Watcher is the address operational messages should be copied to,
-	// so the peer's globe sees this world's aircraft too. URL is where the
-	// peer fetches the manifest and answers back.
+	// Watcher, when set, is the address the peer's carriers should copy
+	// their movement messages to, so this world's globe sees the peer's
+	// aircraft; empty asks for none (a big world's stream is more than a
+	// small machine can take). URL is where the peer fetches the manifest
+	// and answers back.
 	Watcher  string          `json:"watcher"`
 	URL      string          `json:"url"`
 	Carriers []world.Carrier `json:"carriers"`
@@ -76,7 +78,10 @@ type foreignWorld struct {
 // hello is this world as it introduces itself.
 func (s *Sim) hello() worldHello {
 	d, tty := switchIdentity(0, s.worldCode)
-	h := worldHello{Name: s.worldName, Code: d, SwitchTTY: tty, Watcher: s.watcher(), URL: s.publicURL}
+	h := worldHello{Name: s.worldName, Code: d, SwitchTTY: tty, URL: s.publicURL}
+	if s.wantMovements {
+		h.Watcher = s.watcher()
+	}
 	if pub := strings.Split(s.publicSwitch, ","); pub[0] != "" {
 		h.SwitchAddr = strings.TrimSpace(pub[0])
 	} else if s.Switch != nil {

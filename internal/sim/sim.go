@@ -163,6 +163,11 @@ type Options struct {
 	WorldCity  string
 	PublicURL  string
 	PeerWorlds []string
+	// WantPeerMovements asks a joined world to copy its carriers' movement
+	// messages to this world's watcher, so its aircraft fly on this globe.
+	// A big world's stream is more than a small machine can take, so a
+	// world asks for it rather than gets it.
+	WantPeerMovements bool
 	// DecisionWindow is how long a seat has to answer a decision before the
 	// autopilot's default, in real time; zero is forty-five seconds.
 	DecisionWindow time.Duration
@@ -297,13 +302,14 @@ type Sim struct {
 	revenueFeed map[string]int64
 	seatsFeed   map[string]int
 	// The world's own name and codes, and the worlds it has joined.
-	worldName string
-	worldCode string
-	gdsCity   string
-	publicURL string
-	flightsMu sync.RWMutex
-	foreignMu sync.RWMutex
-	foreign   map[string]*foreignWorld
+	worldName     string
+	worldCode     string
+	gdsCity       string
+	publicURL     string
+	wantMovements bool
+	flightsMu     sync.RWMutex
+	foreignMu     sync.RWMutex
+	foreign       map[string]*foreignWorld
 	// onWorldJoined, on a core, relays a joined world to its peers.
 	onWorldJoined func(worldHello)
 	state         *stateKeeper
@@ -530,6 +536,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	}
 	s.linkSecret, s.publicSwitch = opts.LinkSecret, opts.PublicSwitch
 	s.worldName, s.worldCode, s.gdsCity, s.publicURL = opts.WorldName, worldCodeOf(opts), gdsCityOf(opts), opts.PublicURL
+	s.wantMovements = opts.WantPeerMovements
 	if s.worldName == "" {
 		s.worldName = s.worldCode
 	}
