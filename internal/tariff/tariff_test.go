@@ -160,3 +160,28 @@ func TestMultiplierScalesOneCarriersFares(t *testing.T) {
 		t.Errorf("filing not restored: %v", got)
 	}
 }
+
+// A market multiplier scales one carrier's fares on one market on top of
+// the carrier's own, and nowhere else.
+func TestMarketMultiplierIsOneMarketsAlone(t *testing.T) {
+	m := &world.Manifest{Flights: []world.Flight{
+		{Carrier: "BA", From: "LHR", To: "JFK", KM: 5550}, {Carrier: "BA", From: "LHR", To: "BOS", KM: 5250},
+	}}
+	tf := FromManifest(m)
+	jfk, bos := tf.Fares("BA", "LHR", "JFK")[0].OneWay.Amount, tf.Fares("BA", "LHR", "BOS")[0].OneWay.Amount
+	tf.SetMarketMultiplier("BA", "LHR", "JFK", 0.8)
+	if got := tf.Fares("BA", "LHR", "JFK")[0].OneWay.Amount; got >= jfk || tf.EffectiveMultiplier("BA", "LHR", "JFK") != 0.8 {
+		t.Errorf("JFK market not cut: %d from %d", got, jfk)
+	}
+	if got := tf.Fares("BA", "LHR", "BOS")[0].OneWay.Amount; got != bos {
+		t.Errorf("BOS moved: %d from %d", got, bos)
+	}
+	tf.SetMultiplier("BA", 1.5)
+	if e := tf.EffectiveMultiplier("BA", "LHR", "JFK"); e < 1.19 || e > 1.21 {
+		t.Errorf("carrier and market multipliers compound: %.2f", e)
+	}
+	tf.SetMarketMultiplier("BA", "LHR", "JFK", 0)
+	if tf.EffectiveMultiplier("BA", "LHR", "JFK") != 1.5 {
+		t.Error("market restored to the carrier's filing")
+	}
+}

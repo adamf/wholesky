@@ -106,3 +106,17 @@ func TestDemandWalksEveryLifecyclePath(t *testing.T) {
 		t.Errorf("no record in the store is cancelled; statuses: %v of %d records", statuses, len(recs))
 	}
 }
+
+// Travellers shop: everyone buys at or below the filing, fewer as the fare
+// rises over it.
+func TestSellProbabilityFallsAboveTheFiling(t *testing.T) {
+	if sellProbability(0.8) != 1 || sellProbability(1) != 1 {
+		t.Error("at or below the filing everyone buys")
+	}
+	if p := sellProbability(1.5); p < 0.54 || p > 0.55 {
+		t.Errorf("at ×1.5 about 54%% buy, got %.3f", p)
+	}
+	if sellProbability(2) >= sellProbability(1.5) {
+		t.Error("dearer sells less")
+	}
+}

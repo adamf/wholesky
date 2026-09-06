@@ -42,7 +42,7 @@ message someone else's system has to handle.
 | **ops** (operations control) | A flight running 46 minutes late or more is announced two hours out as an ASM TIM; an aircraft going technical after check-in is substituted by a smaller type. | *Announce the delay, or hold it* (the sold segments move to TK, or the passengers find out at the airport). *Substitute a smaller aircraft, or cancel.* |
 | **crew** | Under 14 CFR 117 a crew that has timed out cancels the flight (code A) unless it leaves the carrier's base, where reserves fly it. | *Cancel, or call reserves* (+90 minutes, a callout paid for) -- asked at T-150, before the cancellation would be announced. |
 | **slots** (flow management) | The Network Manager's SAM is taken as given. | *Take the slot, or send REA* -- ready -- and ask for an improvement; the NM answers with an SRM about half the time. |
-| **pricing** | The tariff as filed; EMSR-b ladders and network bid prices. | (Levers only for now: the fare multiplier and class overrides. Competitor moves as decisions are on the list.) |
+| **pricing** | The tariff as filed; EMSR-b ladders and network bid prices; the autopilot holds its fares. | About once an hour of the day, *a rival has cut fares on one of your markets: match or hold.* Matching lowers that market's multiplier; travellers shop, so fares above the filing lose buyers (elasticity 1.5, the world's shape) and fares below it sell every seat they can. |
 | **ground** (baggage) | Short-shipped bags are rushed on the next flight over the sector. | *Rush them, or hold for tomorrow* (and pay the claims). |
 
 ## Levers
@@ -53,7 +53,7 @@ message someone else's system has to handle.
 | `retime` by N minutes | ASM TIM; the systems that sold it move their segments to TK; the flight departs at the new time. |
 | `substitute` the aircraft | The cabin rebuilt to a smaller type, re-seated or denied, ASM EQT to distribution. |
 | `class` closed or reopened on a flight | An inventory override; AVS goes out as the availability changes. |
-| `fares` multiplier | Every fare the carrier files scales from now on, in every distribution system's pricing. |
+| `fares` multiplier, optionally a market (`from`, `to`) | Every fare the carrier files scales from now on -- or one market's -- in every distribution system's pricing. Above the filing, fewer travellers buy. |
 | `ready` | REA to the Network Manager; an SRM with a better CTOT when the regulation has room. |
 | `reserves` | A crew-timed-out cancellation becomes a 90-minute delay with a callout cost, if the announcement has not gone. |
 
@@ -189,6 +189,14 @@ overlap), the switches' codes (`-world-code`), and the distribution
 systems' cities (`-world-city`). Tested with two compiled worlds in one
 process: the trunk comes up both ways and a seat sold by each world's
 distribution system on the other's carrier lands in that carrier's book.
+
+It runs for real: **https://wholesky-mirror.fly.dev** is a second world --
+the same data with every carrier renamed (`worldc -mirror Q`, so its
+designators are nobody else's) -- trunked to the demo at boot. Its
+carriers appear on the demo's lobby under *mirror*, the demo's
+distribution systems sell its flights over the trunk, and its aircraft fly
+on the demo's globe. The release gate boots a small mirror beside the
+small world and waits for the join.
 
 Then the regions are continents, the operators are people, and the sky is
 whoever showed up.

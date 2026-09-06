@@ -68,8 +68,9 @@ type Synthetic struct {
 	// mult is a carrier's pricing decision over its filed ladder: 1.0 is
 	// the filing, 0.9 a sale, 1.2 a premium. Someone running the carrier
 	// moves it; the autopilot leaves it alone.
-	mu   sync.RWMutex
-	mult map[string]float64
+	mu         sync.RWMutex
+	mult       map[string]float64
+	marketMult map[string]float64 // carrier/from/to
 }
 
 // AddFlights files fares for markets the tariff did not know: a joined
@@ -108,6 +109,38 @@ func (t *Synthetic) Multiplier(carrier string) float64 {
 		return m
 	}
 	return 1
+}
+
+// SetMarketMultiplier scales one carrier's fares on one market -- a sale
+// on a route a competitor has cut, a premium where it has the route to
+// itself -- on top of the carrier's own; 0 restores the filing there.
+func (t *Synthetic) SetMarketMultiplier(carrier, origin, destination string, mult float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.marketMult == nil {
+		t.marketMult = map[string]float64{}
+	}
+	k := strings.ToUpper(carrier + "/" + origin + "/" + destination)
+	if mult <= 0 {
+		delete(t.marketMult, k)
+		return
+	}
+	t.marketMult[k] = mult
+}
+
+// EffectiveMultiplier is what a carrier's fares on a market are scaled by
+// now: the carrier's multiplier times the market's.
+func (t *Synthetic) EffectiveMultiplier(carrier, origin, destination string) float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	m := 1.0
+	if v, ok := t.mult[strings.ToUpper(carrier)]; ok {
+		m = v
+	}
+	if v, ok := t.marketMult[strings.ToUpper(carrier+"/"+origin+"/"+destination)]; ok {
+		m *= v
+	}
+	return m
 }
 
 // FromManifest builds the tariff for every market a carrier flies.
@@ -150,7 +183,7 @@ func (t *Synthetic) Fares(carrier, origin, destination string) []fare.Fare {
 	if !ok {
 		return nil
 	}
-	full := int64(float64(fullFare(strings.ToUpper(carrier), km)) * t.Multiplier(carrier))
+	full := int64(float64(fullFare(strings.ToUpper(carrier), km)) * t.EffectiveMultiplier(carrier, origin, destination))
 	out := make([]fare.Fare, 0, len(ladder))
 	for _, s := range ladder {
 		out = append(out, fare.Fare{

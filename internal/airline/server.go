@@ -117,7 +117,11 @@ type Action struct {
 	Class      string  `json:"class,omitempty"`
 	Status     string  `json:"status,omitempty"`
 	Multiplier float64 `json:"multiplier,omitempty"`
-	Reason     string  `json:"reason,omitempty"`
+	// From and To name a market for the fares action; empty means every
+	// market the carrier files.
+	From   string `json:"from,omitempty"`
+	To     string `json:"to,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // Actions a seat can take, with what each needs.
@@ -128,7 +132,7 @@ var Actions = []struct {
 	{"retime", "flight, board, minutes", "announce a delay to distribution as an ASM TIM and move the bookings to the new times"},
 	{"substitute", "flight, board", "swap the aircraft for a smaller type: the cabin is re-seated, distribution hears the EQT"},
 	{"class", "flight, board, class, status", "force a booking class on the departure closed (C) or back to the ladder (empty status)"},
-	{"fares", "multiplier", "move every fare the carrier files by the factor: 0.9 is a sale, 1.2 a premium, 0 the filing"},
+	{"fares", "multiplier, optionally from and to", "move the carrier's fares by the factor -- every market, or one when from and to name it: 0.9 is a sale, 1.2 a premium, 0 the filing. Travellers shop: fares above the filing lose buyers"},
 	{"ready", "flight, board", "tell the Network Manager the flight is ready (REA) and ask for a slot improvement"},
 	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling it"},
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/http/httptest"
 	"strings"
@@ -250,6 +251,12 @@ func (s *Sim) chooseItinerary(rng *rand.Rand, carriers []string) []worldFlight {
 	if s.isClosed(f1.From, f1.To) {
 		return nil
 	}
+	// The traveller shops: a carrier that has priced itself above the
+	// filing on this market loses a share of the people who would have
+	// bought, the shape of a demand curve without a real one.
+	if s.tariff != nil && rng.Float64() > sellProbability(s.tariff.EffectiveMultiplier(f1.Carrier, f1.From, f1.To)) {
+		return nil
+	}
 	roll := rng.Intn(100)
 	if roll < 60 || f1.ArrMin >= 23*60 {
 		return []worldFlight{f1}
@@ -349,4 +356,14 @@ func (s *Sim) noteDemandFailure(err error) {
 	if n := s.DemFailed.Add(1); n%100 == 1 {
 		s.log.Warn("demand booking failed", "err", err, "failed", n)
 	}
+}
+
+// sellProbability is the share of would-be buyers who still buy at a fare
+// multiplied by mult over the filing: everyone at or below it, fewer as it
+// rises (elasticity 1.5, the world's shape, labelled as such).
+func sellProbability(mult float64) float64 {
+	if mult <= 1 {
+		return 1
+	}
+	return math.Pow(mult, -1.5)
 }

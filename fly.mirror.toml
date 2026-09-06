@@ -1,0 +1,40 @@
+# The mirror world: a second sky on one machine, its carriers renamed so
+# they are disjoint from the demo's, trunked to the demo's switch at boot
+# (docs/run-a-carrier.md, worlds joined to worlds). Its lobby appears on the
+# demo's; the demo's distribution systems sell its flights over the trunk.
+app = "wholesky-mirror"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  world = "-world /etc/wholesky/mirror.json -memlimit 1600MiB -role all -carriers 0 -warp 6 -demand 60 -console 0.0.0.0:8080 -link-bind :: -link-port 7000 -max-messages 1000 -max-records 3000 -tenant-max-messages 200 -world-name mirror -world-code 1M -world-city AMS -public-url https://wholesky-mirror.fly.dev -public-switch wholesky-mirror.fly.dev:7000 -peer-world https://wholesky-demo.fly.dev"
+
+[http_service]
+  processes = ["world"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[services]]
+  processes = ["world"]
+  protocol = "tcp"
+  internal_port = 7000
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  [[services.ports]]
+    port = 7000
+
+[[vm]]
+  processes = ["world"]
+  size = "shared-cpu-2x"
+  memory = "2048mb"

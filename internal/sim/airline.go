@@ -274,6 +274,10 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 	}
 	day := s.BookingDate
 	if a.Kind == "fares" {
+		if a.From != "" && a.To != "" {
+			s.tariff.SetMarketMultiplier(code, a.From, a.To, a.Multiplier)
+			return fmt.Sprintf("%s-%s fares now ×%.2f over the filing", strings.ToUpper(a.From), strings.ToUpper(a.To), s.tariff.EffectiveMultiplier(code, a.From, a.To)), nil
+		}
 		s.tariff.SetMultiplier(code, a.Multiplier)
 		return fmt.Sprintf("fares now ×%.2f over the filing", s.tariff.Multiplier(code)), nil
 	}
@@ -454,6 +458,7 @@ func (s *Sim) askSubstitute(ctx context.Context, f world.Flight) bool {
 	if s.Airline == nil {
 		return true
 	}
+	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s: aircraft unserviceable after check-in opened", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "ops", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s has gone technical", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
 		Detail:  "The aircraft is unserviceable after check-in opened. A smaller type is available: the cabin is re-seated, some passengers may be denied boarding, distribution hears the EQT. Or cancel and reprotect everyone.",
@@ -465,6 +470,7 @@ func (s *Sim) askCrew(ctx context.Context, f world.Flight, fate dayplan.Flight) 
 	if s.Airline == nil {
 		return
 	}
+	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s: crew timed out (%s)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, fate.Reason), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "crew", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s: the crew has timed out", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
 		Detail:  fate.Reason + ". Cancel (the default away from the base), or call a reserve crew: the flight leaves ninety minutes later than it would have, and the callout is paid for.",
@@ -484,6 +490,7 @@ func (s *Sim) askSlot(ctx context.Context, t *host.Tenant, f world.Flight, fate 
 	if s.Airline == nil {
 		return
 	}
+	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s slotted: CTOT %s (+%d) under %s", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM, fate.Regulation), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "slots", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s has a slot: CTOT %s (+%d)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM),
 		Detail:  fmt.Sprintf("Regulation %s, cause %s. Take it, or send REA -- ready -- and ask the Network Manager for an improvement; there is one about half the time.", fate.Regulation, fate.Cause),
@@ -581,6 +588,79 @@ func (s *Sim) serveRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.RevenueByLeg()) //nolint:errcheck
+}
+
+// competitorMove is the pricing department's decision: a rival on one of
+// the carrier's markets has cut fares. Match and the market's multiplier
+// drops (travellers shop, so the seats sell); hold and the rival takes the
+// price-sensitive share. Asked of seats that run pricing by hand, about
+// once an hour of the day; the autopilot holds.
+func (s *Sim) competitorMove(ctx context.Context, code string, rng func(n int) int) {
+	if s.Airline == nil || !s.Airline.Manual(code, "pricing") {
+		return
+	}
+	fs := s.Flights[code]
+	if len(fs) == 0 {
+		return
+	}
+	// A market where someone else also flies.
+	var f world.Flight
+	found := false
+	for i := 0; i < 20 && !found; i++ {
+		f = fs[rng(len(fs))]
+		for _, g := range s.onwardFrom(f.From) {
+			if g.To == f.To && g.Carrier != f.Carrier {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		return
+	}
+	rival := ""
+	for _, g := range s.onwardFrom(f.From) {
+		if g.To == f.To && g.Carrier != f.Carrier {
+			rival = g.Carrier
+			break
+		}
+	}
+	cut := 10 + rng(16) // 10-25 per cent
+	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: code, Department: "pricing",
+		Title:   fmt.Sprintf("%s has cut %s-%s fares by %d%%", rival, f.From, f.To, cut),
+		Detail:  fmt.Sprintf("Your %s-%s fares stand at ×%.2f over the filing. Match and your market multiplier drops to ×%.2f: the seats sell, for less. Hold and the price-sensitive share of the market flies %s today.", f.From, f.To, s.tariff.EffectiveMultiplier(code, f.From, f.To), s.tariff.EffectiveMultiplier(code, f.From, f.To)*(1-float64(cut)/100), rival),
+		Options: []airline.Option{{Key: "hold", Label: "hold your fares"}, {Key: "match", Label: fmt.Sprintf("match: %s-%s down %d%%", f.From, f.To, cut)}}, Default: "hold"})
+	if choice == "match" {
+		cur := s.tariff.EffectiveMultiplier(code, f.From, f.To) / s.tariff.Multiplier(code)
+		s.tariff.SetMarketMultiplier(code, f.From, f.To, cur*(1-float64(cut)/100))
+		s.Airline.Emit(code, "action", fmt.Sprintf("%s-%s fares matched down %d%% (×%.2f)", f.From, f.To, cut, s.tariff.EffectiveMultiplier(code, f.From, f.To)), nil)
+	}
+}
+
+// weatherIncidents tells each carrier when a weather system that touches
+// its stations comes into force.
+func (s *Sim) weatherIncidents(prev, cur int) {
+	if s.Airline == nil || s.fate == nil {
+		return
+	}
+	for _, c := range s.fate.Weather {
+		if !(c.Start > prev && c.Start <= cur) {
+			continue
+		}
+		touched := map[string]int{}
+		for code := range s.Tenants {
+			for _, f := range s.Flights[code] {
+				for _, ap := range c.Airports {
+					if f.To == ap && f.ArrMin >= c.Start && f.ArrMin < c.End {
+						touched[code]++
+					}
+				}
+			}
+		}
+		for code, n := range touched {
+			s.Airline.Emit(code, "incident", fmt.Sprintf("weather %s in force until %s: arrivals at %s at ×%.2f of the rate; %d of your arrivals fall in it", c.Name, hhmm(c.End), strings.Join(c.Airports, " "), c.Factor, n), nil)
+		}
+	}
 }
 
 // federatedCarriers is the core's lobby: every peer's carriers, merged.

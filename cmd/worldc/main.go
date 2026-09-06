@@ -31,6 +31,7 @@ func main() {
 		carriers  = flag.Int("carriers", 0, "cap on carrier count, 0 for none")
 		bts       = flag.String("bts", "", "replay: a BTS on-time performance CSV; compiles the recorded day instead of the synthetic one")
 		date      = flag.String("date", "", "replay: the day to compile from the BTS file, YYYY-MM-DD")
+		mirror    = flag.String("mirror", "", "rename every carrier from this prefix letter (Q0, Q1, ...) so the world is disjoint from one compiled from the same data and can join it")
 		ssimOut   = flag.String("ssim", "", "also write the schedule as an SSIM chapter 7 file, one carrier after another")
 	)
 	flag.Parse()
@@ -57,6 +58,9 @@ func main() {
 	}
 	m.GeneratedAt = time.Now().UTC()
 
+	if *mirror != "" {
+		world.Mirror(m, *mirror)
+	}
 	f, err := os.Create(*out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "worldc:", err)

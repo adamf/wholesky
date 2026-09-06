@@ -110,3 +110,20 @@ func TestLoadSSIMPlacesLocalTimeOnUTC(t *testing.T) {
 		t.Error("configuration seats")
 	}
 }
+
+// A mirrored world carries the same flights under carriers nobody else
+// has: designators, teletype addresses and ICAO codes renamed together,
+// codeshares re-pointed.
+func TestMirrorRenamesEveryCarrierTogether(t *testing.T) {
+	m := &Manifest{
+		Carriers: []Carrier{{Designator: "BA", TTYAddress: "LONRMBA", ICAO: "BAW", Name: "British Airways"}, {Designator: "AA", TTYAddress: "DFWRMAA", ICAO: "AAL"}},
+		Flights:  []Flight{{Carrier: "BA", Number: "0117", Marketing: "AA", MarketingNumber: "6000"}, {Carrier: "AA", Number: "0100"}},
+	}
+	Mirror(m, "q")
+	if m.Carriers[0].Designator != "Q0" || m.Carriers[0].TTYAddress != "LONRMQ0" || m.Carriers[0].ICAO != "QQ0" || m.Carriers[1].Designator != "Q1" {
+		t.Errorf("carriers %+v", m.Carriers)
+	}
+	if m.Flights[0].Carrier != "Q0" || m.Flights[0].Marketing != "Q1" || m.Flights[1].Carrier != "Q1" {
+		t.Errorf("flights %+v", m.Flights)
+	}
+}

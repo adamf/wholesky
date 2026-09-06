@@ -258,18 +258,18 @@ message.
 What running a carrier (docs/run-a-carrier.md) still lacks, in the order it
 should be done:
 
-1. **Persistence.** Seats, claims, node URLs and joined worlds live in
-   memory; a redeploy hands every claimed carrier back and forgets every
-   seat. A state file, or the Postgres the books can already use.
-2. **Consequences that cascade.** The day plan is computed once at boot.
-   A seat's cancellation or retime does not re-plan the crews and
-   rotations downstream, so consequences stop at the flight acted on.
-3. **Joined worlds running for real.** The join is tested in one process
-   and runs nowhere; the demo is one world. A second Fly world trunked to
-   the demo, exercised by the gate.
-4. **More to decide.** Four gates (retime, substitution, crew, slot) and
-   the bag rush. No pricing decisions, no competitor moves, no incidents
-   that escalate or compound.
+1. ~~Persistence.~~ Done: seats, claims, nodes and joined worlds survive a
+   restart (a state file at the core; the regions keep theirs at the core).
+2. ~~Consequences that cascade.~~ Done: a seat's cancellation, retime or
+   reserve callout works the tail's day again -- late aircraft, crews --
+   and what else changed lands on the tape.
+3. ~~Joined worlds running for real.~~ Done: wholesky-mirror.fly.dev is
+   trunked to the demo, and the gate joins a mirror to the small world.
+4. **More to decide.** Partly: the pricing desk now hears from the
+   competition (match or hold, with travellers who shop) and the tape
+   carries weather, slots, crew timeouts and aircraft going technical as
+   incidents. Still no incidents that escalate or compound, no
+   schedule-planning decisions, no seasons.
 5. **Identity.** Anyone takes any free carrier; the token is the only
    protection; no accounts, no history across days, no season.
 6. **The scorecard's shape.** Costs are chosen constants and the composite

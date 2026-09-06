@@ -1443,6 +1443,15 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		if cur-prev > maxCatchUp {
 			prev = cur - maxCatchUp
 		}
+		s.weatherIncidents(prev, cur)
+		// Once an hour of the day, the pricing desks that are run by hand
+		// hear from the competition.
+		if int(prev)/60 != int(cur)/60 {
+			for code := range s.Tenants {
+				h := int(aogHash(code + fmt.Sprint(int(cur)/60)))
+				go s.competitorMove(ctx, code, func(n int) int { h = h*1103515245 + 12345; return (h >> 8 & 0x7fffffff) % n })
+			}
+		}
 		for code, t := range s.Tenants {
 			// A carrier someone's own node flies: the world still runs the
 			// network side of its day -- the Network Manager's slot, the

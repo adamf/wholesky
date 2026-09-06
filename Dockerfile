@@ -14,13 +14,15 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skyd   ./cmd/skyd \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worldc ./cmd/worldc
 RUN /out/worldc -data data -o /out/whole.json \
- && /out/worldc -data data -bts data/bts/2025-11-26.csv -date 2025-11-26 -o /out/thanksgiving.json
+ && /out/worldc -data data -bts data/bts/2025-11-26.csv -date 2025-11-26 -o /out/thanksgiving.json \
+ && /out/worldc -data data -countries "United Kingdom,France,Germany,Spain,Italy,Netherlands" -carriers 40 -mirror Q -o /out/mirror.json
 
 FROM alpine:3.20
 RUN addgroup -S sky && adduser -S sky -G sky
 COPY --from=build /out/skyd /usr/local/bin/skyd
 COPY --from=build /out/whole.json /etc/wholesky/whole.json
 COPY --from=build /out/thanksgiving.json /etc/wholesky/thanksgiving.json
+COPY --from=build /out/mirror.json /etc/wholesky/mirror.json
 USER sky
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/skyd"]

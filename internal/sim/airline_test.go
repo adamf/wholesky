@@ -148,3 +148,49 @@ func TestSeatRunsACarrier(t *testing.T) {
 		t.Error("released seat still held")
 	}
 }
+
+// The pricing desk hears from the competition: a seat running pricing by
+// hand is asked to match a rival's cut on one of its markets, and matching
+// lowers that market's fares and no other.
+func TestCompetitorMoveIsAPricingDecision(t *testing.T) {
+	s := bootWorld(t, Options{DecisionWindow: 5 * time.Second})
+	ctx := context.Background()
+	code := s.Manifest.Carriers[0].Designator
+	_, token, err := s.Airline.Take(code, "pricer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Airline.SetManual(code, token, "pricing", true); err != nil {
+		t.Fatal(err)
+	}
+	h := 7
+	go s.competitorMove(ctx, code, func(n int) int { h = h*1103515245 + 12345; return (h >> 8 & 0x7fffffff) % n })
+	var inbox []airline.Decision
+	deadline := time.Now().Add(3 * time.Second)
+	for len(inbox) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		inbox = s.Airline.Inbox(code)
+	}
+	if len(inbox) == 0 {
+		t.Skip("no shared market in the small world for a rival to cut")
+	}
+	d := inbox[0]
+	if d.Department != "pricing" || !strings.Contains(d.Title, "has cut") {
+		t.Fatalf("decision %+v", d)
+	}
+	if err := s.Airline.Answer(code, token, d.ID, "match"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	// Some market of the carrier's is now below the filing; the carrier's
+	// own multiplier is untouched.
+	cut := false
+	for _, f := range s.Flights[code] {
+		if s.tariff.EffectiveMultiplier(code, f.From, f.To) < 1 {
+			cut = true
+		}
+	}
+	if !cut || s.tariff.Multiplier(code) != 1 {
+		t.Errorf("matching did not cut a market: carrier ×%.2f, any market cut %v", s.tariff.Multiplier(code), cut)
+	}
+}

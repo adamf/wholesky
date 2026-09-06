@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -218,4 +219,42 @@ func sortCarriers(cs []Carrier) {
 		}
 		return cs[i].Designator < cs[j].Designator
 	})
+}
+
+// Mirror renames every carrier in a manifest so the world is disjoint from
+// the one it was compiled beside: two worlds compiled from the same data
+// carry the same designators, and in the network a designator is an
+// address. Each carrier gets a code from the prefix letter and a running
+// index (Q0, Q1, ... QZ, then R0 ...), its teletype address and ICAO
+// designator follow, and every flight and codeshare is re-pointed. A
+// world compiled -mirror joins one that was not.
+func Mirror(m *Manifest, prefix string) {
+	if m == nil || len(prefix) == 0 {
+		return
+	}
+	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	codes := map[string]string{}
+	p := strings.ToUpper(prefix)[0]
+	for i := range m.Carriers {
+		c := &m.Carriers[i]
+		code := string([]byte{p + byte(i/len(alphabet)), alphabet[i%len(alphabet)]})
+		codes[c.Designator] = code
+		if len(c.TTYAddress) >= 2 {
+			c.TTYAddress = c.TTYAddress[:len(c.TTYAddress)-2] + code
+		}
+		if c.ICAO != "" {
+			c.ICAO = string(p) + code
+		}
+		c.Name = c.Name + " (mirror)"
+		c.Designator = code
+	}
+	for i := range m.Flights {
+		f := &m.Flights[i]
+		if code, ok := codes[f.Carrier]; ok {
+			f.Carrier = code
+		}
+		if code, ok := codes[f.Marketing]; ok {
+			f.Marketing = code
+		}
+	}
 }
