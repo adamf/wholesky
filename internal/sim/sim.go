@@ -569,6 +569,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /carrier/{carrier}/pack", s.servePack)
 		mux.HandleFunc("POST /carrier/{carrier}/claim", s.serveClaim)
 		mux.HandleFunc("GET /world/manifest.json", s.serveManifest)
+		mux.HandleFunc("GET /worlds.json", s.serveWorlds)
 		mux.HandleFunc("POST /federation/world", s.serveJoinWorld)
 		mux.HandleFunc("POST /carrier/{carrier}/unclaim", s.serveClaim)
 		mux.HandleFunc("POST /carrier/{carrier}/node", s.serveNode)

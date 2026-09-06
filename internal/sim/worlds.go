@@ -404,6 +404,20 @@ func (s *Sim) Worlds() []map[string]any {
 	return out
 }
 
+// serveWorlds is GET /worlds.json: the worlds this one has joined.
+func (s *Sim) serveWorlds(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	d, tty := switchIdentity(0, s.worldCode)
+	live := []string{}
+	if s.Switch != nil {
+		live = s.Switch.LivePeers()
+	}
+	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		"name": s.worldName, "code": d, "switch_tty": tty, "public_switch": s.publicSwitch, "public_url": s.publicURL,
+		"joined": s.Worlds(), "live_peers": live,
+	})
+}
+
 // joinPeerWorlds is the initiator: for each world named at boot, keep
 // asking to join until it answers, then dial its switch.
 func (s *Sim) joinPeerWorlds(ctx context.Context, urls []string) {

@@ -832,6 +832,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 	mux.HandleFunc("/shard/revenue", s.serveRevenue)
 	mux.HandleFunc("POST /shard/world", s.serveShardWorld)
+	mux.HandleFunc("GET /worlds.json", s.serveWorlds)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
 	mux.HandleFunc("GET /billing.json", s.serveBilling)

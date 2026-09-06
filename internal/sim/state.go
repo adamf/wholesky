@@ -255,6 +255,15 @@ func (s *Sim) restoreState(ctx context.Context) {
 		s.SetNodeURL(code, u)
 	}
 	for _, w := range st.Worlds {
+		// A world that said hello again while this one was booting is
+		// already joined, with a fresher token than the file holds; the
+		// file must not put the old one back.
+		s.foreignMu.RLock()
+		_, already := s.foreign[w.Hello.Code]
+		s.foreignMu.RUnlock()
+		if already {
+			continue
+		}
 		if err := s.joinWorld(ctx, w.Hello, w.Accepting); err != nil {
 			s.log.Warn("joined world not restored", "world", w.Hello.Name, "err", err)
 		}
