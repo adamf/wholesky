@@ -222,13 +222,16 @@ func sortCarriers(cs []Carrier) {
 }
 
 // Mirror renames every carrier in a manifest so the world is disjoint from
-// the one it was compiled beside: two worlds compiled from the same data
+// the one it was compiled beside; taken is every designator the mirror must
+// not use -- Designators(dataDir) gives the whole data's, which is what a
+// world compiled from the same data can fly, whatever countries it kept.
+// It renames the world two worlds compiled from the same data
 // carry the same designators, and in the network a designator is an
 // address. Each carrier gets a code from the prefix letter and a running
 // index (Q0, Q1, ... QZ, then R0 ...), its teletype address and ICAO
 // designator follow, and every flight and codeshare is re-pointed. A
 // world compiled -mirror joins one that was not.
-func Mirror(m *Manifest, prefix string) {
+func Mirror(m *Manifest, prefix string, taken map[string]bool) {
 	if m == nil || len(prefix) == 0 {
 		return
 	}
@@ -237,9 +240,15 @@ func Mirror(m *Manifest, prefix string) {
 	// with a real carrier the other world flies (QF, QR and QZ are real; Q0
 	// is not), so the codes are drawn from the prefix on and any that the
 	// source world already uses are skipped.
-	taken := map[string]bool{}
+	if taken == nil {
+		taken = map[string]bool{}
+	}
 	for _, c := range m.Carriers {
 		taken[c.Designator] = true
+	}
+	// The world's own network nodes have designators too.
+	for _, reserved := range []string{"XS", "GV", "AT"} {
+		taken[reserved] = true
 	}
 	codes := map[string]string{}
 	p := strings.ToUpper(prefix)[0]

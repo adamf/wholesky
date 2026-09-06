@@ -59,7 +59,12 @@ func main() {
 	m.GeneratedAt = time.Now().UTC()
 
 	if *mirror != "" {
-		world.Mirror(m, *mirror)
+		taken, err := world.Designators(*dataDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "mirror:", err)
+			os.Exit(1)
+		}
+		world.Mirror(m, *mirror, taken)
 	}
 	f, err := os.Create(*out)
 	if err != nil {

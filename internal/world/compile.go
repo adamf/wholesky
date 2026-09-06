@@ -313,6 +313,21 @@ func readAirports(path string) (map[string]*Airport, error) {
 	return out, nil
 }
 
+// Designators is every carrier designator the data knows, for Mirror.
+func Designators(dataDir string) (map[string]bool, error) {
+	airlines, err := readAirlines(filepath.Join(dataDir, "airlines.dat"))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(airlines))
+	for _, a := range airlines {
+		if a.iata != "" {
+			out[a.iata] = true
+		}
+	}
+	return out, nil
+}
+
 func readAirlines(path string) (map[string]rawAirline, error) {
 	r, f, err := openCSV(path)
 	if err != nil {

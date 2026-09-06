@@ -121,8 +121,8 @@ func TestMirrorRenamesEveryCarrierTogether(t *testing.T) {
 	}
 	// A real carrier already holds Q1: the mirror skips it.
 	m.Carriers = append(m.Carriers, Carrier{Designator: "Q1", TTYAddress: "XXXRMQ1"})
-	Mirror(m, "q")
-	if m.Carriers[0].Designator != "Q0" || m.Carriers[0].TTYAddress != "LONRMQ0" || m.Carriers[0].ICAO != "QQ0" || m.Carriers[1].Designator != "Q2" || m.Carriers[2].Designator != "Q3" {
+	Mirror(m, "q", map[string]bool{"Q3": true})
+	if m.Carriers[0].Designator != "Q0" || m.Carriers[0].TTYAddress != "LONRMQ0" || m.Carriers[0].ICAO != "QQ0" || m.Carriers[1].Designator != "Q2" || m.Carriers[2].Designator != "Q4" {
 		t.Errorf("carriers %+v", m.Carriers)
 	}
 	if m.Flights[0].Carrier != "Q0" || m.Flights[0].Marketing != "Q2" || m.Flights[1].Carrier != "Q2" {
