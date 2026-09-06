@@ -57,12 +57,12 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 	}
 
 	aAddr, bAddr := freeAddr(t), freeAddr(t)
-	a, err := Boot(ctx, mA, Options{Log: log, Console: aAddr, WorldName: "alpha", PublicURL: "http://" + aAddr})
+	a, err := Boot(ctx, mA, Options{Log: log, AllowPrivatePeers: true, Console: aAddr, WorldName: "alpha", PublicURL: "http://" + aAddr})
 	if err != nil {
 		t.Fatalf("world alpha: %v", err)
 	}
 	defer a.Stop()
-	b, err := Boot(ctx, mB, Options{Log: log, Console: bAddr, WorldName: "bravo", WorldCode: "1Z", WorldCity: "MAD",
+	b, err := Boot(ctx, mB, Options{Log: log, AllowPrivatePeers: true, Console: bAddr, WorldName: "bravo", WorldCode: "1Z", WorldCity: "MAD",
 		PublicURL: "http://" + bAddr, PeerWorlds: []string{"http://" + aAddr}})
 	if err != nil {
 		t.Fatalf("world bravo: %v", err)

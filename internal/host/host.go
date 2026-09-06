@@ -146,6 +146,9 @@ type Tenant struct {
 type Options struct {
 	// SwitchAddr is the tenant's listener on the message switch.
 	SwitchAddr string
+	// LinkToken is the shared secret the tenant's hello carries: the switch
+	// takes nobody's word for a name.
+	LinkToken string
 	// DistributionAddresses are every distribution system's teletype
 	// addresses. Availability and schedule traffic goes to all of them --
 	// a seat count or a cancellation only one channel hears about is a
@@ -319,7 +322,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		client = &transport.Client{
 			Addr:   opts.SwitchAddr,
 			Framer: transport.DefaultFramer(),
-			Hello:  transport.Hello{Peer: c.Designator, Role: "carrier", Format: c.Format},
+			Hello:  transport.Hello{Peer: c.Designator, Role: "carrier", Format: c.Format, Token: opts.LinkToken},
 			Log:    log.With("carrier", c.Designator),
 			OnMessage: func(ctx context.Context, peer string, raw []byte) error {
 				return onMessage(ctx, raw)

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/adamf/jetway/pkg/bsp"
 	"io"
 	"log/slog"
 	"math"
@@ -168,6 +169,11 @@ type Options struct {
 	// A big world's stream is more than a small machine can take, so a
 	// world asks for it rather than gets it.
 	WantPeerMovements bool
+	// AllowPrivatePeers lets peer worlds and players' nodes live on
+	// private, loopback or link-local addresses: a test, or a gate on one
+	// machine. On the internet it stays off, and a URL a stranger gives is
+	// fetched only if the internet could reach it too.
+	AllowPrivatePeers bool
 	// DecisionWindow is how long a seat has to answer a decision before the
 	// autopilot's default, in real time; zero is forty-five seconds.
 	DecisionWindow time.Duration
@@ -295,6 +301,7 @@ type Sim struct {
 	// their tape; announced remembers which cancellations went out.
 	Airline     *airline.Registry
 	airlineSrv  *airline.Server
+	lobby       *lobbyCache
 	scoreMu     sync.Mutex
 	scoreCache  map[string]airline.Scorecard
 	scoreAt     time.Time
@@ -307,6 +314,9 @@ type Sim struct {
 	gdsCity       string
 	publicURL     string
 	wantMovements bool
+	allowPrivate  bool
+	joinLimiter   *ipLimiter
+	chaosLimiter  *ipLimiter
 	flightsMu     sync.RWMutex
 	foreignMu     sync.RWMutex
 	foreign       map[string]*foreignWorld
@@ -332,10 +342,12 @@ type Sim struct {
 	Switches []*node.Node
 	// plan is the settlement plan and settlement its latest day: the HOT
 	// each airline was handed, and how it reconciled.
-	plan       settle.Plan
-	settleMu   sync.Mutex
-	settlement *settle.Summary
-	billing    *interline.Summary
+	plan     settle.Plan
+	settleMu sync.Mutex
+	// settleRunMu serialises runs of the plan, whose file sequence is shared.
+	settleRunMu sync.Mutex
+	settlement  *settle.Summary
+	billing     *interline.Summary
 	// GDSes are the running distribution systems; GDS and GDSStore alias the
 	// first, which is also the movement watcher.
 	GDSes       []*GDSNode
@@ -514,7 +526,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Eye.WarpNow = s.clock.Warp
 	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
 	s.Airline = airline.New(opts.DecisionWindow)
-	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	s.lobby = &lobbyCache{inner: seatWorld{s}}
+	s.airlineSrv = &airline.Server{Reg: s.Airline, World: s.lobby, Local: s.runsCarrier, Proxy: s.proxyCarrier}
 	if opts.StateFile != "" {
 		s.state = &stateKeeper{path: opts.StateFile}
 	}
@@ -537,14 +550,18 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.linkSecret, s.publicSwitch = opts.LinkSecret, opts.PublicSwitch
 	s.worldName, s.worldCode, s.gdsCity, s.publicURL = opts.WorldName, worldCodeOf(opts), gdsCityOf(opts), opts.PublicURL
 	s.wantMovements = opts.WantPeerMovements
+	s.allowPrivate = opts.AllowPrivatePeers
+	s.joinLimiter = newIPLimiter(10*time.Second, 4096)
+	s.chaosLimiter = newIPLimiter(30*time.Second, 4096)
 	if s.worldName == "" {
 		s.worldName = s.worldCode
 	}
 	s.foreign = map[string]*foreignWorld{}
+	// One secret per world: the switch derives every link's token from
+	// the same one the machines present on the control plane, so unset it
+	// is the process's, shared by every machine booted in this process.
 	if s.linkSecret == "" {
-		b := make([]byte, 16)
-		rand.Read(b) //nolint:errcheck
-		s.linkSecret = hex.EncodeToString(b)
+		s.linkSecret = linkSecretOf(opts)
 	}
 	s.Eye.Weather = func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary) {
 		return s.fate.Weather, s.fate.Regulations, s.fate.Summary
@@ -563,6 +580,11 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	}
 	nSwitches := switchCount(opts)
 	sw, err := buildSwitch(ctx, m, opts, 0, nSwitches, "", func(mux *http.ServeMux) {
+		// The instruments are public; their controls are the operator's,
+		// behind the world's secret, and the weather is one act per
+		// visitor per half-minute.
+		s.Eye.Guard, s.Fleet.Guard = s.requireSecret, s.requireSecret
+		s.Eye.Allow = func(r *http.Request) bool { return s.chaosLimiter == nil || s.chaosLimiter.allow(clientIP(r)) }
 		s.Eye.Routes(mux)
 		s.Fleet.Routes(mux)
 		s.Stats.Routes(mux)
@@ -650,6 +672,9 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 			}
 		}()
 	}
+	// The lobby refresher reads the world's tables; it starts once they are
+	// all in place.
+	go s.lobby.run(ctx, 10*time.Second)
 	return s, nil
 }
 
@@ -705,6 +730,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		}
 		t, err := host.Start(ctx, c, flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
+			LinkToken:             linkToken(linkSecretOf(opts), c.Designator),
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
 			WatchAddress:          s.watcher(),
@@ -1643,7 +1669,7 @@ func (s *Sim) driveExternal(ctx context.Context, f world.Flight, day time.Time, 
 	if u == "" {
 		return nil
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := peerClient(30 * time.Second)
 	path := fmt.Sprintf("%s/api/ops/flight/%s%s/%s/%s/%s", u, f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, step)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -1683,6 +1709,17 @@ func (s *Sim) serveNode(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "malformed request"}) //nolint:errcheck
 		return
+	}
+	if req.URL != "" {
+		// The world will call this URL on the timetable: it has to be
+		// somewhere the internet reaches, not this machine's own network.
+		u, err := s.checkedURL(r.Context(), req.URL)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "the node's URL was refused: " + err.Error()}) //nolint:errcheck
+			return
+		}
+		req.URL = u
 	}
 	s.SetNodeURL(code, req.URL)
 	if s.Airline != nil {
@@ -1757,7 +1794,7 @@ func (s *Sim) setToken(code, token string) {
 	if len(s.Switches) == 0 && core != "" {
 		body, _ := json.Marshal(map[string]string{"carrier": code, "token": token})
 		client := &http.Client{Timeout: 5 * time.Second}
-		if resp, err := client.Post(core+"/federation/token", "application/json", bytes.NewReader(body)); err == nil {
+		if resp, err := s.fedPost(client, core+"/federation/token", body); err == nil {
 			resp.Body.Close()
 		} else {
 			s.log.Warn("the core did not take the token", "carrier", code, "err", err)
@@ -2181,9 +2218,37 @@ func (s *Sim) Settle(ctx context.Context) {
 	if len(s.GDSes) == 0 && len(s.Tenants) == 0 {
 		return // a core with neither books nor agents federates instead
 	}
-	// The agents are the distribution systems: those on this machine with
-	// their books, the rest by name, so a region can attribute the sales
-	// its carriers' books carry to the system that made them.
+	agents, airlines := s.settleInputs()
+	if s.plan.BSP == "" {
+		s.plan = settle.Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	}
+	s.settleRunMu.Lock()
+	sum, err := s.plan.Run(ctx, s.BookingDate, agents, airlines)
+	s.settleRunMu.Unlock()
+	if err != nil {
+		s.log.Warn("settlement failed", "err", err)
+		return
+	}
+	// The numbers are kept; the files are not. Two hundred airlines' HOT
+	// files were most of a region's memory, and a file is asked for
+	// rarely: serveHOT builds the one it is asked for.
+	for code, st := range sum.Statements {
+		st.File = nil
+		sum.Statements[code] = st
+	}
+	s.settleMu.Lock()
+	s.settlement = sum
+	s.settleMu.Unlock()
+	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
+		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown, "unverified", sum.Unverified)
+}
+
+// settleInputs is what the plan runs over: the agents are the distribution
+// systems -- those on this machine with their books, the rest by name, so a
+// region can attribute the sales its carriers' books carry to the system
+// that made them -- and the airlines are the world's, with the books this
+// machine holds.
+func (s *Sim) settleInputs() ([]settle.Agent, []settle.Airline) {
 	local := map[string]bool{}
 	agents := make([]settle.Agent, 0, len(gdsSlots))
 	for _, g := range s.GDSes {
@@ -2203,19 +2268,30 @@ func (s *Sim) Settle(ctx context.Context) {
 		}
 		airlines = append(airlines, a)
 	}
-	if s.plan.BSP == "" {
-		s.plan = settle.Plan{BSP: "WSK", Country: "XX", Currency: "USD2", CommissionRate: 100}
+	return agents, airlines
+}
+
+// hotFor builds one airline's HOT file now, from the books this machine
+// holds; nil when the airline is not settled here.
+func (s *Sim) hotFor(ctx context.Context, code string) *bsp.File {
+	agents, airlines := s.settleInputs()
+	var one []settle.Airline
+	for _, a := range airlines {
+		if a.Designator == code {
+			one = append(one, a)
+		}
 	}
-	sum, err := s.plan.Run(ctx, s.BookingDate, agents, airlines)
+	if len(one) == 0 || s.plan.BSP == "" {
+		return nil
+	}
+	s.settleRunMu.Lock()
+	sum, err := s.plan.Run(ctx, s.BookingDate, agents, one)
+	s.settleRunMu.Unlock()
 	if err != nil {
-		s.log.Warn("settlement failed", "err", err)
-		return
+		s.log.Warn("could not build HOT", "airline", code, "err", err)
+		return nil
 	}
-	s.settleMu.Lock()
-	s.settlement = sum
-	s.settleMu.Unlock()
-	s.log.Info("settled", "airlines", sum.Airlines, "transactions", sum.Transactions, "gross", sum.Gross,
-		"remittance", sum.Remittance, "matched", sum.Matched, "unreported", sum.Unreported, "unknown", sum.Unknown, "unverified", sum.Unverified)
+	return sum.Statements[code].File
 }
 
 // StartSettling runs the plan on a timer for the life of the world: every
@@ -2229,6 +2305,8 @@ func (s *Sim) StartSettling(every time.Duration) {
 		every = 5 * time.Minute
 	}
 	go s.settleLoop(s.ctx, every)
+	// Flown records leave on the same footing: the books exist by now.
+	go s.retentionLoop(s.ctx, 10*time.Minute)
 }
 
 // settleLoop re-runs the plan on a timer; a run still going is not
@@ -2398,17 +2476,21 @@ func (s *Sim) serveHOT(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if st.File == nil {
-		// Another machine holds the file: the region whose carriers'
-		// books the plan ran over.
+	file := st.File
+	if file == nil {
+		// Another machine holds the books: the region whose carriers'
+		// the plan ran over. Otherwise the books are here and the file is
+		// built for the asking.
 		if st.Peer != "" && proxyPass(w, r, st.Peer) {
 			return
 		}
-		http.NotFound(w, r)
-		return
+		if file = s.hotFor(r.Context(), code); file == nil {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=us-ascii")
-	if err := st.File.Write(w); err != nil {
+	if err := file.Write(w); err != nil {
 		s.log.Warn("could not write HOT", "airline", code, "err", err)
 	}
 }
@@ -2505,6 +2587,10 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 	cfg.Ingress = append(cfg.Ingress, config.Ingress{
 		Name: "link-net", Type: "tcp", Addr: net.JoinHostPort(bind, linkPort),
 		Identify: config.Identify{ByHello: true},
+		// The listener the internet reaches: every hello carries a token
+		// the switch knows, a link that says nothing for half an hour is
+		// reaped, and a full house closes the door.
+		RequireToken: true, IdleTimeout: 30 * time.Minute,
 	})
 	addPeer := func(designator, tty, format string, home int) {
 		cfg.Peers = append(cfg.Peers, config.Peer{
@@ -2524,11 +2610,11 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 		addPeer(c.Designator, c.TTYAddress, c.Format, home)
 		// The carrier's ICAO designator routes its AFTN traffic here too.
 		cfg.Peers[len(cfg.Peers)-1].ICAO = c.ICAO
-		if isExternal(opts, c.Designator) {
-			// Someone else's node will dial in as this carrier: it has to
-			// know the secret.
-			cfg.Peers[len(cfg.Peers)-1].Token = linkToken(linkSecretOf(opts), c.Designator)
-		}
+		// Whoever dials in as this carrier -- the world's own tenant on a
+		// region, or someone else's node from the pack -- has to know the
+		// secret: a name alone is not an identity on a port the internet
+		// can reach.
+		cfg.Peers[len(cfg.Peers)-1].Token = linkToken(linkSecretOf(opts), c.Designator)
 	}
 	// The other networks: a datalink provider and an ANSP per region shard.
 	for shard := 0; shard < networkShards; shard++ {
@@ -2567,6 +2653,20 @@ func buildSwitch(ctx context.Context, m *world.Manifest, opts Options, k, n int,
 			Egress: config.Egress{Type: "link_dial", Addr: trunkTo, Role: "switch"}})
 	}
 
+	// Every peer that dials in presents its own name's token; the trunk a
+	// later switch holds to the first presents the later switch's.
+	ownDesignator, _ := switchIdentity(k, worldCodeOf(opts))
+	for i := range cfg.Peers {
+		if cfg.Peers[i].Token != "" {
+			continue
+		}
+		switch cfg.Peers[i].Egress.Type {
+		case "tcp_accept":
+			cfg.Peers[i].Token = linkToken(linkSecretOf(opts), cfg.Peers[i].Name)
+		case "link_dial":
+			cfg.Peers[i].Token = linkToken(linkSecretOf(opts), ownDesignator)
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("switch config: %w", err)
 	}
@@ -2610,7 +2710,7 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 
 	client := &transport.Client{
 		Addr: switchAddr, Framer: transport.DefaultFramer(),
-		Hello: transport.Hello{Peer: g.Designator, Role: "gds", Format: "typeb"},
+		Hello: transport.Hello{Peer: g.Designator, Role: "gds", Format: "typeb", Token: linkToken(s.linkSecret, g.Designator)},
 		Log:   log,
 	}
 	gw.Sender = client
@@ -2989,6 +3089,19 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// /node/FR -> /node/FR/ so the page's relative fetches resolve.
 		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+		return
+	}
+	// The consoles are a window on the carriers' systems, not a door: the
+	// public can read a node's messages and records, and nothing more. A
+	// booking, a cancellation, a boarding, a retirement is the seat's to
+	// make through the world's own API, or the node's operator's on the
+	// node itself.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "the node consoles are read-only from here", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.HasPrefix(sub, "api/admin/") {
+		http.Error(w, "the node's admin surface is not public", http.StatusForbidden)
 		return
 	}
 	s.consolesMu.Lock()

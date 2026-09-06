@@ -86,9 +86,25 @@ func (t *Synthetic) AddFlights(flights []world.Flight) {
 	}
 }
 
+// clampMultiplier keeps a fare multiplier within what a fare can bear:
+// a tenth of the filing to ten times it. Zero and below restore the
+// filing; a number past the band is the band's edge, not an overflow.
+func clampMultiplier(m float64) float64 {
+	switch {
+	case m <= 0:
+		return m
+	case m < 0.1:
+		return 0.1
+	case m > 10:
+		return 10
+	}
+	return m
+}
+
 // SetMultiplier scales every fare a carrier files, from now on; 0 or a
 // negative value restores the filing.
 func (t *Synthetic) SetMultiplier(carrier string, mult float64) {
+	mult = clampMultiplier(mult)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.mult == nil {
@@ -115,6 +131,7 @@ func (t *Synthetic) Multiplier(carrier string) float64 {
 // on a route a competitor has cut, a premium where it has the route to
 // itself -- on top of the carrier's own; 0 restores the filing there.
 func (t *Synthetic) SetMarketMultiplier(carrier, origin, destination string, mult float64) {
+	mult = clampMultiplier(mult)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.marketMult == nil {

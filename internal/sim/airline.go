@@ -593,8 +593,12 @@ func (s *Sim) SetRevenueFeed(f LegFeed) {
 // serveRevenue is GET /shard/revenue.json and POST /shard/revenue.
 func (s *Sim) serveRevenue(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
+		if !s.secretOK(r) {
+			http.Error(w, "the revenue feed is the world's own to write", http.StatusForbidden)
+			return
+		}
 		var f LegFeed
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&f); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&f); err != nil {
 			http.Error(w, "malformed revenue feed", http.StatusBadRequest)
 			return
 		}
@@ -679,6 +683,95 @@ func (s *Sim) weatherIncidents(prev, cur int) {
 	}
 }
 
+// lobbyCache answers the lobby from the last build and rebuilds it in the
+// background: the build asks every machine for hundreds of scorecards and
+// every joined world for its rows, which is seconds, and a page should not
+// wait for it. The first request after boot builds once, synchronously.
+type lobbyCache struct {
+	inner airline.World
+	mu    sync.RWMutex
+	rows  []airline.CarrierInfo
+	at    time.Time
+	busy  bool
+}
+
+func (c *lobbyCache) Clock() (float64, int)                     { return c.inner.Clock() }
+func (c *lobbyCache) Flights(code string) []airline.FlightState { return c.inner.Flights(code) }
+func (c *lobbyCache) Score(code string) airline.Scorecard       { return c.inner.Score(code) }
+func (c *lobbyCache) Act(ctx context.Context, code string, a airline.Action) (string, error) {
+	return c.inner.Act(ctx, code, a)
+}
+
+// Has answers cheaply from the inner world.
+func (c *lobbyCache) Has(code string) bool {
+	if h, ok := c.inner.(airline.HasCarrier); ok {
+		return h.Has(code)
+	}
+	for _, r := range c.Carriers() {
+		if r.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// Carriers is the lobby as last built, rebuilt if stale.
+func (c *lobbyCache) Carriers() []airline.CarrierInfo {
+	c.mu.RLock()
+	rows, at := c.rows, c.at
+	c.mu.RUnlock()
+	if rows != nil && time.Since(at) < 30*time.Second {
+		return rows
+	}
+	if rows != nil {
+		go c.refresh()
+		return rows
+	}
+	return c.refresh()
+}
+
+// OwnCarriers is this world's rows from the same build.
+func (c *lobbyCache) OwnCarriers() []airline.CarrierInfo {
+	var out []airline.CarrierInfo
+	for _, r := range c.Carriers() {
+		if r.World == "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// refresh builds the lobby once; a build already running is not doubled.
+func (c *lobbyCache) refresh() []airline.CarrierInfo {
+	c.mu.Lock()
+	if c.busy {
+		rows := c.rows
+		c.mu.Unlock()
+		return rows
+	}
+	c.busy = true
+	c.mu.Unlock()
+	rows := c.inner.Carriers()
+	c.mu.Lock()
+	c.rows, c.at, c.busy = rows, time.Now(), false
+	c.mu.Unlock()
+	return rows
+}
+
+// run keeps the lobby fresh while the world lives.
+func (c *lobbyCache) run(ctx context.Context, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			c.refresh()
+		}
+	}
+}
+
 // federatedCarriers is the core's lobby: every peer's carriers, merged.
 type federatedCarriers struct {
 	seatWorld
@@ -709,18 +802,30 @@ func (f *federatedCarriers) OwnCarriers() []airline.CarrierInfo {
 	byCode := map[string]int{}
 	var out []airline.CarrierInfo
 	client := &http.Client{Timeout: 15 * time.Second}
-	for _, url := range f.peers() {
-		// A peer's own rows only: the core adds the joined worlds' once.
-		resp, err := client.Get(url + "/carriers.json?own=1")
-		if err != nil {
-			continue
-		}
-		var body struct {
-			Carriers []airline.CarrierInfo `json:"carriers"`
-		}
-		json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
-		resp.Body.Close()
-		for _, c := range body.Carriers {
+	// Every peer at once: the lobby is as slow as the slowest, not the sum.
+	urls := f.peers()
+	lists := make([][]airline.CarrierInfo, len(urls))
+	var wg sync.WaitGroup
+	for i, url := range urls {
+		wg.Add(1)
+		go func(i int, url string) {
+			defer wg.Done()
+			// A peer's own rows only: the core adds the joined worlds' once.
+			resp, err := client.Get(url + "/carriers.json?own=1")
+			if err != nil {
+				return
+			}
+			var body struct {
+				Carriers []airline.CarrierInfo `json:"carriers"`
+			}
+			json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+			resp.Body.Close()
+			lists[i] = body.Carriers
+		}(i, url)
+	}
+	wg.Wait()
+	for _, list := range lists {
+		for _, c := range list {
 			if _, seen := byCode[c.Code]; seen || c.World != "" {
 				continue
 			}

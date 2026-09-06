@@ -130,7 +130,7 @@ func (s *Sim) startNetNode(ctx context.Context, name, designator, tty, aftnAddr,
 	gw.Ground = ground
 	client := &transport.Client{
 		Addr: switchAddr, Framer: transport.DefaultFramer(),
-		Hello: transport.Hello{Peer: name, Role: "network", Format: "typeb"},
+		Hello: transport.Hello{Peer: name, Role: "network", Format: "typeb", Token: linkToken(s.linkSecret, name)},
 		Log:   log,
 	}
 	gw.Sender = client

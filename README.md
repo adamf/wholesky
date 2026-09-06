@@ -53,7 +53,9 @@ switch, three distribution systems, and all 518 carriers — serves the full
 Jetway console
 at `/node/{code}/`, wearing its own identity: open `/node/FR/` and you are
 inside Ryanair's reservation system, its own message tape, records and
-queues — proxied transparently to whichever machine runs it.
+queues — proxied transparently to whichever machine runs it, read-only
+from here (what a stranger can and cannot do is in
+[docs/security.md](docs/security.md)).
 
 ![Ryanair's own console, one of 522](docs/the-tenant-console.jpg)
 

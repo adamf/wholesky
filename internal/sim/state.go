@@ -73,10 +73,19 @@ func (s *Sim) setPeerState(name string, b json.RawMessage) {
 	if s.state.peers == nil {
 		s.state.peers = map[string]json.RawMessage{}
 	}
+	if _, known := s.state.peers[name]; !known && len(s.state.peers) >= maxStatePeers {
+		s.state.mu.Unlock()
+		s.log.Warn("state for an unknown peer refused: the table is full", "peer", name)
+		return
+	}
 	s.state.peers[name] = b
 	s.state.mu.Unlock()
 	s.saveState()
 }
+
+// maxStatePeers bounds the peers whose state a core keeps: a world has a
+// handful of machines, not thousands.
+const maxStatePeers = 64
 
 // servePeerState is GET and PUT /federation/state/{peer} on a core.
 func (s *Sim) servePeerState(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +176,7 @@ func (s *Sim) writeState() error {
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(secretHeader, s.linkSecret)
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -177,11 +187,12 @@ func (s *Sim) writeState() error {
 	if s.state.path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.state.path), 0o755); err != nil {
+	// The file holds every seat's token: the process's own to read.
+	if err := os.MkdirAll(filepath.Dir(s.state.path), 0o700); err != nil {
 		return err
 	}
 	tmp := s.state.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.state.path)
@@ -198,7 +209,12 @@ func (s *Sim) readState() ([]byte, error) {
 	}
 	if s.state.coreURL != "" && s.state.name != "" {
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(strings.TrimRight(s.state.coreURL, "/") + "/federation/state/" + s.state.name)
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(s.state.coreURL, "/")+"/federation/state/"+s.state.name, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set(secretHeader, s.linkSecret)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
 		}

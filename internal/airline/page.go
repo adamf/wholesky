@@ -42,6 +42,7 @@ const styleCSS = `
   .muted { color:#5b6b7d; } .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .lobby td a { color:var(--plane); } .lobby tr:hover td { background:#0f1721; }
   .rank { color:#5b6b7d; }
+  .star { color:#3d4c5c; font-size:14px; } .star.on, .star:hover { color:var(--amber); } tr.fav td { background:#0c1410; }
 `
 
 const lobbyHTML = `<!doctype html><meta charset="utf-8"><title>wholesky — run a carrier</title>
@@ -54,18 +55,32 @@ const lobbyHTML = `<!doctype html><meta charset="utf-8"><title>wholesky — run 
 <div class="row"><input id="holder" placeholder="your name" style="width:180px"> <span class="muted">then pick a carrier</span></div>
 </section>
 <section class="wide lobby"><h2>Leaderboard · <span id="n"></span> carriers</h2>
-<div class="scroll"><table><thead><tr><th>#</th><th>carrier</th><th>hub</th><th>flights</th><th>flown</th><th>cxl</th><th>OTP</th><th>LF</th><th>revenue</th><th>profit</th><th>score</th><th>seat</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="row" style="margin-bottom:8px"><input id="q" placeholder="find a carrier: code, name, hub, world, who's flying it" style="width:340px" autofocus> <label class="muted"><input type="checkbox" id="favonly" style="width:auto;vertical-align:middle"> favourites only</label> <span class="muted" id="shown"></span></div>
+<div class="scroll"><table><thead><tr><th></th><th>#</th><th>carrier</th><th>hub</th><th>flights</th><th>flown</th><th>cxl</th><th>OTP</th><th>LF</th><th>revenue</th><th>profit</th><th>score</th><th>seat</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="14" class="muted">building the lobby: every machine's scorecards, and the worlds joined to this one…</td></tr></tbody></table></div>
 </section>
 </main>
 <script>
 const $=s=>document.querySelector(s); const money=c=>"$"+(c/100).toLocaleString(undefined,{maximumFractionDigits:0}); const pct=x=>(100*x).toFixed(0)+"%";
 const mmz=m=>String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(Math.floor(m)%60).padStart(2,"0")+"z";
-async function load(){
-  const d=await fetch("/carriers.json").then(r=>r.json());
-  $("#clock").textContent=mmz(d.pos); $("#warp").textContent=d.warp; $("#n").textContent=d.carriers.length;
-  $("#rows").innerHTML=d.carriers.map((c,i)=>{ const s=c.score; return "<tr><td class='rank'>"+(i+1)+"</td><td><a href='/ops/"+c.code+"'>"+c.code+"</a> <span class='muted'>"+esc(c.name||"")+(c.world?" · "+esc(c.world):"")+(c.external?" · external":"")+"</span></td><td>"+c.hub+"</td><td>"+c.flights+"</td><td>"+s.flown+"</td><td>"+s.cancelled+"</td><td>"+pct(s.otp)+"</td><td>"+pct(s.load_factor)+"</td><td>"+money(s.revenue)+"</td><td>"+money(s.profit)+"</td><td><b>"+s.score.toFixed(1)+"</b></td><td>"+(c.seat?esc(c.seat.holder):"<span class='muted'>autopilot</span>")+"</td><td>"+(c.seat?"":"<button onclick='take(\""+c.code+"\")'>take</button>")+"</td></tr>"; }).join("");
+let last=null, favs=new Set();
+try{ favs=new Set(JSON.parse(localStorage.getItem("favs")||"[]")); }catch(e){}
+function fav(code){ if(favs.has(code)) favs.delete(code); else favs.add(code); try{ localStorage.setItem("favs", JSON.stringify([...favs])); }catch(e){} render(); }
+function matches(c,q){ if(!q) return true; const hay=[c.code,c.name,c.hub,c.world,c.seat&&c.seat.holder].filter(Boolean).join(" ").toLowerCase(); return q.split(/\s+/).every(w=>hay.includes(w)); }
+function render(){
+  if(!last) return; const d=last; const q=$("#q").value.trim().toLowerCase(); const only=$("#favonly").checked;
+  const ranked=d.carriers.map((c,i)=>({c,rank:i+1})).filter(x=>matches(x.c,q)&&(!only||favs.has(x.c.code)));
+  ranked.sort((a,b)=>(favs.has(b.c.code)-favs.has(a.c.code))||(a.rank-b.rank));
+  $("#shown").textContent=ranked.length===d.carriers.length?"":ranked.length+" of "+d.carriers.length;
+  if(!ranked.length){ $("#rows").innerHTML="<tr><td colspan='14' class='muted'>no carrier matches"+(only?" among your favourites":"")+"</td></tr>"; return; }
+  $("#rows").innerHTML=ranked.map(({c,rank})=>{ const s=c.score; const star=favs.has(c.code); return "<tr"+(star?" class='fav'":"")+"><td><a href='#' class='star"+(star?" on":"")+"' title='"+(star?"drop from":"add to")+" favourites' onclick='fav(\""+c.code+"\");return false'>"+(star?"★":"☆")+"</a></td><td class='rank'>"+rank+"</td><td><a href='/ops/"+c.code+"'>"+c.code+"</a> <span class='muted'>"+esc(c.name||"")+(c.world?" · "+esc(c.world):"")+(c.external?" · external":"")+"</span></td><td>"+esc(c.hub)+"</td><td>"+c.flights+"</td><td>"+s.flown+"</td><td>"+s.cancelled+"</td><td>"+pct(s.otp)+"</td><td>"+pct(s.load_factor)+"</td><td>"+money(s.revenue)+"</td><td>"+money(s.profit)+"</td><td><b>"+s.score.toFixed(1)+"</b></td><td>"+(c.seat?esc(c.seat.holder):"<span class='muted'>autopilot</span>")+"</td><td>"+(c.seat?"":"<button onclick='take(\""+c.code+"\")'>take</button>")+"</td></tr>"; }).join("");
 }
-function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+async function load(){
+  let d; try{ const r=await fetch("/carriers.json"); if(!r.ok) throw new Error(r.status); d=await r.json(); }
+  catch(e){ if(!last) $("#rows").innerHTML="<tr><td colspan='14' class='muted'>the lobby is not answering yet ("+esc(e.message)+"); trying again…</td></tr>"; return; }
+  last=d; $("#clock").textContent=mmz(d.pos); $("#warp").textContent=d.warp; $("#n").textContent=d.carriers.length; render();
+}
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+$("#q").addEventListener("input", render); $("#favonly").addEventListener("change", render);
 async function take(code){
   const holder=$("#holder").value.trim(); if(!holder){ $("#holder").focus(); return; }
   const r=await fetch("/carrier/"+code+"/take",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({holder})});

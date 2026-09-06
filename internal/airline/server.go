@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -189,8 +192,10 @@ type World interface {
 
 // Server is the seats' HTTP surface.
 type Server struct {
-	Reg   *Registry
-	World World
+	// streams counts the open event streams, capped at maxStreams.
+	streams atomic.Int32
+	Reg     *Registry
+	World   World
 	// world, when set by SetWorld, replaces World: a federating core swaps
 	// its view in after boot, while requests may already be arriving.
 	worldMu sync.RWMutex
@@ -463,6 +468,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	if s.streams.Add(1) > maxStreams {
+		s.streams.Add(-1)
+		http.Error(w, "too many open streams", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.streams.Add(-1)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	ch, cancel := s.Reg.Subscribe(r.PathValue("carrier"))
@@ -489,12 +500,36 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) lobbyPage(w http.ResponseWriter, r *http.Request) {
+// pageHeaders are what every page is served with: the scripts are the
+// page's own, the fetches go to this origin, nobody frames it, and a
+// mistyped response is never sniffed into something else.
+func pageHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "same-origin")
+}
+
+// codeRe is the shape of a designator the page may reflect: two or three
+// letters or digits. Anything else is not a carrier and never reaches the
+// markup.
+// maxStreams caps the event streams held open at once: a page reconnects,
+// a script opening thousands does not get to.
+const maxStreams = 256
+
+var codeRe = regexp.MustCompile(`^[A-Z0-9]{2,3}$`)
+
+func (s *Server) lobbyPage(w http.ResponseWriter, r *http.Request) {
+	pageHeaders(w)
 	w.Write([]byte(lobbyHTML)) //nolint:errcheck
 }
 
 func (s *Server) opsPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(strings.ReplaceAll(opsHTML, "{{CARRIER}}", strings.ToUpper(r.PathValue("carrier"))))) //nolint:errcheck
+	code := strings.ToUpper(r.PathValue("carrier"))
+	if !codeRe.MatchString(code) {
+		http.NotFound(w, r)
+		return
+	}
+	pageHeaders(w)
+	w.Write([]byte(strings.ReplaceAll(opsHTML, "{{CARRIER}}", html.EscapeString(code)))) //nolint:errcheck
 }

@@ -113,10 +113,21 @@ function setWarpUI(w){
   for(const id of ["w0","w60","w300","w600"])
     document.getElementById(id).classList.toggle("on", "w"+w===id);
 }
+/* The clock is the operator's: the first use asks for the world's key
+   (SKYD_LINK_SECRET) and the browser keeps it. A refused key is asked for
+   again. Visitors see the clock; they do not get to stop everyone's day. */
+function opKey(again){
+  let k=null; try{ k=localStorage.getItem("opkey"); }catch(e){}
+  if(!k||again){ k=prompt("operator key (the world's link secret)"); if(k){ try{ localStorage.setItem("opkey",k); }catch(e){} } }
+  return k;
+}
 for(const w of [0,60,300,600]){
-  document.getElementById("w"+w).onclick=()=>{
-    fetch("/eye/time",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({warp:w})}).then(()=>setWarpUI(w));
+  document.getElementById("w"+w).onclick=async()=>{
+    const k=opKey(false); if(!k) return;
+    const r=await fetch("/eye/time",{method:"POST",headers:{"Content-Type":"application/json","X-Skyd-Secret":k},
+      body:JSON.stringify({warp:w})});
+    if(r.status===403){ try{ localStorage.removeItem("opkey"); }catch(e){} alert("that is not the operator key"); return; }
+    if(r.ok) setWarpUI(w);
   };
 }
 

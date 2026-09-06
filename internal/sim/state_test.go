@@ -20,7 +20,7 @@ func TestStateSurvivesARestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	m := smallWorld(t)
-	s, err := Boot(ctx, m, Options{Log: log, StateFile: path, LinkSecret: "keep"})
+	s, err := Boot(ctx, m, Options{Log: log, AllowPrivatePeers: true, StateFile: path, LinkSecret: "keep"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestStateSurvivesARestart(t *testing.T) {
 	}
 	s.Stop()
 
-	s2, err := Boot(ctx, m, Options{Log: log, StateFile: path, LinkSecret: "keep"})
+	s2, err := Boot(ctx, m, Options{Log: log, AllowPrivatePeers: true, StateFile: path, LinkSecret: "keep"})
 	if err != nil {
 		t.Fatal(err)
 	}

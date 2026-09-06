@@ -159,9 +159,18 @@ async function refreshDrawer(){
 }
 function closeDrawer(){ sel=null; clearInterval(msgTimer);
   document.getElementById("drawer").classList.remove("open"); }
+/* Cutting a circuit is the operator's: the first use asks for the world's
+   key (SKYD_LINK_SECRET) and the browser keeps it. */
+function opKey(){
+  let k=null; try{ k=localStorage.getItem("opkey"); }catch(e){}
+  if(!k){ k=prompt("operator key (the world's link secret)"); if(k){ try{ localStorage.setItem("opkey",k); }catch(e){} } }
+  return k;
+}
 async function linkCtl(code,action){
-  await fetch("/fleet/node/"+code+"/link",{method:"POST",
-    headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+  const k=opKey(); if(!k) return;
+  const r=await fetch("/fleet/node/"+code+"/link",{method:"POST",
+    headers:{"Content-Type":"application/json","X-Skyd-Secret":k},body:JSON.stringify({action})});
+  if(r.status===403){ try{ localStorage.removeItem("opkey"); }catch(e){} alert("that is not the operator key"); return; }
   await poll(); await refreshDrawer();
 }
 async function openRaw(code,id){

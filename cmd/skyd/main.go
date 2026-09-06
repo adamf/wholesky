@@ -21,8 +21,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
-	_ "net/http/pprof"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -66,6 +67,7 @@ func run() error {
 		publicURL  = flag.String("public-url", "", "where other worlds reach this one's HTTP, for the manifest and the handshake")
 		peerWorld  = flag.String("peer-world", "", "worlds to join at boot, by URL, comma-separated")
 		wantMoves  = flag.Bool("want-peer-movements", false, "ask joined worlds to copy their carriers' movements to this world's globe; a big world's stream is heavy")
+		privPeers  = flag.Bool("allow-private-peers", false, "let peer worlds and players' nodes live on private or loopback addresses (a test or a gate on one machine); off, a URL a stranger gives is fetched only if the internet could reach it")
 		stateFile  = flag.String("state", os.Getenv("SKYD_STATE"), "file where seats, claims, nodes and joined worlds survive a restart; empty keeps them in memory")
 		linkPort   = flag.Int("link-port", 0, "port the first switch's subscriber listener binds (the second's is one higher); 0 picks a free port")
 		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
@@ -93,9 +95,21 @@ func run() error {
 	)
 	flag.Parse()
 	if *pprofAddr != "" {
+		// Profiles are the operator's, over ssh: the listener refuses any
+		// address the network could reach, and carries nothing else.
+		if host, _, err := net.SplitHostPort(*pprofAddr); err != nil || host == "" || (host != "localhost" && (net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback())) {
+			slog.Error("-pprof must bind a loopback address", "addr", *pprofAddr)
+			os.Exit(2)
+		}
 		go func() {
-			// The default mux carries the pprof handlers via the import.
-			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/debug/pprof/", pprof.Index)
+			mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+			srv := &http.Server{Addr: *pprofAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			if err := srv.ListenAndServe(); err != nil {
 				slog.Error("pprof listener ended", "err", err)
 			}
 		}()
@@ -144,7 +158,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, StateFile: *stateFile, LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,
@@ -266,7 +280,10 @@ func watch(ctx context.Context, log *slog.Logger, snap func() []any) error {
 // serveAndWatch serves a machine-local mux and heartbeats.
 func serveAndWatch(ctx context.Context, log *slog.Logger, addr string,
 	mux *http.ServeMux, snap func() []any) error {
-	srv := &http.Server{Addr: addr, Handler: mux}
+	// Headers, then the body, then the idle keep-alive each have a bound;
+	// no WriteTimeout, because the event streams are meant to stay open.
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 60 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 	go func() {
 		<-ctx.Done()
 		shctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -247,7 +247,10 @@ copy their movements to the other world's globe.
 
 If you would rather watch than work the counter, tell the world where your
 node answers: `POST /carrier/BA/node {"url": "http://your-node:8080"}` with
-the seat's token. The world then keeps your ground story's hours the way it
+the seat's token. The URL has to be one the internet reaches -- the world
+will not fetch from its own network on a stranger's say-so, so loopback,
+private ranges and Fly's `.internal` names are refused (a world started
+with `-allow-private-peers`, as a test on one machine is, allows them). The world then keeps your ground story's hours the way it
 keeps its own tenants' -- three hours before each departure it asks your
 node's desk for the name list (`POST /api/ops/flight/BA0117/26NOV/LHR/pnl`,
 jetway v0.1.93), and forty-five minutes out for the rest (`.../run`: every
@@ -267,10 +270,10 @@ curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/
 go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml     # or `skyagent`'s claim tool
 ```
 
-Locally:
+Locally (`-allow-private-peers`, because your node lives on loopback):
 
 ```sh
-go run ./cmd/skyd -world /tmp/world.json -external BA -link-secret dev -console :8080 &
+go run ./cmd/skyd -world /tmp/world.json -external BA -link-secret dev -allow-private-peers -console :8080 &
 curl -s localhost:8080/carrier/BA/pack | jq -r .config_yaml > ba.yaml
 cd ../jetway && go run ./cmd/jetwayd -config ../wholesky/ba.yaml
 ```
@@ -290,3 +293,14 @@ go run ./cmd/skyagent -world http://localhost:8080
 
 Take a carrier, switch ops and crew to manual, and watch the inbox as the
 afternoon banks meet the weather.
+
+## What a stranger can and cannot do
+
+The lobby, the ops centre, the sky and every carrier's console are public
+to read. Changing anything needs a credential: a seat's token for its
+carrier, the world's own secret for the control plane between machines and
+for the operator's controls (the clock, cutting a circuit), a token the
+switch knows for a link on 7000/7001. The carriers' consoles at
+`/node/XX/` are read-only from the world's address. The model, the audit
+that shaped it and the decisions still open are in
+[security.md](security.md).

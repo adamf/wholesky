@@ -12,6 +12,7 @@ package eye
 import (
 	_ "embed"
 	"sort"
+	"sync/atomic"
 
 	"encoding/json"
 	"fmt"
@@ -61,6 +62,13 @@ type Plane struct {
 
 // Eye is the observer.
 type Eye struct {
+	// Guard, when set, wraps the controls only an operator should reach
+	// (the clock). Allow, when set, says whether a request may act on the
+	// weather; the embedder rate-limits strangers with it.
+	Guard func(http.HandlerFunc) http.HandlerFunc
+	Allow func(*http.Request) bool
+	// streams counts the open event streams, capped at maxStreams.
+	streams  atomic.Int32
 	manifest *world.Manifest
 	airports map[string]*world.Airport
 	// byFlight resolves "U2"+"0123" to a scheduled leg; byLeg adds the
@@ -580,7 +588,20 @@ func (e *Eye) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /eye/stream", e.stream)
 	mux.HandleFunc("POST /eye/chaos", e.chaos)
 	mux.HandleFunc("GET /eye/flight/{flight}", e.flightRecords)
-	mux.HandleFunc("POST /eye/time", e.time)
+	// The clock is the operator's: a visitor who could stop it would stop
+	// everyone's day.
+	mux.HandleFunc("POST /eye/time", e.guarded(e.time))
+}
+
+// maxStreams caps the event streams held open at once.
+const maxStreams = 256
+
+// guarded wraps a handler in the Guard, when the embedder set one.
+func (e *Eye) guarded(h http.HandlerFunc) http.HandlerFunc {
+	if e.Guard == nil {
+		return h
+	}
+	return e.Guard(h)
 }
 
 // weather is the day's weather cells and regulations, with the clock, so
@@ -669,6 +690,10 @@ func (e *Eye) flightRecords(w http.ResponseWriter, r *http.Request) {
 
 // chaos is the map's one control: close or reopen an airport.
 func (e *Eye) chaos(w http.ResponseWriter, r *http.Request) {
+	if e.Allow != nil && !e.Allow(r) {
+		http.Error(w, "one act of weather at a time; the sky is shared", http.StatusTooManyRequests)
+		return
+	}
 	if e.Chaos == nil {
 		http.Error(w, "this world has no chaos hook", http.StatusNotImplemented)
 		return
@@ -758,6 +783,12 @@ func (e *Eye) stream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	if e.streams.Add(1) > maxStreams {
+		e.streams.Add(-1)
+		http.Error(w, "too many open streams", http.StatusServiceUnavailable)
+		return
+	}
+	defer e.streams.Add(-1)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 

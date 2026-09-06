@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -111,9 +112,19 @@ func (s *Sim) serveManifest(w http.ResponseWriter, r *http.Request) {
 // other's watcher, learns the other's flights so its sellers can sell them,
 // and answers with its own hello.
 func (s *Sim) serveJoinWorld(w http.ResponseWriter, r *http.Request) {
+	// A join makes this world fetch the other's manifest and wire its
+	// carriers into the switch: one attempt per address per ten seconds.
+	if s.joinLimiter != nil && !s.joinLimiter.allow(clientIP(r)) {
+		http.Error(w, "one join a world at a time; try again shortly", http.StatusTooManyRequests)
+		return
+	}
 	var h worldHello
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&h); err != nil || h.Code == "" || h.Token == "" {
 		http.Error(w, "a world's hello names its switch and carries a token", http.StatusBadRequest)
+		return
+	}
+	if err := s.vetHello(r.Context(), &h); err != nil {
+		http.Error(w, "the hello was refused: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := s.joinWorld(r.Context(), h, true); err != nil {
@@ -126,6 +137,62 @@ func (s *Sim) serveJoinWorld(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.hello()) //nolint:errcheck
 }
 
+// Bounds on what strangers' worlds may add to this one: the maps they
+// fill are keyed by names they choose.
+const (
+	maxJoinedWorlds    = 16
+	maxForeignCarriers = 4000
+	maxManifestBytes   = 48 << 20
+	maxLobbyBytes      = 4 << 20
+)
+
+// vetHello checks the parts of another world's hello this world will act
+// on: the URL it will fetch, the switch it may dial, the names it will
+// route. A hello from a machine the internet cannot reach is refused,
+// because this world would be fetching from its own network on a
+// stranger's say-so.
+func (s *Sim) vetHello(ctx context.Context, h *worldHello) error {
+	if len(h.Code) > 8 || len(h.Name) > 64 || len(h.Carriers) > maxForeignCarriers {
+		return fmt.Errorf("a hello names a switch in a few characters, a world in a few words, and fewer carriers than that")
+	}
+	if h.URL != "" {
+		u, err := s.checkedURL(ctx, h.URL)
+		if err != nil {
+			return fmt.Errorf("world URL: %w", err)
+		}
+		h.URL = u
+	}
+	if h.SwitchAddr != "" {
+		if err := s.publicHostPort(ctx, h.SwitchAddr); err != nil {
+			return fmt.Errorf("switch address: %w", err)
+		}
+	}
+	return nil
+}
+
+// ttyOwner says which carrier answers at a teletype address here: one of
+// this world's, or one of a joined world's.
+func (s *Sim) ttyOwner(addr string) (string, bool) {
+	if addr == "" {
+		return "", false
+	}
+	for code, c := range s.carriers {
+		if c.TTYAddress == addr {
+			return code, true
+		}
+	}
+	s.foreignMu.RLock()
+	defer s.foreignMu.RUnlock()
+	for _, fw := range s.foreign {
+		for _, c := range fw.Hello.Carriers {
+			if c.TTYAddress == addr {
+				return c.Designator, true
+			}
+		}
+	}
+	return "", false
+}
+
 // joinWorld wires another world in. accepting says this side accepts the
 // trunk (the other dials); otherwise this side dials, with the token.
 func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error {
@@ -135,11 +202,35 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	if h.Code == s.worldCode {
 		return fmt.Errorf("both worlds call their switch %s; set -world-code on one", h.Code)
 	}
+	if accepting {
+		// A stranger's world is a guest: there is room for a few, and
+		// they fill the switch's tables with names of their choosing.
+		s.foreignMu.RLock()
+		_, known := s.foreign[h.Code]
+		worlds, total := len(s.foreign), 0
+		for code, fw := range s.foreign {
+			if code != h.Code {
+				total += len(fw.Hello.Carriers)
+			}
+		}
+		s.foreignMu.RUnlock()
+		if !known && worlds >= maxJoinedWorlds {
+			return fmt.Errorf("this world has %d worlds joined and takes no more", worlds)
+		}
+		if total+len(h.Carriers) > maxForeignCarriers {
+			return fmt.Errorf("joined worlds may bring %d carriers between them; %s brings too many", maxForeignCarriers, h.Name)
+		}
+	}
 	for _, c := range h.Carriers {
 		if _, ok := s.carriers[c.Designator]; ok {
 			if _, foreign := s.foreignCarrier(c.Designator); !foreign {
 				return fmt.Errorf("both worlds fly %s; a designator is an address and must be one world's", c.Designator)
 			}
+		}
+		// An address is one carrier's: a guest naming another carrier's
+		// address would take its traffic.
+		if owner, taken := s.ttyOwner(c.TTYAddress); taken && owner != c.Designator {
+			return fmt.Errorf("%s answers at %s here already; %s cannot take that address", owner, c.TTYAddress, c.Designator)
 		}
 	}
 	for _, g := range s.GDSes {
@@ -173,11 +264,11 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	// comes up last, so nothing is routable before it is sellable.
 	var flights []world.Flight
 	if h.URL != "" {
-		client := &http.Client{Timeout: 60 * time.Second}
+		client := peerClient(60 * time.Second)
 		resp, err := client.Get(strings.TrimRight(h.URL, "/") + "/world/manifest.json")
 		if err == nil {
 			var m world.Manifest
-			if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestBytes)).Decode(&m); err == nil {
 				flights = m.Flights
 				if s.Eye != nil {
 					s.Eye.AddAirports(m.Airports)
@@ -228,10 +319,10 @@ func (s *Sim) serveShardWorld(w http.ResponseWriter, r *http.Request) {
 	}
 	var flights []world.Flight
 	if h.URL != "" && len(s.GDSes) > 0 {
-		client := &http.Client{Timeout: 60 * time.Second}
+		client := peerClient(60 * time.Second)
 		if resp, err := client.Get(strings.TrimRight(h.URL, "/") + "/world/manifest.json"); err == nil {
 			var m world.Manifest
-			if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestBytes)).Decode(&m); err == nil {
 				flights = m.Flights
 			}
 			resp.Body.Close()
@@ -258,7 +349,7 @@ func (s *Sim) joinedCarriers() []airline.CarrierInfo {
 	}
 	s.foreignMu.RUnlock()
 	var out []airline.CarrierInfo
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := peerClient(20 * time.Second)
 	for _, fw := range worlds {
 		if fw.Hello.URL == "" {
 			continue
@@ -269,7 +360,7 @@ func (s *Sim) joinedCarriers() []airline.CarrierInfo {
 				var body struct {
 					Carriers []airline.CarrierInfo `json:"carriers"`
 				}
-				json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+				json.NewDecoder(io.LimitReader(resp.Body, maxLobbyBytes)).Decode(&body) //nolint:errcheck
 				resp.Body.Close()
 				fw.lobby = fw.lobby[:0]
 				for _, c := range body.Carriers {

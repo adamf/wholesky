@@ -30,6 +30,8 @@ func bootWorld(t *testing.T, opts Options) *Sim {
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	// Tests live on loopback; the internet rule stays for the deployment.
+	opts.AllowPrivatePeers = true
 	s, err := Boot(ctx, smallWorld(t), opts)
 	if err != nil {
 		t.Fatalf("boot: %v", err)

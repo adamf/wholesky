@@ -149,7 +149,7 @@ func (c *Core) pollAloft(ctx context.Context) {
 			if p.Role != "gds" && p.Role != "region" {
 				continue
 			}
-			resp, err := client.Post(p.URL+"/shard/aloft", "application/json", bytes.NewReader(body))
+			resp, err := c.Sim.fedPost(client, p.URL+"/shard/aloft", body)
 			if err != nil {
 				continue
 			}
@@ -238,7 +238,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 	if s.airlineSrv != nil {
 		// The core's lobby is every peer's carriers; a seat's requests go
 		// to the machine that runs the carrier.
-		s.airlineSrv.SetWorld(&federatedCarriers{seatWorld: seatWorld{s}, peers: func() []string {
+		fed := &federatedCarriers{seatWorld: seatWorld{s}, peers: func() []string {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			var urls []string
@@ -247,7 +247,10 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 			}
 			sort.Strings(urls)
 			return urls
-		}})
+		}}
+		s.lobby = &lobbyCache{inner: fed}
+		s.airlineSrv.SetWorld(s.lobby)
+		go s.lobby.run(ctx, 10*time.Second)
 	}
 	s.Fleet.Remotes = c.remoteFleets
 	s.Fleet.Owner = c.ownerOf
@@ -261,7 +264,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		body, _ := json.Marshal(h)
 		client := &http.Client{Timeout: 20 * time.Second}
 		for _, p := range c.livePeers() {
-			if resp, err := client.Post(p.URL+"/shard/world", "application/json", bytes.NewReader(body)); err == nil {
+			if resp, err := s.fedPost(client, p.URL+"/shard/world", body); err == nil {
 				resp.Body.Close()
 			} else {
 				s.log.Warn("peer did not take the joined world", "peer", p.Name, "err", err)
@@ -343,9 +346,13 @@ func (c *Core) refreshSettlement(client *http.Client) int {
 
 // Routes mounts the federation surface onto the core's console mux.
 func (c *Core) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /federation/register", c.register)
-	mux.HandleFunc("POST /federation/token", c.token)
-	mux.HandleFunc("/federation/state/{peer}", c.Sim.servePeerState)
+	// Only this world's machines call these, over the private network,
+	// and every call presents the world's secret: a stranger's would name
+	// a URL for the core to dial, set another carrier's token, or read a
+	// region's saved seats with their tokens.
+	mux.HandleFunc("POST /federation/register", c.Sim.requireSecret(c.register))
+	mux.HandleFunc("POST /federation/token", c.Sim.requireSecret(c.token))
+	mux.HandleFunc("/federation/state/{peer}", c.Sim.requireSecret(c.Sim.servePeerState))
 }
 
 // token is a region asking the core's switches to demand (or stop
@@ -509,7 +516,7 @@ func (c *Core) pollRevenue(ctx context.Context) {
 		c.Sim.SetRevenueFeed(total)
 		body, _ := json.Marshal(total)
 		for _, p := range regions {
-			resp, err := client.Post(p.URL+"/shard/revenue", "application/json", bytes.NewReader(body))
+			resp, err := c.Sim.fedPost(client, p.URL+"/shard/revenue", body)
 			if err != nil {
 				continue
 			}
@@ -706,8 +713,7 @@ func federate(ctx context.Context, s *Sim, coreURL string, reg registration,
 	client := &http.Client{Timeout: 4 * time.Second}
 	call := func() (welcome, error) {
 		body, _ := json.Marshal(reg)
-		resp, err := client.Post(coreURL+"/federation/register", "application/json",
-			bytes.NewReader(body))
+		resp, err := s.fedPost(client, coreURL+"/federation/register", body)
 		if err != nil {
 			return welcome{}, err
 		}
@@ -831,7 +837,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("POST /carrier/{carrier}/node", s.serveNode)
 	mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 	mux.HandleFunc("/shard/revenue", s.serveRevenue)
-	mux.HandleFunc("POST /shard/world", s.serveShardWorld)
+	mux.HandleFunc("POST /shard/world", s.requireSecret(s.serveShardWorld))
 	mux.HandleFunc("GET /worlds.json", s.serveWorlds)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
@@ -881,6 +887,10 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 		json.NewEncoder(w).Encode(recs) //nolint:errcheck
 	})
 	mux.HandleFunc("POST /shard/aloft", func(w http.ResponseWriter, r *http.Request) {
+		if !s.secretOK(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		var keys []string
 		if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&keys); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1080,6 +1090,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		}
 		t, err := host.Start(ctx, c, s.Flights[c.Designator], host.Options{
 			SwitchAddr:            switchAddr,
+			LinkToken:             linkToken(linkSecretOf(opts), c.Designator),
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
 			WatchAddress:          s.watcher(),

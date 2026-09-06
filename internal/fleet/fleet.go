@@ -59,6 +59,8 @@ type node struct {
 
 // Collector watches every node.
 type Collector struct {
+	// Guard, when set, wraps the controls only an operator should reach.
+	Guard func(http.HandlerFunc) http.HandlerFunc
 	mu    sync.Mutex
 	nodes map[string]*node
 	order []string
@@ -176,7 +178,12 @@ func (c *Collector) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /fleet/node/{code}/messages.json", c.messagesJSON)
 	mux.HandleFunc("GET /fleet/node/{code}/message/{id}", c.raw)
 	mux.HandleFunc("GET /fleet/node/{code}/detail.json", c.detailJSON)
-	mux.HandleFunc("POST /fleet/node/{code}/link", c.linkControl)
+	// Severing a carrier's circuit is the operator's call, not a visitor's.
+	h := c.linkControl
+	if c.Guard != nil {
+		h = c.Guard(h)
+	}
+	mux.HandleFunc("POST /fleet/node/{code}/link", h)
 }
 
 // linkControl severs or restores one carrier's circuit.

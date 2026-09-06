@@ -22,6 +22,7 @@ package airline
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"sort"
@@ -222,7 +223,7 @@ func (r *Registry) Release(carrier, token string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.seats[carrier]
-	if !ok || s.token != token {
+	if !ok || !tokenMatch(s.token, token) {
 		return ErrNotHeld
 	}
 	delete(r.seats, carrier)
@@ -255,7 +256,7 @@ func (r *Registry) Authorised(carrier, token string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.seats[strings.ToUpper(carrier)]
-	return ok && token != "" && s.token == token
+	return ok && tokenMatch(s.token, token)
 }
 
 // SetManual takes a department off autopilot (manual true) or gives it back.
@@ -267,7 +268,7 @@ func (r *Registry) SetManual(carrier, token, dept string, manual bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.seats[carrier]
-	if !ok || s.token != token {
+	if !ok || !tokenMatch(s.token, token) {
 		return ErrNotHeld
 	}
 	s.Manual[dept] = manual
@@ -362,7 +363,7 @@ func (r *Registry) Answer(carrier, token, id, key string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.seats[carrier]
-	if !ok || s.token != token {
+	if !ok || !tokenMatch(s.token, token) {
 		return ErrNotHeld
 	}
 	d, ok := r.inbox[carrier][id]
@@ -443,8 +444,19 @@ func (r *Registry) Subscribe(carrier string) (<-chan Event, func()) {
 	return ch, func() {
 		r.mu.Lock()
 		delete(r.subs[carrier], ch)
+		if len(r.subs[carrier]) == 0 {
+			// The key was the caller's to choose; an empty table under it
+			// would outlive the stream that made it.
+			delete(r.subs, carrier)
+		}
 		r.mu.Unlock()
 	}
+}
+
+// tokenMatch compares a seat's token with the one presented, in constant
+// time, and never matches an empty one.
+func tokenMatch(want, got string) bool {
+	return got != "" && subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
 }
 
 // Seats is every held seat, without tokens, by carrier.
