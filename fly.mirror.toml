@@ -36,5 +36,5 @@ primary_region = "lhr"
 
 [[vm]]
   processes = ["world"]
-  size = "shared-cpu-2x"
+  size = "performance-1x"
   memory = "2048mb"

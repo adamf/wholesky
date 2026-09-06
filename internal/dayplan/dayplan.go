@@ -155,6 +155,8 @@ const (
 	Release      = 15 * time.Minute
 	ReserveCall  = 90
 	MaxSlotDelay = 180
+	// LongHaulMin is the block time from which a leg is flown augmented.
+	LongHaulMin = 8 * 60
 )
 
 // Build computes the day.
@@ -546,6 +548,18 @@ func (p *Plan) crews(m *world.Manifest) {
 		}
 		for i, f := range legs {
 			pf := p.Flights[Key(f)]
+			// A long-haul leg flies with an augmented crew: relief pilots
+			// and rest on board, its own duty, outside Table B (Part 117
+			// Table C allows up to seventeen hours with four pilots). The
+			// unaugmented tables would cancel every eleven-hour flight.
+			if f.ArrMin-f.DepMin >= LongHaulMin {
+				start(f)
+				duty.Legs = append(duty.Legs, crew.Leg{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)})
+				pf.Duty = dutyN
+				dutyN++ // the next leg gets a fresh crew after the layover
+				p.Summary.Duties++
+				continue
+			}
 			// As scheduled: does this leg fit the current duty?
 			trial := duty
 			trial.Legs = append(append([]crew.Leg(nil), duty.Legs...), crew.Leg{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)})

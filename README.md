@@ -356,6 +356,10 @@ And worlds join worlds: `skyd -peer-world URL` trunks two skies' switches,
 each sells the other's flights, and a seat sold in one lands in the other's
 carrier's book over the trunk.
 
+![Lufthansa's operations centre on the demo: the scorecard, one decision open, every department on manual, the levers](docs/the-ops-centre.jpg)
+
+![The lobby: a leaderboard of 518 carriers and who holds each seat](docs/the-lobby.jpg)
+
 ### Multiplayer, in four shapes
 
 1. **A group on the demo.** Everyone opens `/ops/` on the demo, takes a

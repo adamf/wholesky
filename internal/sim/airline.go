@@ -54,6 +54,7 @@ func (w seatWorld) Clock() (float64, int) {
 // that computed each on every request would not answer in time.
 func (w seatWorld) Carriers() []airline.CarrierInfo {
 	out := append(w.OwnCarriers(), w.s.joinedCarriers()...)
+	airline.RankAgainstTheWorld(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
 }
@@ -165,6 +166,11 @@ func (w seatWorld) booked(f world.Flight) (booked, seats int) {
 			booked += sold
 		}
 	}
+	// The schedule's own seat count is the cabin when the fleet table
+	// knows less; the distribution systems' word on seats sold is the
+	// floor when the inventory here knows less.
+	seats = max(seats, f.Seats)
+	booked = max(booked, w.s.legSeats(f))
 	return booked, seats
 }
 
@@ -686,6 +692,7 @@ type federatedCarriers struct {
 // joined worlds'.
 func (f *federatedCarriers) Carriers() []airline.CarrierInfo {
 	out := append(f.OwnCarriers(), f.s.joinedCarriers()...)
+	airline.RankAgainstTheWorld(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
 }

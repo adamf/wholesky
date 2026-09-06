@@ -381,6 +381,10 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <p class="muted">Everything the page does is JSON over HTTP, and <code>cmd/skyagent</code> serves it as MCP tools over stdio -- <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code>, <code>weather</code> -- so Claude Code or Claude Desktop can run an airline against the world with no code at all. Nothing an agent can do is hidden from a person; a seat can be handed between them mid-day.</p>
       </div>
     </div>
+    <div class="shot" style="margin-top:14px"><img src="the-ops-centre.jpg" alt="Lufthansa's operations centre on the demo: the scorecard, two decisions open -- LH220 FRA-BOG will leave 90 minutes late, announce or hold; UA has cut FRA-SFO fares by 12%, match or hold -- every department on manual, and the levers"></div>
+    <p class="caption">Lufthansa's operations centre on the demo, mid-afternoon: 829 departures, 43 cancelled, two decisions open with forty seconds on each: a delay to announce or hold, a rival's fare cut to match or hold. Every department is on manual, so the day asks.</p>
+    <div class="shot"><img src="the-tape.jpg" alt="The departures board and the tape: flights landed with their delays and crews' legality, and the tape of decisions opened and defaulted, a rival's fare cut, crews timing out"></div>
+    <p class="caption">The departures board and the tape underneath: what the day did to each flight, and every decision the seat was asked -- and what happened when it did not answer in time.</p>
     <p class="muted" style="margin-top:14px">Where it goes: bring your own jetway. A carrier is a jetway node with the world's schedule and addresses, and the switch does not care where that node runs -- a player's <code>jetwayd</code> on their own machine dials the world's switch and the booking traffic lands on their socket. Then worlds trunk to worlds. The design and what is still missing for it is in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
   </div>
 </section>
@@ -390,6 +394,8 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="eyebrow">multiplayer</div>
     <h2>One sky, many hands: people, agents, your own nodes, other worlds</h2>
     <p class="lead">Everything below is the same three commands and one API. Pick the shape that fits the room.</p>
+    <div class="shot"><img src="the-lobby.jpg" alt="The lobby: a leaderboard of 518 carriers with flights, flown, cancellations, on-time, load factor, revenue, profit, score and who holds the seat"></div>
+    <p class="caption">The lobby is the leaderboard. Every carrier nobody took is the autopilot's baseline; a take button is a seat.</p>
     <div class="two">
       <div class="card">
         <h3>1 · A group on the demo, no install</h3>

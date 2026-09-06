@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -89,7 +90,11 @@ type Scorecard struct {
 	Defaulted int `json:"defaulted"`
 }
 
-// Rank is the composite the leaderboard sorts by.
+// Rank fills the derived figures. The composite is set by
+// RankAgainstTheWorld once every carrier is in hand, because a day's
+// revenue only means something against the day's: an unfilled world
+// leaves every carrier in the red and a two-flight carrier with one
+// lucky sale on top.
 func (s *Scorecard) Rank() {
 	s.Profit = s.Revenue - s.Cost
 	if s.Revenue > 0 {
@@ -101,7 +106,42 @@ func (s *Scorecard) Rank() {
 	if s.Seats > 0 {
 		s.LoadFactor = float64(s.Passengers) / float64(s.Seats)
 	}
-	s.Score = 100*s.Margin + 50*s.OTP - 2*float64(s.Cancelled)
+	s.Score = 50*s.OTP + 50*s.completion() - 2*float64(s.Cancelled)
+}
+
+// completion is the share of the carrier's day that flew or will.
+func (s *Scorecard) completion() float64 {
+	if s.Flights == 0 {
+		return 0
+	}
+	return 1 - float64(s.Cancelled)/float64(s.Flights)
+}
+
+// RankAgainstTheWorld sets every carrier's composite against the whole
+// table: punctuality and completion as before, plus how the carrier's
+// revenue per seat flown stands against the world's, worth up to fifty
+// points either way, and a small weight for having flown at all so a
+// two-flight carrier cannot lead five hundred.
+func RankAgainstTheWorld(rows []CarrierInfo) {
+	var rev, seats int64
+	for _, c := range rows {
+		rev += c.Score.Revenue
+		seats += int64(c.Score.Seats)
+	}
+	world := 0.0
+	if seats > 0 {
+		world = float64(rev) / float64(seats)
+	}
+	for i := range rows {
+		sc := &rows[i].Score
+		rel := 0.0
+		if world > 0 && sc.Seats > 0 {
+			rel = float64(sc.Revenue)/float64(sc.Seats)/world - 1
+			rel = math.Max(-1, math.Min(1, rel))
+		}
+		size := math.Min(1, float64(sc.Flown)/20) // full weight from twenty flights flown
+		sc.Score = size*(50*sc.OTP+50*sc.completion()+50*rel) - 2*float64(sc.Cancelled)
+	}
 }
 
 // Action is a lever pulled.

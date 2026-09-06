@@ -241,3 +241,25 @@ func TestReplanChainsASeatsRetimeDownTheTail(t *testing.T) {
 		t.Errorf("the cancelled fifth leg was not reported: %v", changed)
 	}
 }
+
+// An eleven-hour leg is flown by an augmented crew and is never cancelled
+// for duty time on its own account, however late it runs.
+func TestLongHaulFliesAugmented(t *testing.T) {
+	day := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	m := &world.Manifest{Carriers: []world.Carrier{{Designator: "LH", Hub: "FRA"}}, Flights: []world.Flight{
+		{Carrier: "LH", Number: "0700", From: "FRA", To: "MUC", DepMin: 6 * 60, ArrMin: 7 * 60, Tail: "D1"},
+		{Carrier: "LH", Number: "0639", From: "MUC", To: "PVG", DepMin: 12 * 60, ArrMin: 23*60 + 22, Tail: "D1"},
+	}}
+	p := Build(m, day, func(f world.Flight, _ time.Time) (int, int) {
+		if f.Number == "0639" {
+			return 240, 240
+		}
+		return 0, 0
+	})
+	if pf := p.Of(m.Flights[1]); pf.Cancelled || pf.Duty == 0 {
+		t.Errorf("the long haul: %+v", pf)
+	}
+	if p.Summary.TimedOut != 0 {
+		t.Errorf("timed out %d", p.Summary.TimedOut)
+	}
+}
