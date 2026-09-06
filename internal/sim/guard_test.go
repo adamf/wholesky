@@ -75,9 +75,11 @@ func TestStrangersURLsMustBePublic(t *testing.T) {
 	}
 }
 
-// The node consoles are a window, not a door: from the world's own
-// address they answer reads, never a change, and never the admin surface.
-func TestNodeConsolesAreReadOnlyFromTheWorld(t *testing.T) {
+// The node consoles are a window for everyone and a door for the seat: a
+// stranger reads, and is told so in the JSON the console shows; the
+// carrier's seat holder books, cancels and boards; nobody reaches the
+// admin surface. The console page arrives carrying the seat's token.
+func TestNodeConsolesAnswerToTheSeat(t *testing.T) {
 	s := bootWorld(t, Options{})
 	var code string
 	for c := range s.Tenants {
@@ -87,22 +89,49 @@ func TestNodeConsolesAreReadOnlyFromTheWorld(t *testing.T) {
 	if code == "" {
 		t.Skip("no tenants in the small world")
 	}
+	do := func(method, path, token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+		if token != "" {
+			req.Header.Set("X-Seat-Token", token)
+		}
+		rec := httptest.NewRecorder()
+		s.serveNodeConsole(rec, req)
+		return rec
+	}
 	for _, tc := range []struct {
 		method, path string
 		want         int
 	}{
-		{http.MethodPost, "/node/" + code + "/api/book", http.StatusMethodNotAllowed},
-		{http.MethodPost, "/node/" + code + "/api/pnr/ABC123/cancel", http.StatusMethodNotAllowed},
-		{http.MethodPost, "/node/" + code + "/api/admin/retire", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/node/" + code + "/api/book", http.StatusForbidden},
+		{http.MethodPost, "/node/" + code + "/api/pnr/ABC123/cancel", http.StatusForbidden},
+		{http.MethodPost, "/node/" + code + "/api/admin/retire", http.StatusForbidden},
 		{http.MethodGet, "/node/" + code + "/api/admin/export", http.StatusForbidden},
 		{http.MethodGet, "/node/" + code + "/api/status", http.StatusOK},
 	} {
-		req := httptest.NewRequest(tc.method, tc.path, nil)
-		rec := httptest.NewRecorder()
-		s.serveNodeConsole(rec, req)
+		rec := do(tc.method, tc.path, "")
 		if rec.Code != tc.want {
 			t.Errorf("%s %s: %d, want %d", tc.method, tc.path, rec.Code, tc.want)
 		}
+		if tc.want == http.StatusForbidden && !strings.Contains(rec.Header().Get("Content-Type"), "json") {
+			t.Errorf("%s %s refused without JSON: %q", tc.method, tc.path, rec.Header().Get("Content-Type"))
+		}
+	}
+	_, token, err := s.Airline.Take(code, "Edith")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(http.MethodPost, "/node/"+code+"/api/pnr/ABC123/cancel", token); rec.Code == http.StatusForbidden {
+		t.Fatalf("the seat holder was refused their own console: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(http.MethodPost, "/node/"+code+"/api/admin/retire", token); rec.Code != http.StatusForbidden {
+		t.Fatalf("the seat holder reached the admin surface: %d", rec.Code)
+	}
+	page := do(http.MethodGet, "/node/"+code+"/", "")
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `localStorage.getItem("seat:"+c)`) || !strings.Contains(page.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("console page without the seat script: %d %q", page.Code, page.Header().Get("Content-Type"))
+	}
+	if body := do(http.MethodGet, "/node/"+code+"/api/status", "").Body.String(); strings.Contains(body, "<script>") {
+		t.Fatal("the seat script leaked into a JSON response")
 	}
 }
 

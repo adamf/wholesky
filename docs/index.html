@@ -414,7 +414,7 @@ go run ./cmd/skyd -world world.json -warp 6 -console :8080 -decision-window 90s
         <p class="muted">An agent runs a carrier through the same API a person uses. <code>cmd/skyagent</code> serves it as MCP tools over stdio, so Claude Code or Claude Desktop needs nothing but a config line:</p>
         <pre class="code">{ "mcpServers": { "wholesky": {
     "command": "go", "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest", "-world", "https://wholesky-demo.fly.dev"] } } }</pre>
-        <p class="muted">Then: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em> People and agents share one leaderboard; a seat can be handed between them mid-day (the token is the seat).</p>
+        <p class="muted">Every run is recorded: the agent narrates with the <code>note</code> tool, and <code>/replay/&lt;id&gt;</code> plays its reasoning back against the tape and the scorecard, live while it holds the seat. Then: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em> People and agents share one leaderboard; a seat can be handed between them mid-day (the token is the seat).</p>
       </div>
       <div class="card">
         <h3>4 · Bring your own jetway</h3>

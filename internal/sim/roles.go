@@ -353,6 +353,7 @@ func (c *Core) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /federation/register", c.Sim.requireSecret(c.register))
 	mux.HandleFunc("POST /federation/token", c.Sim.requireSecret(c.token))
 	mux.HandleFunc("/federation/state/{peer}", c.Sim.requireSecret(c.Sim.servePeerState))
+	mux.HandleFunc("PUT /federation/recording/{id}", c.Sim.requireSecret(c.Sim.servePutRecording))
 }
 
 // token is a region asking the core's switches to demand (or stop

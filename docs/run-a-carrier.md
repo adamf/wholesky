@@ -294,6 +294,22 @@ go run ./cmd/skyagent -world http://localhost:8080
 Take a carrier, switch ops and crew to manual, and watch the inbox as the
 afternoon banks meet the weather.
 
+## The flight recorder
+
+Every run is recorded from take to release: what the day asked, what the
+seat answered and when, what it did on its own, what the scorecard did
+about it, and what the seat said it was thinking. The sim clock is on every
+line. While a seat is held, `/replay/BA` plays the run so far; when it is
+released the run is kept and `/replay/<id>` plays it for good -- the lobby
+links each seat's last run, and `/recordings.json` lists them all.
+
+The seat's own words come from `POST /carrier/BA/note {"text": "..."}` with
+the seat's token; `skyagent` exposes it as the `note` tool and tells the
+agent to narrate, so a replay of an agent's day reads as the agent's
+reasoning against the tape. `skyagent -record run.jsonl` also keeps every
+call and answer locally. A replay page takes `?src=` too, so a recording
+copied to a static site plays there without the world.
+
 ## What a stranger can and cannot do
 
 The lobby, the ops centre, the sky and every carrier's console are public
@@ -301,6 +317,7 @@ to read. Changing anything needs a credential: a seat's token for its
 carrier, the world's own secret for the control plane between machines and
 for the operator's controls (the clock, cutting a circuit), a token the
 switch knows for a link on 7000/7001. The carriers' consoles at
-`/node/XX/` are read-only from the world's address. The model, the audit
-that shaped it and the decisions still open are in
+`/node/XX/` are read-only for everyone but the seat: take a carrier and
+its console is yours to book, cancel and board from, as the airline. The
+model, the audit that shaped it and the decisions still open are in
 [security.md](security.md).

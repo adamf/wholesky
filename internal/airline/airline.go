@@ -63,8 +63,10 @@ type Seat struct {
 	Since   time.Time       `json:"since"`
 	Manual  map[string]bool `json:"manual"`
 	// Answered and Defaulted count the seat's decisions.
-	Answered  int    `json:"answered"`
-	Defaulted int    `json:"defaulted"`
+	Answered  int `json:"answered"`
+	Defaulted int `json:"defaulted"`
+	// Recording is the id of the run being recorded for this seat.
+	Recording string `json:"recording,omitempty"`
 	token     string // returned once, on Take
 }
 
@@ -99,11 +101,13 @@ type Decision struct {
 // Event is one line of a carrier's tape: a decision opened or closed, an
 // action taken, an incident the day threw.
 type Event struct {
-	At      time.Time `json:"at"`
-	Carrier string    `json:"carrier"`
-	Kind    string    `json:"kind"`
-	Text    string    `json:"text"`
-	Data    any       `json:"data,omitempty"`
+	At time.Time `json:"at"`
+	// Pos is the sim clock at the event, in minutes of the day.
+	Pos     float64 `json:"pos,omitempty"`
+	Carrier string  `json:"carrier"`
+	Kind    string  `json:"kind"`
+	Text    string  `json:"text"`
+	Data    any     `json:"data,omitempty"`
 }
 
 // Registry holds the seats, their inboxes and their tapes.
@@ -116,6 +120,12 @@ type Registry struct {
 	// OnChange, when set, is called after a seat is taken, released or
 	// changed, so the world can persist the seats.
 	OnChange func()
+	// Pos, when set, is the sim clock in minutes of the day; every tape
+	// line and sample carries it.
+	Pos func() float64
+	// OnRecording, when set, is handed every finished run, so the world
+	// can keep it somewhere a restart does not reach.
+	OnRecording func(*Recording)
 
 	mu    sync.Mutex
 	seats map[string]*Seat
@@ -123,6 +133,9 @@ type Registry struct {
 	tape  map[string][]Event
 	subs  map[string]map[chan Event]struct{}
 	seq   int
+	// recs are the runs in progress, by carrier; done the finished ones.
+	recs map[string]*Recording
+	done []*Recording
 }
 
 // SeatState is a seat as persisted: the token included, since the seat
@@ -167,7 +180,11 @@ func (r *Registry) Restore(states []SeatState) {
 		if m == nil {
 			m = map[string]bool{}
 		}
-		r.seats[code] = &Seat{Carrier: code, Holder: st.Holder, Since: st.Since, Manual: m, Answered: st.Answered, Defaulted: st.Defaulted, token: st.Token}
+		s := &Seat{Carrier: code, Holder: st.Holder, Since: st.Since, Manual: m, Answered: st.Answered, Defaulted: st.Defaulted, token: st.Token}
+		r.seats[code] = s
+		// The run before the restart is wherever the world kept it; a new
+		// one starts here.
+		r.startRecordingLocked(s)
 		r.emit(Event{At: r.Now(), Carrier: code, Kind: "seat", Text: st.Holder + "'s seat restored after a restart"})
 	}
 }
@@ -211,6 +228,7 @@ func (r *Registry) Take(carrier, holder string) (Seat, string, error) {
 	rand.Read(b) //nolint:errcheck
 	s := &Seat{Carrier: carrier, Holder: holder, Since: r.Now(), Manual: map[string]bool{}, token: hex.EncodeToString(b)}
 	r.seats[carrier] = s
+	r.startRecordingLocked(s)
 	r.emit(Event{At: r.Now(), Carrier: carrier, Kind: "seat", Text: holder + " took the seat"})
 	r.changed()
 	return *s, s.token, nil
@@ -236,7 +254,11 @@ func (r *Registry) Release(carrier, token string) error {
 		delete(r.inbox[carrier], id)
 	}
 	r.emit(Event{At: r.Now(), Carrier: carrier, Kind: "seat", Text: s.Holder + " released the seat; autopilot resumes"})
+	rec := r.finishRecordingLocked(s)
 	r.changed()
+	if rec != nil && r.OnRecording != nil {
+		go r.OnRecording(rec.clone())
+	}
 	return nil
 }
 
@@ -408,6 +430,10 @@ func (r *Registry) Emit(carrier, kind, text string, data any) {
 
 // emit is Emit under the lock.
 func (r *Registry) emit(e Event) {
+	if e.Pos == 0 {
+		e.Pos = r.pos()
+	}
+	r.recordLocked(e)
 	tape := append(r.tape[e.Carrier], e)
 	if len(tape) > 200 {
 		tape = tape[len(tape)-200:]

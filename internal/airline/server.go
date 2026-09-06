@@ -3,6 +3,7 @@ package airline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -209,6 +210,15 @@ type Server struct {
 	// OnRelease, when set, is told when a seat is released, so the world
 	// can take back anything the seat had claimed.
 	OnRelease func(carrier string)
+	// Recordings, when set, holds finished runs beyond this process: the
+	// world's disk, or the core's. The registry's own memory is asked first.
+	Recordings RecordingStore
+}
+
+// RecordingStore keeps finished runs where a restart does not reach.
+type RecordingStore interface {
+	Recording(id string) (*Recording, bool)
+	Recordings() []Summary
 }
 
 // SetWorld replaces the world the server answers from.
@@ -252,6 +262,127 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /carrier/{carrier}/departments", s.departments)
 	mux.HandleFunc("POST /carrier/{carrier}/decide", s.decide)
 	mux.HandleFunc("POST /carrier/{carrier}/act", s.act)
+	// The flight recorder: the seat's own words onto the tape, the run so
+	// far, the runs kept, and the page that plays one back.
+	mux.HandleFunc("POST /carrier/{carrier}/note", s.note)
+	mux.HandleFunc("GET /carrier/{carrier}/recording.json", s.liveRecording)
+	mux.HandleFunc("GET /recordings.json", s.recordings)
+	mux.HandleFunc("GET /recording/{id}", s.recording)
+	mux.HandleFunc("GET /replay/{id}", s.replayPage)
+}
+
+// RecordScores samples every held seat's scorecard into its recording,
+// for the life of the world.
+func (s *Server) RecordScores(ctx context.Context, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			for _, seat := range s.Reg.Seats() {
+				if s.Local != nil && !s.Local(seat.Carrier) {
+					continue
+				}
+				s.Reg.Sample(seat.Carrier, s.view().Score(seat.Carrier))
+			}
+		}
+	}
+}
+
+func (s *Server) note(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, fmt.Errorf("malformed request: %w", err))
+		return
+	}
+	if err := s.Reg.Note(r.PathValue("carrier"), s.token(r), req.Text); err != nil {
+		code := http.StatusForbidden
+		if !errors.Is(err, ErrNotHeld) {
+			code = http.StatusBadRequest
+		}
+		fail(w, code, err)
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "noted"})
+}
+
+func (s *Server) liveRecording(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	rec, ok := s.Reg.LiveRecording(r.PathValue("carrier"))
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("nobody holds %s; a run is recorded while a seat is held", strings.ToUpper(r.PathValue("carrier"))))
+		return
+	}
+	writeJSON(w, rec)
+}
+
+func (s *Server) recordings(w http.ResponseWriter, r *http.Request) {
+	seen := map[string]bool{}
+	var out []Summary
+	for _, sum := range s.Reg.Recordings() {
+		seen[sum.ID] = true
+		out = append(out, sum)
+	}
+	if s.Recordings != nil {
+		for _, sum := range s.Recordings.Recordings() {
+			if !seen[sum.ID] {
+				out = append(out, sum)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
+	if len(out) > 200 {
+		out = out[:200]
+	}
+	writeJSON(w, map[string]any{"recordings": out})
+}
+
+func (s *Server) recording(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSuffix(r.PathValue("id"), ".json")
+	if !ValidRecordingID(id) {
+		http.NotFound(w, r)
+		return
+	}
+	if rec, ok := s.Reg.Recording(id); ok {
+		writeJSON(w, rec)
+		return
+	}
+	if s.Recordings != nil {
+		if rec, ok := s.Recordings.Recording(id); ok {
+			writeJSON(w, rec)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// replayPage plays a run back: by recording id, or a held seat's live by
+// carrier code. Anything else is not a page.
+func (s *Server) replayPage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	title := id
+	switch {
+	case ValidRecordingID(id):
+	case codeRe.MatchString(strings.ToUpper(id)):
+		id = strings.ToUpper(id)
+		title = id
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	pageHeaders(w)
+	page := strings.ReplaceAll(replayHTML, "{{ID}}", html.EscapeString(id))
+	page = strings.ReplaceAll(page, "{{TITLE}}", html.EscapeString(title))
+	w.Write([]byte(page)) //nolint:errcheck
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

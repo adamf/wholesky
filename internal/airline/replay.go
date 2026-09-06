@@ -1,0 +1,78 @@
+package airline
+
+// The replay page: one seat's run played back against the clock. It takes
+// a recording by id (/replay/<id>), a held seat live (/replay/<carrier>),
+// or a JSON file (?src=...) for a copy kept somewhere else, and shows the
+// scorecard as it moved, the decisions as they came and went, and what the
+// seat said it was thinking.
+
+const replayHTML = `<!doctype html><meta charset="utf-8"><title>{{TITLE}} — replay</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>` + styleCSS + `
+  .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .bar input[type=range] { flex:1; min-width:200px; }
+  .clock { font-size:22px; color:var(--plane); font-weight:600; min-width:80px; }
+  canvas { width:100%; height:120px; display:block; background:#080d13; border:1px solid var(--line); border-radius:4px; }
+  #tape { max-height:60vh; font-size:12px; } #tape div { padding:3px 0; border-bottom:1px solid #0e151d; }
+  #tape .k-agent { background:#0c1410; border-left:3px solid var(--hot); padding-left:8px; color:#c9d8e6; font-style:italic; }
+  #tape .k-decision { color:#9fd8b3; } #tape .k-action { color:var(--amber); } #tape .k-incident { color:#e08a8a; } #tape .k-seat { color:#7d90a3; }
+  #tape .p { color:#5b6b7d; margin-right:8px; font-style:normal; }
+  .live { color:var(--warn); } .badge { border:1px solid var(--line); border-radius:3px; padding:1px 6px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+</style>
+<header><b>WHOLESKY</b> <span><a href="/ops/">carriers</a> / <b id="code">{{TITLE}}</b> <span id="holder" class="muted"></span></span>
+<span class="muted" id="when"></span><span id="livebadge" class="badge live" hidden>live</span>
+<span style="margin-left:auto"><a id="opslink" href="/ops/">the ops centre →</a> · <a href="/eye">the sky →</a></span></header>
+<main>
+<section class="wide"><h2>The run</h2>
+<div class="bar"><button id="play" class="primary">▶ play</button>
+<select id="speed"><option value="1">1 sim-min / s</option><option value="5" selected>5 sim-min / s</option><option value="15">15 sim-min / s</option><option value="60">1 sim-hour / s</option></select>
+<span class="clock" id="clock">--:--z</span><input id="scrub" type="range" min="0" max="1440" step="1" value="0"><span class="muted" id="range"></span></div>
+<p class="muted" id="summary" style="margin:8px 0 0"></p></section>
+<section class="wide"><h2>Scorecard at the clock</h2><div class="kpis" id="kpis"></div><canvas id="chart" style="margin-top:10px"></canvas></section>
+<section class="wide"><h2>Tape <span class="muted" id="tapen"></span></h2><div id="tape" class="scroll"></div></section>
+</main>
+<script>
+const $=s=>document.querySelector(s); const money=c=>"$"+(c/100).toLocaleString(undefined,{maximumFractionDigits:0}); const pct=x=>(100*x).toFixed(0)+"%";
+const mmz=m=>String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(Math.floor(m)%60).padStart(2,"0")+"z";
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const ID="{{ID}}"; const params=new URLSearchParams(location.search);
+const src=params.get("src")||(/^[A-Z0-9]{2,3}$/.test(ID)?"/carrier/"+ID+"/recording.json":"/recording/"+ID+".json");
+let rec=null, cursor=0, playing=false, shown=0, lastEnd=0;
+async function load(){
+  const r=await fetch(src); if(!r.ok){ $("#summary").textContent="no such recording ("+r.status+")"; return; }
+  const d=await r.json(); const first=!rec; rec=d;
+  const end=d.live?Math.max(d.start_pos,(d.events.length?d.events[d.events.length-1].pos:d.start_pos),(d.scores.length?d.scores[d.scores.length-1].pos:0)):d.end_pos;
+  lastEnd=end; $("#scrub").min=Math.floor(d.start_pos); $("#scrub").max=Math.ceil(end);
+  $("#code").textContent=d.carrier; $("#opslink").href="/ops/"+d.carrier; $("#holder").textContent="· run by "+d.holder;
+  $("#livebadge").hidden=!d.live; $("#range").textContent=mmz(d.start_pos)+" → "+mmz(end);
+  const started=new Date(d.started); $("#when").textContent=started.toLocaleDateString()+" "+started.toLocaleTimeString()+(d.live?" · still in the seat":" · "+((end-d.start_pos)/60).toFixed(1)+" sim-hours in the seat");
+  const agentNotes=d.events.filter(e=>e.kind==="agent").length, decided=d.events.filter(e=>e.kind==="decision").length, acted=d.events.filter(e=>e.kind==="action").length, incidents=d.events.filter(e=>e.kind==="incident").length;
+  $("#summary").textContent=d.events.length+" tape lines: "+decided+" decisions, "+acted+" actions, "+incidents+" incidents, "+agentNotes+" notes from the seat"+(d.live?"":" · answered "+d.answered+", defaulted "+d.defaulted);
+  if(first){ cursor=d.live?end:d.start_pos; $("#scrub").value=cursor; if(d.live) playing=false; }
+  render();
+}
+function sampleAt(p){ let s=null; for(const x of rec.scores){ if(x.pos<=p) s=x; else break; } return s; }
+function render(){
+  if(!rec) return; $("#clock").textContent=mmz(cursor); $("#scrub").value=cursor;
+  const s=sampleAt(cursor); const k=(v,l,cls)=>"<div class='kpi "+(cls||"")+"'><b>"+v+"</b><span>"+l+"</span></div>";
+  if(s){ const c=s.score; $("#kpis").innerHTML=k(c.score.toFixed(1),"score")+k(money(c.profit),"profit",c.profit<0?"bad":"good")+k(money(c.revenue),"revenue")+k(pct(c.otp),"on time",c.otp<0.8?"bad":"good")+k(c.flown+"/"+c.flights,"flown")+k(c.cancelled,"cancelled",c.cancelled?"bad":"")+k(pct(c.load_factor),"load factor"); }
+  else $("#kpis").innerHTML="<div class='muted'>no scorecard sampled yet</div>";
+  const vis=rec.events.filter(e=>e.pos<=cursor); $("#tapen").textContent="· "+vis.length+" of "+rec.events.length;
+  if(vis.length!==shown){ $("#tape").innerHTML=vis.map(e=>"<div class='k-"+esc(e.kind)+"'><span class='p'>"+mmz(e.pos)+"</span>"+esc(e.text)+"</div>").join(""); $("#tape").scrollTop=$("#tape").scrollHeight; shown=vis.length; }
+  chart();
+}
+function chart(){
+  const cv=$("#chart"); const W=cv.width=cv.clientWidth*devicePixelRatio, H=cv.height=cv.clientHeight*devicePixelRatio; const g=cv.getContext("2d"); g.clearRect(0,0,W,H);
+  if(!rec.scores.length) return; const x0=rec.start_pos, x1=Math.max(lastEnd,x0+1); const X=p=>(p-x0)/(x1-x0)*W;
+  const vals=rec.scores.map(s=>s.score.score); const lo=Math.min(0,...vals), hi=Math.max(1,...vals); const Y=v=>H-(v-lo)/(hi-lo)*(H-8)-4;
+  g.strokeStyle="#1d2836"; g.lineWidth=1; for(let h=0;h<=24;h+=3){ const x=X(Math.floor(x0/60)*60+h*60); if(x>=0&&x<=W){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); } }
+  g.strokeStyle="#5fd38d"; g.lineWidth=2*devicePixelRatio; g.beginPath(); rec.scores.forEach((s,i)=>{ const x=X(s.pos), y=Y(s.score.score); i?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke();
+  g.fillStyle="rgba(95,211,141,.12)"; g.lineTo(X(rec.scores[rec.scores.length-1].pos),H); g.lineTo(X(rec.scores[0].pos),H); g.fill();
+  rec.events.filter(e=>e.kind==="agent"||e.kind==="action").forEach(e=>{ g.fillStyle=e.kind==="agent"?"#e8eef4":"#e0b93c"; g.fillRect(X(e.pos)-1,H-6,2,6); });
+  g.strokeStyle="#e05a5a"; g.lineWidth=1.5*devicePixelRatio; g.beginPath(); g.moveTo(X(cursor),0); g.lineTo(X(cursor),H); g.stroke();
+}
+$("#scrub").addEventListener("input",()=>{ cursor=+$("#scrub").value; playing=false; $("#play").textContent="▶ play"; render(); });
+$("#play").onclick=()=>{ playing=!playing; $("#play").textContent=playing?"❚❚ pause":"▶ play"; if(playing&&cursor>=lastEnd) cursor=rec.start_pos; };
+let last=performance.now();
+function tick(now){ const dt=(now-last)/1000; last=now; if(playing&&rec){ cursor=Math.min(lastEnd,cursor+dt*(+$("#speed").value)); if(cursor>=lastEnd&&!rec.live){ playing=false; $("#play").textContent="▶ play"; } render(); } requestAnimationFrame(tick); }
+requestAnimationFrame(tick); load(); setInterval(()=>{ if(rec&&rec.live) load(); }, 10000); window.addEventListener("resize",()=>rec&&chart());
+</script>`

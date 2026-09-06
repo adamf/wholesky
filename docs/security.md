@@ -14,12 +14,13 @@ what was fixed, and what is left as a decision.
 | --- | --- | --- |
 | Lobby, ops centre, the sky, instruments, `/carriers.json`, `/worlds.json`, manifest | anyone | none: they are the public face |
 | `POST /carrier/XX/take` | anyone | an unheld seat is anyone's to take, by design |
-| `release`, `act`, `decide`, `departments`, `claim`, `unclaim`, `node` | the seat's holder | `X-Seat-Token` (96 bits, `crypto/rand`, constant-time compare) |
+| `release`, `act`, `decide`, `departments`, `claim`, `unclaim`, `node`, `note` | the seat's holder | `X-Seat-Token` (96 bits, `crypto/rand`, constant-time compare) |
+| `/replay/...`, `/recording/...`, `/recordings.json`, a held seat's `recording.json` | anyone | none: a run is a public record (bounded: 20,000 lines, 200 kept) |
 | `POST /federation/world` (another world joining) | anyone | the hello is vetted (public URL and switch address only, size caps, one attempt per address per 10 s, 16 worlds, 4000 foreign carriers, no address collisions); see decisions below |
-| `/federation/register`, `/federation/token`, `/federation/state/{peer}`, `POST /shard/*` | this world's own machines | `X-Skyd-Secret` = `SKYD_LINK_SECRET`, constant-time; 403 otherwise |
+| `/federation/register`, `/federation/token`, `/federation/state/{peer}`, `/federation/recording/{id}`, `POST /shard/*` | this world's own machines | `X-Skyd-Secret` = `SKYD_LINK_SECRET`, constant-time; 403 otherwise |
 | `POST /eye/time`, `POST /fleet/node/XX/link` | the operator | the same secret, entered once on the page (kept in the browser) |
 | `POST /eye/chaos` | anyone | one act per address per 30 s; see decisions below |
-| `/node/XX/...` (a carrier's jetway console) | anyone | reads only: no method but GET, never `/api/admin/` |
+| `/node/XX/...` (a carrier's jetway console) | anyone reads; the seat's holder books, cancels, boards | `X-Seat-Token` for anything but GET (the console page picks it up from the ops centre's browser storage); never `/api/admin/` |
 | TCP 7000/7001 (switch links) | anyone | a hello must carry a token the switch knows; tokenless names are refused (jetway `require_token`) |
 | pprof | nobody | bound to loopback only, refuses any other address |
 
@@ -45,9 +46,11 @@ v0.1.94; wholesky's in the commit that added this page.
   tokenless names; every peer of the public switches carries a token
   derived from the world's secret.
 - The node console proxy forwarded every jetway route, so anyone could
-  book, cancel, refund, board and export any carrier's records. The proxy
-  is read-only and never reaches the admin surface. jetway's console also
-  gained an optional `http.admin_token` for nodes people run themselves.
+  book, cancel, refund, board and export any carrier's records. Now a
+  stranger reads; the carrier's seat holder works the console as the
+  airline (the page carries the seat's token); nobody reaches the admin
+  surface. jetway's console also gained an optional `http.admin_token`
+  for nodes people run themselves.
 - World controls -- stop the clock, sever a carrier's link -- were open.
   Now the operator's. Weather (airport closures) stays a public act, one
   per address per half-minute (a decision, below).

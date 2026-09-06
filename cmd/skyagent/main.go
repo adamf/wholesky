@@ -38,6 +38,30 @@ type seat struct {
 	mu     sync.Mutex
 	code   string
 	token  string
+	// record, when set, gets one JSON line per call: what the agent asked
+	// the world and what it answered, for the record.
+	record *os.File
+}
+
+// logCall appends one line to the local record.
+func (s *seat) logCall(method, path string, body any, status int, out map[string]any) {
+	if s.record == nil {
+		return
+	}
+	line := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "method": method, "path": path, "status": status}
+	if body != nil {
+		line["body"] = body
+	}
+	if method != http.MethodGet {
+		line["result"] = out
+	}
+	b, err := json.Marshal(line)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.record.Write(append(b, '\n')) //nolint:errcheck
+	s.mu.Unlock()
 }
 
 func (s *seat) call(ctx context.Context, method, path string, body any) (map[string]any, error) {
@@ -64,6 +88,7 @@ func (s *seat) call(ctx context.Context, method, path string, body any) (map[str
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	var out map[string]any
+	defer func() { s.logCall(method, path, body, resp.StatusCode, out) }()
 	if err := json.Unmarshal(raw, &out); err != nil {
 		// A list, not an object: wrap it.
 		var list []any
@@ -101,6 +126,11 @@ func text(v any) *mcp.CallToolResult {
 
 type carrierArg struct {
 	Carrier string `json:"carrier,omitempty" jsonschema:"two-letter carrier code; the seat's own when omitted"`
+}
+
+type noteArgs struct {
+	Carrier string `json:"carrier,omitempty" jsonschema:"the carrier, when not the seat held"`
+	Text    string `json:"text" jsonschema:"what you are thinking, a sentence or two"`
 }
 
 type takeArgs struct {
@@ -160,6 +190,12 @@ func newServer(s *seat) *mcp.Server {
 			s.mu.Unlock()
 			delete(out, "token")
 			out["note"] = "seat token kept for this session; every change now goes through it"
+			if seat, ok := out["seat"].(map[string]any); ok {
+				if id, _ := seat["recording"].(string); id != "" {
+					out["replay"] = strings.TrimRight(s.world, "/") + "/replay/" + id
+					out["hint"] = "your run is being recorded; narrate it with the note tool as you go, and hand people the replay URL when you are done"
+				}
+			}
 			return text(out), nil, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "release_seat", Description: "Hand the carrier back to the autopilot. Open decisions fall to their defaults."},
@@ -238,6 +274,18 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "note", Description: "Say what you are thinking, for the record: a sentence or two before or after a decision or an action -- what you saw, what you weighed, why you chose. It goes on the carrier's tape and into the replay of your run (see the replay URL take_seat returned), which is how people will watch what you did. Use it often; a run without notes is a run nobody can follow."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a noteArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "POST", "/carrier/"+code+"/note", map[string]string{"text": a.Text})
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "tape", Description: "The carrier's recent events: decisions opened and closed, actions, incidents the day threw at it."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
@@ -311,8 +359,16 @@ func newServer(s *seat) *mcp.Server {
 
 func main() {
 	world := flag.String("world", envOr("SKYAGENT_WORLD", "http://localhost:8080"), "the wholesky world's URL")
+	record := flag.String("record", os.Getenv("SKYAGENT_RECORD"), "append every call and its answer to this JSONL file, for the record")
 	flag.Parse()
 	s := &seat{world: *world, client: &http.Client{Timeout: 40 * time.Second}, code: strings.ToUpper(os.Getenv("SKYAGENT_CARRIER")), token: os.Getenv("SKYAGENT_TOKEN")}
+	if *record != "" {
+		f, err := os.OpenFile(*record, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s.record = f
+	}
 	if err := newServer(s).Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
 	}

@@ -23,7 +23,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -532,6 +534,12 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		s.state = &stateKeeper{path: opts.StateFile}
 	}
 	s.Airline.OnChange = s.saveState
+	// The flight recorder: every tape line carries the sim clock, every
+	// finished run goes to the disk or the core, and the scorecard is
+	// sampled while a seat is held.
+	s.Airline.Pos = func() float64 { return s.clock.Pos(time.Now()) }
+	s.Airline.OnRecording = s.storeRecording
+	s.airlineSrv.Recordings = s
 	s.airlineSrv.OnRelease = func(code string) {
 		// A seat that leaves while its carrier is claimed would strand it
 		// dark; the world takes the carrier back.
@@ -673,8 +681,9 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		}()
 	}
 	// The lobby refresher reads the world's tables; it starts once they are
-	// all in place.
+	// all in place. The score sampler feeds the flight recorder.
 	go s.lobby.run(ctx, 10*time.Second)
+	go s.airlineSrv.RecordScores(ctx, 30*time.Second)
 	return s, nil
 }
 
@@ -3091,22 +3100,29 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 		return
 	}
-	// The consoles are a window on the carriers' systems, not a door: the
-	// public can read a node's messages and records, and nothing more. A
-	// booking, a cancellation, a boarding, a retirement is the seat's to
-	// make through the world's own API, or the node's operator's on the
-	// node itself.
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "the node consoles are read-only from here", http.StatusMethodNotAllowed)
-		return
-	}
+	code = strings.ToUpper(code)
+	// The consoles are a window on the carriers' systems for everyone, and
+	// a door for one person: whoever holds the carrier's seat runs the
+	// airline, its reservation system included, so their bookings,
+	// cancellations and boardings go through. Nobody reaches the admin
+	// surface from here. The console's own page learns the seat's token
+	// from the browser (see consoleSeatScript), so the seat holder just
+	// works the console.
 	if strings.HasPrefix(sub, "api/admin/") {
-		http.Error(w, "the node's admin surface is not public", http.StatusForbidden)
+		consoleRefused(w, http.StatusForbidden, "the node's admin surface is not public")
 		return
 	}
 	s.consolesMu.Lock()
-	h := s.consoles[strings.ToUpper(code)]
+	h := s.consoles[code]
 	s.consolesMu.Unlock()
+	mutating := r.Method != http.MethodGet && r.Method != http.MethodHead
+	if mutating && h != nil {
+		// The node is here, so the seat is here too.
+		if s.Airline == nil || !s.Airline.Authorised(code, r.Header.Get("X-Seat-Token")) {
+			consoleRefused(w, http.StatusForbidden, "this console is read-only unless you hold "+code+"'s seat: take it at /ops/"+code+", then work the airline from here")
+			return
+		}
+	}
 	if h == nil {
 		// Not one of ours. On a core machine the consoles live on the peer
 		// that runs the node; the same ownership map the fleet drill-downs
@@ -3119,7 +3135,78 @@ func (s *Sim) serveNodeConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/" + sub
+	if sub == "" && codeShape.MatchString(code) {
+		// The console page itself: hand it the seat's token.
+		iw := &injectWriter{ResponseWriter: w}
+		h.ServeHTTP(iw, r2)
+		iw.finish(consoleSeatScript(code))
+		return
+	}
 	h.ServeHTTP(w, r2)
+}
+
+// codeShape is a designator as the console path carries it.
+var codeShape = regexp.MustCompile(`^[A-Z0-9]{2,3}$`)
+
+// consoleRefused answers the console's page the way it expects: JSON with
+// the reason, which it shows under the form.
+func consoleRefused(w http.ResponseWriter, status int, reason string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": reason}) //nolint:errcheck
+}
+
+// consoleSeatScript is appended to a proxied console page: every request
+// the page makes carries the seat's token the ops centre left in the
+// browser, so the seat holder works the console as the airline.
+func consoleSeatScript(code string) string {
+	return `<script>(function(){var c=` + strconv.Quote(code) + `,f=window.fetch;window.fetch=function(u,o){o=o||{};var t=null;try{t=localStorage.getItem("seat:"+c)}catch(e){}if(t){var h=new Headers(o.headers||{});h.set("X-Seat-Token",t);o.headers=h}return f(u,o)}})()</script>`
+}
+
+// injectWriter buffers an HTML response so a script can be appended; any
+// other content type passes straight through.
+type injectWriter struct {
+	http.ResponseWriter
+	status      int
+	html        bool
+	wroteHeader bool
+	buf         bytes.Buffer
+}
+
+func (iw *injectWriter) WriteHeader(code int) {
+	if iw.wroteHeader {
+		return
+	}
+	iw.wroteHeader = true
+	iw.status = code
+	iw.html = strings.HasPrefix(iw.Header().Get("Content-Type"), "text/html")
+	if !iw.html {
+		iw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (iw *injectWriter) Write(b []byte) (int, error) {
+	if !iw.wroteHeader {
+		iw.WriteHeader(http.StatusOK)
+	}
+	if iw.html {
+		return iw.buf.Write(b)
+	}
+	return iw.ResponseWriter.Write(b)
+}
+
+// finish writes the buffered page with the script appended.
+func (iw *injectWriter) finish(script string) {
+	if !iw.wroteHeader {
+		iw.WriteHeader(http.StatusOK)
+	}
+	if !iw.html {
+		return
+	}
+	iw.Header().Del("Content-Length")
+	iw.ResponseWriter.WriteHeader(iw.status)
+	iw.ResponseWriter.Write(iw.buf.Bytes()) //nolint:errcheck
+	iw.ResponseWriter.Write([]byte(script)) //nolint:errcheck
 }
 
 // partnerAddresses derives each carrier's interline partners: the carriers

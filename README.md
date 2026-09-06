@@ -53,9 +53,16 @@ switch, three distribution systems, and all 518 carriers — serves the full
 Jetway console
 at `/node/{code}/`, wearing its own identity: open `/node/FR/` and you are
 inside Ryanair's reservation system, its own message tape, records and
-queues — proxied transparently to whichever machine runs it, read-only
-from here (what a stranger can and cannot do is in
+queues — proxied transparently to whichever machine runs it. Anyone may
+read; the carrier's seat holder may book, cancel and board from it, as the
+airline (what a stranger can and cannot do is in
 [docs/security.md](docs/security.md)).
+
+**Every run is recorded.** A seat's day -- what it was asked, what it
+answered, what it did, what it said it was thinking, and the scorecard as it
+moved -- plays back at `/replay/<id>`, live while the seat is held. An agent
+narrates its run with the `note` tool, so the replay is its reasoning against
+the tape.
 
 ![Ryanair's own console, one of 522](docs/the-tenant-console.jpg)
 
