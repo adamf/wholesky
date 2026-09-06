@@ -46,6 +46,7 @@ nav.top .live{margin-left:auto;color:var(--green)}
 nav.top .live::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:7px;box-shadow:0 0 8px var(--green)}
 @media (max-width:760px){nav.top .hide-sm{display:none}}
 
+pre.code{background:#0b1118;border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;color:#9fb4c8;overflow-x:auto;margin:8px 0}
 /* hero */
 .hero{padding:64px 0 32px;border-bottom:1px solid var(--line);background:radial-gradient(1200px 500px at 70% -10%,#12202b 0%,transparent 60%)}
 .hero h1{font-size:clamp(34px,5vw,56px);letter-spacing:-.02em;margin-bottom:14px}
@@ -132,6 +133,8 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <a class="brand" href="#top">WHOLESKY</a>
     <a href="#different">why</a>
     <a href="#system">the system</a>
+    <a href="#run">run a carrier</a>
+    <a href="#play">multiplayer</a>
     <a href="jetway.html">jetway</a>
     <a href="production.html">production</a>
     <a href="#architecture" class="hide-sm">architecture</a>
@@ -379,6 +382,56 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       </div>
     </div>
     <p class="muted" style="margin-top:14px">Where it goes: bring your own jetway. A carrier is a jetway node with the world's schedule and addresses, and the switch does not care where that node runs -- a player's <code>jetwayd</code> on their own machine dials the world's switch and the booking traffic lands on their socket. Then worlds trunk to worlds. The design and what is still missing for it is in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
+  </div>
+</section>
+
+<section id="play">
+  <div class="wrap">
+    <div class="eyebrow">multiplayer</div>
+    <h2>One sky, many hands: people, agents, your own nodes, other worlds</h2>
+    <p class="lead">Everything below is the same three commands and one API. Pick the shape that fits the room.</p>
+    <div class="two">
+      <div class="card">
+        <h3>1 · A group on the demo, no install</h3>
+        <p class="muted">Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat switches its own departments to manual and answers what the day asks; the leaderboard is shared and the 500 carriers nobody took are the autopilot's baseline. Seats are per carrier, so a hundred people can run a hundred airlines on one world at once.</p>
+      </div>
+      <div class="card">
+        <h3>2 · Your own world for a group</h3>
+        <p class="muted">One machine, one day, your friends' browsers:</p>
+        <pre class="code">go run ./cmd/worldc -countries "United Kingdom,France,Germany" -carriers 40 -o world.json
+go run ./cmd/skyd -world world.json -warp 6 -console :8080 -decision-window 90s
+# share http://your-host:8080/ops/</pre>
+        <p class="muted">Warp sets how fast the day runs; the decision window is how long a seat has before the autopilot decides. The recorded Thanksgiving eve works the same way with <code>-bts</code> at compile time.</p>
+      </div>
+      <div class="card">
+        <h3>3 · Agents in the seats</h3>
+        <p class="muted">An agent runs a carrier through the same API a person uses. <code>cmd/skyagent</code> serves it as MCP tools over stdio, so Claude Code or Claude Desktop needs nothing but a config line:</p>
+        <pre class="code">{ "mcpServers": { "wholesky": {
+    "command": "go", "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest", "-world", "https://wholesky-demo.fly.dev"] } } }</pre>
+        <p class="muted">Then: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em> People and agents share one leaderboard; a seat can be handed between them mid-day (the token is the seat).</p>
+      </div>
+      <div class="card">
+        <h3>4 · Bring your own jetway</h3>
+        <p class="muted">Hard mode. Take a seat, then claim the carrier: the world severs its own tenant and hands you the start pack -- a jetway configuration with the switch address and a link token, and the carrier's schedule as an SSIM file. Run <code>jetwayd</code> with it and your node <em>is</em> the airline on the world's wire: the distribution systems sell into your inventory, your departure control opens flights from your own name lists, your desk files the MVTs the globe draws. Register your node's URL and the world keeps your ground story's hours for you.</p>
+        <pre class="code">curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/BA/claim > pack.json
+jq -r .config_yaml pack.json > ba.yaml; jq -r .ssim pack.json > ba.ssim
+go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml</pre>
+      </div>
+      <div class="card">
+        <h3>5 · Worlds joined to worlds</h3>
+        <p class="muted">Two skies become one network the way two real networks do: their switches hold a trunk, each routes the other's subscribers down it, and each sells the other's flights. The second world is told where the first is; the join is a handshake, the traffic is Type B and EDIFACT over the trunk.</p>
+        <pre class="code"># machine A
+skyd -world europe.json  -world-name europe  -console :8080 -public-url http://a.example:8080 -link-port 7000
+# machine B
+skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
+     -console :8080 -public-url http://b.example:8080 -link-port 7000 -peer-world http://a.example:8080</pre>
+        <p class="muted">Carriers' designators, switch codes and distribution-system cities must differ between worlds -- in this network they are addresses. Joined worlds' carriers appear on each other's leaderboards.</p>
+      </div>
+      <div class="card">
+        <h3>What is still rough</h3>
+        <p class="muted">Seats, claims and joins live in memory today, so a restart forgets them; there are no accounts; the scorecard's costs are a chosen shape; the day asks about four kinds of decision. The honest list, and the order it will be done in, is at the end of <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>; the design is <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
+      </div>
+    </div>
   </div>
 </section>
 

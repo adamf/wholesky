@@ -253,6 +253,35 @@ Still one provider's view: carriers hold a circuit to one switch, not
 both, and the provider routing tables are the configuration, not a
 message.
 
+## The game and the multiplayer sky
+
+What running a carrier (docs/run-a-carrier.md) still lacks, in the order it
+should be done:
+
+1. **Persistence.** Seats, claims, node URLs and joined worlds live in
+   memory; a redeploy hands every claimed carrier back and forgets every
+   seat. A state file, or the Postgres the books can already use.
+2. **Consequences that cascade.** The day plan is computed once at boot.
+   A seat's cancellation or retime does not re-plan the crews and
+   rotations downstream, so consequences stop at the flight acted on.
+3. **Joined worlds running for real.** The join is tested in one process
+   and runs nowhere; the demo is one world. A second Fly world trunked to
+   the demo, exercised by the gate.
+4. **More to decide.** Four gates (retime, substitution, crew, slot) and
+   the bag rush. No pricing decisions, no competitor moves, no incidents
+   that escalate or compound.
+5. **Identity.** Anyone takes any free carrier; the token is the only
+   protection; no accounts, no history across days, no season.
+6. **The scorecard's shape.** Costs are chosen constants and the composite
+   is arbitrary; an external carrier's board lacks its own bags and denied
+   boardings.
+7. **The external node's autopilot** accepts everyone with one bag and
+   closes: no connections, no no-shows, no ADL, no IROPS on the player's
+   side. The ops page does not show the weather bearing on your carrier;
+   the MCP server has no event push.
+8. **Federation as one protocol.** Register, token, world, revenue and
+   distribution are separate ad hoc endpoints without a version.
+
 ## In order
 
 If the next months were to be spent on this list: fares and pricing

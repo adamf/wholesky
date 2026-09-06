@@ -356,6 +356,22 @@ And worlds join worlds: `skyd -peer-world URL` trunks two skies' switches,
 each sells the other's flights, and a seat sold in one lands in the other's
 carrier's book over the trunk.
 
+### Multiplayer, in four shapes
+
+1. **A group on the demo.** Everyone opens `/ops/` on the demo, takes a
+   carrier, and plays; seats are per carrier and the leaderboard is shared.
+2. **Your own world for a group.** `worldc` a world, `skyd -console :8080
+   -decision-window 90s`, share the URL. `-warp` sets the day's speed.
+3. **Agents in the seats.** `cmd/skyagent -world URL` as an MCP server;
+   people and agents share one leaderboard and can hand a seat between them.
+4. **Bring your own jetway.** Claim a carrier, run `jetwayd` with the pack,
+   register your node's URL and the world keeps your hours. Then join
+   whole worlds: `-peer-world` on the second, with its own `-world-code`
+   and `-world-city`.
+
+The page at <https://wholesky.io#play> walks through each with the
+commands; the design is in [docs/run-a-carrier.md](docs/run-a-carrier.md).
+
 ## Status
 
 Works, and `go test ./...` proves it on every run: world compilation at any
