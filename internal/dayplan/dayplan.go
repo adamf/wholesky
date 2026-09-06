@@ -427,6 +427,58 @@ func (p *Plan) recordedSlots(m *world.Manifest) {
 	p.Summary.Regulations = len(p.Regulations)
 }
 
+// Replan recomputes a tail's fate after someone changed one of its legs:
+// a cancellation, a retime, reserves called. The legs' own delays, slots
+// and reserve callouts stand; the late-aircraft chain and the crews'
+// legality are worked again down the tail, and a leg whose crew now times
+// out away from the base is cancelled for crew, as the boot plan would
+// have. It returns the legs whose fate changed, for the world to announce.
+func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
+	if p == nil || tail == "" {
+		return nil
+	}
+	legs := rotations(m)[carrier+"/"+tail]
+	if len(legs) == 0 {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	before := map[string]Flight{}
+	for _, f := range legs {
+		if pf := p.Flights[Key(f)]; pf != nil {
+			before[Key(f)] = *pf
+			// Back to the leg's own fate: what the carrier, the slot and a
+			// reserve callout did to it, without the chain.
+			base := max(pf.Own, pf.ATFM)
+			if pf.Reserve {
+				base += ReserveCall
+			}
+			pf.LateAircraft = 0
+			pf.DepDelay = base
+			pf.ArrDelay = base
+			if strings.HasPrefix(pf.Reason, "crew") {
+				// A crew cancellation from before is worked again below.
+				pf.Cancelled, pf.Reason, pf.Code = false, "", ""
+			}
+		}
+	}
+	sub := &world.Manifest{Carriers: m.Carriers, Flights: legs}
+	p.rotate(sub)
+	p.crews(sub)
+	var changed []world.Flight
+	for _, f := range legs {
+		pf := p.Flights[Key(f)]
+		if pf == nil {
+			continue
+		}
+		b := before[Key(f)]
+		if b.DepDelay != pf.DepDelay || b.Cancelled != pf.Cancelled || b.Reserve != pf.Reserve {
+			changed = append(changed, f)
+		}
+	}
+	return changed
+}
+
 // rotations groups a carrier's flights by tail in departure order.
 func rotations(m *world.Manifest) map[string][]world.Flight {
 	tails := map[string][]world.Flight{}

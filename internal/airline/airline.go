@@ -112,12 +112,70 @@ type Registry struct {
 	Window time.Duration
 	Now    func() time.Time
 
+	// OnChange, when set, is called after a seat is taken, released or
+	// changed, so the world can persist the seats.
+	OnChange func()
+
 	mu    sync.Mutex
 	seats map[string]*Seat
 	inbox map[string]map[string]*Decision
 	tape  map[string][]Event
 	subs  map[string]map[chan Event]struct{}
 	seq   int
+}
+
+// SeatState is a seat as persisted: the token included, since the seat
+// is the token.
+type SeatState struct {
+	Carrier   string          `json:"carrier"`
+	Holder    string          `json:"holder"`
+	Token     string          `json:"token"`
+	Since     time.Time       `json:"since"`
+	Manual    map[string]bool `json:"manual"`
+	Answered  int             `json:"answered"`
+	Defaulted int             `json:"defaulted"`
+}
+
+// Snapshot is every seat, for persisting.
+func (r *Registry) Snapshot() []SeatState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []SeatState
+	for _, s := range r.seats {
+		m := map[string]bool{}
+		for k, v := range s.Manual {
+			m[k] = v
+		}
+		out = append(out, SeatState{Carrier: s.Carrier, Holder: s.Holder, Token: s.token, Since: s.Since, Manual: m, Answered: s.Answered, Defaulted: s.Defaulted})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Carrier < out[j].Carrier })
+	return out
+}
+
+// Restore puts persisted seats back, tokens and all; a seat already held
+// is left alone.
+func (r *Registry) Restore(states []SeatState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, st := range states {
+		code := strings.ToUpper(st.Carrier)
+		if _, held := r.seats[code]; held || st.Token == "" {
+			continue
+		}
+		m := st.Manual
+		if m == nil {
+			m = map[string]bool{}
+		}
+		r.seats[code] = &Seat{Carrier: code, Holder: st.Holder, Since: st.Since, Manual: m, Answered: st.Answered, Defaulted: st.Defaulted, token: st.Token}
+		r.emit(Event{At: r.Now(), Carrier: code, Kind: "seat", Text: st.Holder + "'s seat restored after a restart"})
+	}
+}
+
+// changed tells the world the seats changed.
+func (r *Registry) changed() {
+	if r.OnChange != nil {
+		go r.OnChange()
+	}
 }
 
 // New makes an empty registry; window is the decision deadline.
@@ -153,6 +211,7 @@ func (r *Registry) Take(carrier, holder string) (Seat, string, error) {
 	s := &Seat{Carrier: carrier, Holder: holder, Since: r.Now(), Manual: map[string]bool{}, token: hex.EncodeToString(b)}
 	r.seats[carrier] = s
 	r.emit(Event{At: r.Now(), Carrier: carrier, Kind: "seat", Text: holder + " took the seat"})
+	r.changed()
 	return *s, s.token, nil
 }
 
@@ -176,6 +235,7 @@ func (r *Registry) Release(carrier, token string) error {
 		delete(r.inbox[carrier], id)
 	}
 	r.emit(Event{At: r.Now(), Carrier: carrier, Kind: "seat", Text: s.Holder + " released the seat; autopilot resumes"})
+	r.changed()
 	return nil
 }
 
@@ -219,6 +279,7 @@ func (r *Registry) SetManual(carrier, token, dept string, manual bool) error {
 		mode = "manual"
 	}
 	r.emit(Event{At: r.Now(), Carrier: carrier, Kind: "department", Text: dept + " is now " + mode})
+	r.changed()
 	return nil
 }
 
@@ -282,6 +343,7 @@ func (r *Registry) Ask(ctx context.Context, d Decision) string {
 	r.emit(Event{At: r.Now(), Carrier: d.Carrier, Kind: "decided", Text: d.Title + " → " + label(d.Options, chosen) + " (" + by + ")",
 		Data: map[string]string{"id": d.ID, "chosen": chosen, "by": by}})
 	r.mu.Unlock()
+	r.changed()
 	return chosen
 }
 

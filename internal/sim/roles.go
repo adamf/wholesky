@@ -269,6 +269,7 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		}
 	}
 	go c.pollSettlement(ctx)
+	s.restoreState(ctx)
 	return c, nil
 }
 
@@ -344,6 +345,7 @@ func (c *Core) refreshSettlement(client *http.Client) int {
 func (c *Core) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /federation/register", c.register)
 	mux.HandleFunc("POST /federation/token", c.token)
+	mux.HandleFunc("/federation/state/{peer}", c.Sim.servePeerState)
 }
 
 // token is a region asking the core's switches to demand (or stop
@@ -1125,5 +1127,13 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	mux := http.NewServeMux()
 	shardRoutes(mux, s, nil, nil)
 	s.StartSettling(opts.SettleEvery)
+	if s.state == nil {
+		// No volume of its own: the region keeps what a restart must not
+		// forget at the core, under its name.
+		s.state = &stateKeeper{coreURL: coreURL, name: fmt.Sprintf("region%d", shard)}
+	} else {
+		s.state.coreURL, s.state.name = coreURL, fmt.Sprintf("region%d", shard)
+	}
+	s.restoreState(ctx)
 	return &RegionMachine{Sim: s, Mux: mux}, nil
 }

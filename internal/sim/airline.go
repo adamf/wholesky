@@ -297,6 +297,7 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		}
 		s.fate.Update(f, func(pf *dayplan.Flight) { pf.Cancelled, pf.Reason, pf.Code = true, reason, "A" })
 		s.announceCancellation(ctx, t, f, day, reason)
+		s.replan(f)
 		return "cancelled: ASM CNL to distribution, the airport told, the flight plan withdrawn", nil
 	case "retime":
 		if a.Minutes <= 0 {
@@ -313,6 +314,7 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		if err := t.Retime(ctx, f, day, a.Minutes, a.Minutes); err != nil {
 			return "", err
 		}
+		s.replan(f)
 		return fmt.Sprintf("retimed to %s: ASM TIM to distribution, bookings moved to TK", hhmm(f.DepMin+a.Minutes)), nil
 	case "substitute":
 		typ, err := t.Substitute(ctx, f, day)
@@ -347,9 +349,33 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 			pf.DepDelay += dayplan.ReserveCall
 			pf.ArrDelay += dayplan.ReserveCall
 		})
+		s.replan(f)
 		return fmt.Sprintf("reserves called: departs %s", hhmm(f.DepMin+fate.DepDelay+dayplan.ReserveCall)), nil
 	}
 	return "", fmt.Errorf("no such action %q", a.Kind)
+}
+
+// replan works a tail's day again after a seat changed one of its legs,
+// and tells the seat what else changed: the flights that are now later
+// because the aircraft is, and the ones whose crew now times out.
+func (s *Sim) replan(f world.Flight) {
+	if f.Tail == "" || s.fate == nil {
+		return
+	}
+	changed := s.fate.Replan(s.Manifest, f.Carrier, f.Tail)
+	for _, g := range changed {
+		if g.Number == f.Number && g.From == f.From {
+			continue
+		}
+		fate := s.fate.Of(g)
+		text := fmt.Sprintf("%s%s %s-%s now leaves %s (+%d) because the aircraft does", g.Carrier, strings.TrimLeft(g.Number, "0"), g.From, g.To, hhmm(g.DepMin+fate.DepDelay), fate.DepDelay)
+		if fate.Cancelled {
+			text = fmt.Sprintf("%s%s %s-%s: %s -- cancelled unless reserves are called", g.Carrier, strings.TrimLeft(g.Number, "0"), g.From, g.To, fate.Reason)
+		}
+		if s.Airline != nil {
+			s.Airline.Emit(g.Carrier, "incident", text, map[string]any{"flight": g.Carrier + g.Number, "board": g.From, "delay": fate.DepDelay, "cancelled": fate.Cancelled})
+		}
+	}
 }
 
 // readyForImprovement is the carrier's REA: the Network Manager improves
@@ -450,6 +476,7 @@ func (s *Sim) askCrew(ctx context.Context, f world.Flight, fate dayplan.Flight) 
 			pf.DepDelay += dayplan.ReserveCall
 			pf.ArrDelay += dayplan.ReserveCall
 		})
+		s.replan(f)
 	}
 }
 

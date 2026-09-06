@@ -1,6 +1,7 @@
 package dayplan
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -190,5 +191,53 @@ func TestWeatherIsDeterministic(t *testing.T) {
 	}
 	if a.Summary.Slotted != b.Summary.Slotted || a.Summary.Cells == 0 {
 		t.Errorf("summaries differ: %+v %+v", a.Summary, b.Summary)
+	}
+}
+
+// A seat's retime works the tail's day again: the next leg waits for the
+// aircraft, and a crew that no longer fits times out -- cancelled away from
+// the base -- with both legs reported as changed.
+func TestReplanChainsASeatsRetimeDownTheTail(t *testing.T) {
+	day := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	m := &world.Manifest{Carriers: []world.Carrier{{Designator: "UA", Hub: "ORD"}}}
+	m.Flights = []world.Flight{
+		{Carrier: "UA", Number: "0001", From: "ORD", To: "BOS", DepMin: 7 * 60, ArrMin: 9 * 60, Tail: "N1"},
+		{Carrier: "UA", Number: "0002", From: "BOS", To: "ORD", DepMin: 9*60 + 50, ArrMin: 12 * 60, Tail: "N1"},
+		{Carrier: "UA", Number: "0003", From: "ORD", To: "LAX", DepMin: 13 * 60, ArrMin: 17 * 60, Tail: "N1"},
+		{Carrier: "UA", Number: "0004", From: "LAX", To: "ORD", DepMin: 18 * 60, ArrMin: 22 * 60, Tail: "N1"},
+		{Carrier: "UA", Number: "0005", From: "ORD", To: "BOS", DepMin: 23 * 60, ArrMin: 25 * 60, Tail: "N1"},
+	}
+	p := Build(m, day, func(world.Flight, time.Time) (int, int) { return 0, 0 })
+	if p.Of(m.Flights[1]).DepDelay != 0 {
+		t.Fatal("an on-time day to start")
+	}
+	// The seat retimes the first leg by ninety minutes.
+	p.Update(m.Flights[0], func(pf *Flight) { pf.Own, pf.DepDelay, pf.ArrDelay = 90, 90, 90 })
+	changed := p.Replan(m, "UA", "N1")
+	if two := p.Of(m.Flights[1]); two.LateAircraft != 70 || two.DepDelay != 70 {
+		t.Errorf("second leg after the retime: %+v", two)
+	}
+	if len(changed) < 1 {
+		t.Errorf("nothing reported changed: %v", changed)
+	}
+	// A seven-hour retime on the fourth leg times the second crew out at
+	// LAX... the fifth leaves the base, so reserves fly it; move the base
+	// away and the fifth is cancelled for crew by the replan.
+	m.Carriers[0].Hub = "LAX"
+	p = Build(m, day, func(world.Flight, time.Time) (int, int) { return 0, 0 })
+	p.Update(m.Flights[3], func(pf *Flight) { pf.Own, pf.DepDelay, pf.ArrDelay = 420, 420, 420 })
+	changed = p.Replan(m, "UA", "N1")
+	five := p.Of(m.Flights[4])
+	if !five.Cancelled || !strings.HasPrefix(five.Reason, "crew") {
+		t.Errorf("fifth leg after the fourth's retime: %+v", five)
+	}
+	found := false
+	for _, f := range changed {
+		if f.Number == "0005" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the cancelled fifth leg was not reported: %v", changed)
 	}
 }

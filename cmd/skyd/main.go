@@ -65,6 +65,7 @@ func run() error {
 		worldCity  = flag.String("world-city", "", "the city in this world's distribution systems' addresses, e.g. MAD; the slots' own unless set, and joined worlds must differ")
 		publicURL  = flag.String("public-url", "", "where other worlds reach this one's HTTP, for the manifest and the handshake")
 		peerWorld  = flag.String("peer-world", "", "worlds to join at boot, by URL, comma-separated")
+		stateFile  = flag.String("state", os.Getenv("SKYD_STATE"), "file where seats, claims, nodes and joined worlds survive a restart; empty keeps them in memory")
 		linkPort   = flag.Int("link-port", 0, "port the first switch's subscriber listener binds (the second's is one higher); 0 picks a free port")
 		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
 		decision   = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
@@ -142,7 +143,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), StateFile: *stateFile, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

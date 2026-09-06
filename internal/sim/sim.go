@@ -149,6 +149,9 @@ type Options struct {
 	// can be published for nodes on the internet to dial; zero picks a
 	// free port.
 	LinkPort int
+	// StateFile, when set, is where the world keeps what a restart must
+	// not forget: seats, claims, nodes, joined worlds. See state.go.
+	StateFile string
 	// A world among worlds. WorldName names it to its peers; WorldCode is
 	// its first switch's designator (1X unless set; a joined world needs its
 	// own); WorldCity is the city its distribution systems' addresses
@@ -303,6 +306,7 @@ type Sim struct {
 	foreign   map[string]*foreignWorld
 	// onWorldJoined, on a core, relays a joined world to its peers.
 	onWorldJoined func(worldHello)
+	state         *stateKeeper
 	externalMu    sync.RWMutex
 	// On a machine without switches: where each carrier's switch is, the
 	// core's URL, and the addresses the internet dials, from the welcome.
@@ -505,6 +509,10 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
 	s.Airline = airline.New(opts.DecisionWindow)
 	s.airlineSrv = &airline.Server{Reg: s.Airline, World: seatWorld{s}, Local: s.runsCarrier, Proxy: s.proxyCarrier}
+	if opts.StateFile != "" {
+		s.state = &stateKeeper{path: opts.StateFile}
+	}
+	s.Airline.OnChange = s.saveState
 	s.airlineSrv.OnRelease = func(code string) {
 		// A seat that leaves while its carrier is claimed would strand it
 		// dark; the world takes the carrier back.
@@ -780,6 +788,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 	}
 	go s.Stats.Run(ctx.Done())
 	s.StartSettling(opts.SettleEvery)
+	s.restoreState(ctx)
 	return s, nil
 }
 
@@ -1596,9 +1605,11 @@ func (s *Sim) SetNodeURL(code, url string) {
 	code = strings.ToUpper(code)
 	if url == "" {
 		delete(s.nodeURL, code)
+		go s.saveState()
 		return
 	}
 	s.nodeURL[code] = strings.TrimRight(url, "/")
+	go s.saveState()
 }
 
 // NodeURL is an external carrier's node, if its seat gave one.
@@ -1755,6 +1766,7 @@ func (s *Sim) Claim(code string) (*StartPack, error) {
 	s.externalMu.Unlock()
 	t.Sever()
 	s.setToken(code, linkToken(s.linkSecret, code))
+	s.saveState()
 	if s.Airline != nil {
 		s.Airline.Emit(code, "seat", code+" handed to an external node: the tenant is severed, the switch wants the token", nil)
 	}
@@ -1774,6 +1786,7 @@ func (s *Sim) Unclaim(code string) error {
 	s.externalMu.Unlock()
 	s.setToken(code, "")
 	t.Restore()
+	s.saveState()
 	if s.Airline != nil {
 		s.Airline.Emit(code, "seat", code+" taken back by the world: the tenant is dialling the switch again", nil)
 	}
@@ -2099,6 +2112,7 @@ var groundEvents = []groundEvent{
 				pf.Cancelled, pf.Reason, pf.Code = true, "cancelled: aircraft unserviceable", "A"
 			})
 			s.announceCancellation(ctx, t, f, day, "cancelled: aircraft unserviceable")
+			s.replan(f)
 			return nil
 		}
 		_, err := t.Substitute(ctx, f, day)

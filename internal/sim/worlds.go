@@ -65,6 +65,8 @@ type foreignWorld struct {
 	carriers map[string]world.Carrier
 	flights  map[string][]world.Flight
 	byOrigin map[string][]world.Flight
+	// accepting says this side accepted the trunk (the other dials).
+	accepting bool
 	// lobby is the world's own carriers with scores, as last fetched.
 	lobbyMu sync.Mutex
 	lobby   []airline.CarrierInfo
@@ -181,7 +183,7 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 			s.log.Warn("joined world's manifest not fetched", "world", h.Name, "err", err)
 		}
 	}
-	s.addForeign(h, flights)
+	s.addForeign(h, flights, accepting)
 	for _, t := range s.Tenants {
 		t.AddDistribution(h.Watcher)
 	}
@@ -191,6 +193,7 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	if s.onWorldJoined != nil {
 		go s.onWorldJoined(h)
 	}
+	s.saveState()
 	s.log.Info("world joined", "world", h.Name, "code", h.Code, "carriers", len(h.Carriers), "flights", len(flights), "accepting", accepting)
 	if s.Airline != nil {
 		s.Airline.Emit("", "world", fmt.Sprintf("world %s joined: %d carriers, %d flights now sellable here", h.Name, len(h.Carriers), len(flights)), nil)
@@ -219,7 +222,7 @@ func (s *Sim) serveShardWorld(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 		}
 	}
-	s.addForeign(h, flights)
+	s.addForeign(h, flights, true)
 	for _, t := range s.Tenants {
 		t.AddDistribution(h.Watcher)
 	}
@@ -280,8 +283,8 @@ func (s *Sim) worldURLOf(code string) string {
 
 // addForeign records a joined world and merges its carriers and flights
 // into what this world sells and draws.
-func (s *Sim) addForeign(h worldHello, flights []world.Flight) {
-	fw := &foreignWorld{Hello: h, Flights: len(flights), JoinedAt: time.Now(),
+func (s *Sim) addForeign(h worldHello, flights []world.Flight, accepting bool) {
+	fw := &foreignWorld{Hello: h, Flights: len(flights), JoinedAt: time.Now(), accepting: accepting,
 		carriers: map[string]world.Carrier{}, flights: map[string][]world.Flight{}, byOrigin: map[string][]world.Flight{}}
 	for _, c := range h.Carriers {
 		fw.carriers[c.Designator] = c
