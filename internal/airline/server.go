@@ -227,6 +227,12 @@ func (s *Server) token(r *http.Request) string {
 	return r.URL.Query().Get("token")
 }
 
+// HasCarrier is the optional half of World that answers whether a carrier
+// exists without building the whole lobby, which a take must not wait for.
+type HasCarrier interface {
+	Has(code string) bool
+}
+
 // OwnCarriers is the optional half of World a federating lobby needs: this
 // world's carriers alone, without the joined worlds' rows, so two worlds
 // asking each other for their lobbies do not ask forever.
@@ -298,11 +304,15 @@ func (s *Server) take(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Errorf("malformed request: %w", err))
 		return
 	}
-	known := false
 	code := strings.ToUpper(r.PathValue("carrier"))
-	for _, c := range s.view().Carriers() {
-		if c.Code == code {
-			known = true
+	known := false
+	if h, ok := s.view().(HasCarrier); ok {
+		known = h.Has(code)
+	} else {
+		for _, c := range s.view().Carriers() {
+			if c.Code == code {
+				known = true
+			}
 		}
 	}
 	if !known {

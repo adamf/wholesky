@@ -89,6 +89,16 @@ func (w seatWorld) OwnCarriers() []airline.CarrierInfo {
 	return out
 }
 
+// Has implements airline.HasCarrier: a carrier this machine runs or has
+// handed to a node.
+func (w seatWorld) Has(code string) bool {
+	code = strings.ToUpper(code)
+	if _, ok := w.s.Tenants[code]; ok {
+		return true
+	}
+	return w.s.External(code)
+}
+
 // scores is every local carrier's scorecard, recomputed in one pass when
 // the last is more than a few seconds old.
 func (s *Sim) scores() map[string]airline.Scorecard {

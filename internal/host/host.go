@@ -654,6 +654,20 @@ func (t *Tenant) AddDistribution(addr string) {
 	t.distribution = append(t.distribution, addr)
 }
 
+// RemoveDistribution stops copying to an address added with
+// AddDistribution: a joined world that no longer wants this carrier's
+// movements.
+func (t *Tenant) RemoveDistribution(addr string) {
+	t.distMu.Lock()
+	defer t.distMu.Unlock()
+	for i, a := range t.distribution {
+		if a == addr {
+			t.distribution = append(t.distribution[:i], t.distribution[i+1:]...)
+			return
+		}
+	}
+}
+
 func (t *Tenant) distributionList() []string {
 	t.distMu.Lock()
 	defer t.distMu.Unlock()

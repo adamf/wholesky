@@ -595,7 +595,7 @@ func proxyPass(w http.ResponseWriter, r *http.Request, base string) bool {
 		rp.ServeHTTP(w, r)
 		return true
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	var body io.Reader
 	if r.Method == http.MethodPost {
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))

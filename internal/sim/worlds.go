@@ -188,10 +188,14 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 			s.log.Warn("joined world's manifest not fetched", "world", h.Name, "err", err)
 		}
 	}
-	s.addForeign(h, flights, accepting)
-	for _, t := range s.Tenants {
-		t.AddDistribution(h.Watcher)
+	s.foreignMu.RLock()
+	var previous string
+	if old, ok := s.foreign[h.Code]; ok {
+		previous = old.Hello.Watcher
 	}
+	s.foreignMu.RUnlock()
+	s.addForeign(h, flights, accepting)
+	s.watchFor(previous, h.Watcher)
 	if _, err := s.Switch.ReloadPeers(peers); err != nil {
 		return fmt.Errorf("joining %s: %w", h.Name, err)
 	}
@@ -233,10 +237,14 @@ func (s *Sim) serveShardWorld(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 		}
 	}
-	s.addForeign(h, flights, true)
-	for _, t := range s.Tenants {
-		t.AddDistribution(h.Watcher)
+	s.foreignMu.RLock()
+	var previous string
+	if old, ok := s.foreign[h.Code]; ok {
+		previous = old.Hello.Watcher
 	}
+	s.foreignMu.RUnlock()
+	s.addForeign(h, flights, true)
+	s.watchFor(previous, h.Watcher)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -290,6 +298,22 @@ func (s *Sim) worldURLOf(code string) string {
 		}
 	}
 	return ""
+}
+
+// watchFor moves this world's carriers from copying their movements to a
+// joined world's old watcher to its new one; "" on either side means none.
+func (s *Sim) watchFor(previous, current string) {
+	if previous == current {
+		return
+	}
+	for _, t := range s.Tenants {
+		if previous != "" {
+			t.RemoveDistribution(previous)
+		}
+		if current != "" {
+			t.AddDistribution(current)
+		}
+	}
 }
 
 // addForeign records a joined world and merges its carriers and flights
