@@ -190,6 +190,12 @@ func (s *Sim) joinWorld(ctx context.Context, h worldHello, accepting bool) error
 	if _, err := s.Switch.ReloadPeers(peers); err != nil {
 		return fmt.Errorf("joining %s: %w", h.Name, err)
 	}
+	if accepting {
+		// A world that comes back after a restart says hello with a new
+		// token; the trunk peer it already has here must demand that one,
+		// and the link the old one held is cut.
+		s.Switch.SetPeerToken(h.Code, h.Token)
+	}
 	if s.onWorldJoined != nil {
 		go s.onWorldJoined(h)
 	}
@@ -239,7 +245,7 @@ func (s *Sim) joinedCarriers() []airline.CarrierInfo {
 	}
 	s.foreignMu.RUnlock()
 	var out []airline.CarrierInfo
-	client := &http.Client{Timeout: 8 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	for _, fw := range worlds {
 		if fw.Hello.URL == "" {
 			continue

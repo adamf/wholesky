@@ -691,7 +691,7 @@ func (f *federatedCarriers) OwnCarriers() []airline.CarrierInfo {
 	// one it only knows the token of) fills in where no peer listed it.
 	byCode := map[string]int{}
 	var out []airline.CarrierInfo
-	client := &http.Client{Timeout: 8 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	for _, url := range f.peers() {
 		// A peer's own rows only: the core adds the joined worlds' once.
 		resp, err := client.Get(url + "/carriers.json?own=1")

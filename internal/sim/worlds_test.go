@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -184,6 +185,35 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+
+	// Bravo restarts and says hello again with a new token: alpha's trunk
+	// peer must take the new one, or bravo never comes back.
+	var bHello worldHello
+	a.foreignMu.RLock()
+	bHello = a.foreign["1Z"].Hello
+	a.foreignMu.RUnlock()
+	bHello.Token = "after-a-restart"
+	if err := a.joinWorld(ctx, bHello, true); err != nil {
+		t.Fatalf("re-join: %v", err)
+	}
+	upCh := make(chan struct{}, 1)
+	rectx, recancel := context.WithCancel(ctx)
+	cl := &transport.Client{Addr: a.Switch.Addr("link-net"), Framer: transport.DefaultFramer(), Log: log,
+		Hello:     transport.Hello{Peer: "1Z", Role: "switch", Format: "typeb", Token: "after-a-restart"},
+		OnMessage: func(context.Context, string, []byte) error { return nil },
+		OnUp: func() {
+			select {
+			case upCh <- struct{}{}:
+			default:
+			}
+		}}
+	go cl.Run(rectx)
+	select {
+	case <-upCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("alpha did not take bravo's new token")
+	}
+	recancel()
 }
 
 // A peer machine told of a joined world by its core takes the other

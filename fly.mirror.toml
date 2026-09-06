@@ -9,7 +9,7 @@ primary_region = "lhr"
   dockerfile = "Dockerfile"
 
 [processes]
-  world = "-world /etc/wholesky/mirror.json -memlimit 1600MiB -role all -carriers 0 -warp 6 -demand 60 -console 0.0.0.0:8080 -link-bind :: -link-port 7000 -max-messages 1000 -max-records 3000 -tenant-max-messages 200 -world-name mirror -world-code 1M -world-city AMS -public-url https://wholesky-mirror.fly.dev -public-switch wholesky-mirror.fly.dev:7000 -peer-world https://wholesky-demo.fly.dev"
+  world = "-world /etc/wholesky/mirror.json -memlimit 1600MiB -role all -carriers 0 -warp 6 -demand 25 -console 0.0.0.0:8080 -link-bind :: -link-port 7000 -max-messages 1000 -max-records 3000 -tenant-max-messages 200 -world-name mirror -world-code 1M -world-city AMS -public-url https://wholesky-mirror.fly.dev -public-switch wholesky-mirror.fly.dev:7000 -peer-world https://wholesky-demo.fly.dev"
 
 [http_service]
   processes = ["world"]

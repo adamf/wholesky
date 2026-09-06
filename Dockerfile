@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skyd   ./cmd/skyd 
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worldc ./cmd/worldc
 RUN /out/worldc -data data -o /out/whole.json \
  && /out/worldc -data data -bts data/bts/2025-11-26.csv -date 2025-11-26 -o /out/thanksgiving.json \
- && /out/worldc -data data -countries "United Kingdom,France,Germany,Spain,Italy,Netherlands" -carriers 40 -mirror Q -o /out/mirror.json
+ && /out/worldc -data data -countries "United Kingdom,France,Germany,Spain,Italy,Netherlands" -carriers 24 -mirror Q -o /out/mirror.json
 
 FROM alpine:3.20
 RUN addgroup -S sky && adduser -S sky -G sky
