@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge
+  namespace: wholesky
+  annotations:
+    # A regional external passthrough load balancer, layer 4: the switch
+    # ports arrive as the TCP they left as. Reserve the address first:
+    #   gcloud compute addresses create wholesky-edge --region REGION
+    networking.gke.io/load-balancer-type: External
+    cloud.google.com/l4-rbs: enabled
+spec:
+  loadBalancerIP: 203.0.113.10

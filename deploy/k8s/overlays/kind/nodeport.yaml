@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge
+  namespace: wholesky
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  ports:
+    - {name: https, port: 443, targetPort: https, nodePort: 30443}
+    - {name: http, port: 80, targetPort: http, nodePort: 30080}
+    - {name: switch-0, port: 7000, targetPort: switch-0, nodePort: 30700}
+    - {name: switch-1, port: 7001, targetPort: switch-1, nodePort: 30701}

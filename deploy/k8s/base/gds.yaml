@@ -1,0 +1,71 @@
+# The distribution systems: one process each, 1G, 1S and 1A, carrying
+# their share of the day's demand. The ordinal picks the designator and
+# the demand seed, so the three pods differ only in which system they are.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gds
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: gds}
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: gds}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gds
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: gds}
+spec:
+  serviceName: gds
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app.kubernetes.io/name: gds}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: gds, app.kubernetes.io/part-of: wholesky}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 100, runAsGroup: 101}
+      containers:
+        - name: skyd
+          image: ghcr.io/adamf/wholesky:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              ORD="${HOSTNAME##*-}"
+              case "$ORD" in 0) D=1G;; 1) D=1S;; 2) D=1A;; *) echo "no designator for ordinal $ORD" >&2; exit 2;; esac
+              exec /usr/local/bin/skyd -world /etc/wholesky/whole.json -memlimit 3200MiB \
+                -role gds -gds-designator "$D" -seed "$((ORD+1))" -carriers 0 \
+                -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 \
+                -core-url http://core-0.core.wholesky.svc:8080 \
+                -demand "$DEMAND" -max-messages 2000 -max-records 8000
+          env:
+            - name: DEMAND
+              valueFrom: {configMapKeyRef: {name: world, key: DEMAND_PER_GDS}}
+            - name: SKYD_LINK_SECRET
+              valueFrom: {secretKeyRef: {name: wholesky-link, key: SKYD_LINK_SECRET}}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests: {cpu: "1", memory: 4Gi}
+            limits: {memory: 4Gi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: tmp
+          emptyDir: {}

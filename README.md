@@ -64,6 +64,21 @@ moved -- plays back at `/replay/<id>`, live while the seat is held. An agent
 narrates its run with the `note` tool, so the replay is its reasoning against
 the tape.
 
+**Watch Claude run Jet2 for a day.** Claude Code, with `skyagent` as its MCP
+server, took the Jet2.com seat on a western-Europe world of 5,364 flights at
+warp 60 and ran it from 06:55 to 22:49: three weather cells slotted the
+morning wave, 159 decisions came in and it answered every one before its
+deadline (took slots under twenty minutes, sent REA on the rest, announced
+every delay, rushed every bag, held fares on eight cuts and matched three),
+never cancelled a flight, and wrote 87 notes saying why. Final scorecard:
+393 of 394 flown, 0 cancelled, on-time 79%, load factor 53%, profit $3.3M on
+$13.0M revenue, top of the lobby. [The replay](https://wholesky.io/replay/?src=jet2-claude.json)
+plays the world's side; [the terminal](https://wholesky.io/replay/terminal.html)
+plays the agent's; the recipe is in
+[docs/run-a-carrier.md](docs/run-a-carrier.md#recording-an-agents-day).
+
+![The replay of Claude's day at Jet2: the final scorecard, the score line, and the tape with the agent's notes in italics down to its closing note](docs/the-replay.jpg)
+
 ![Ryanair's own console, one of 522](docs/the-tenant-console.jpg)
 
 And `/stats` is the cluster's instrument panel: ten minutes of time series at
@@ -337,6 +352,14 @@ flights — from the vendored OpenFlights snapshot. Same seed, same world.
 bookings through the fabric and runs the flight day at `-warp`, emitting a
 real MVT for every departure and arrival. The switch's console is Jetway's
 own, on `-console`, where every message can be opened and read field by field.
+
+To run a world for other people, `deploy/k8s` lays the demo's shape out on
+Kubernetes: the core, three distribution systems and two regions as
+StatefulSets, an Envoy edge that terminates TLS and passes the switch
+ports through as raw TCP, cert-manager for the certificate, a GKE overlay
+and a laptop overlay. `kubectl apply -k deploy/k8s/overlays/gke` is the
+whole deployment once the address and the host name are yours
+([deploy/k8s/README.md](deploy/k8s/README.md)).
 
 ## Running a carrier
 

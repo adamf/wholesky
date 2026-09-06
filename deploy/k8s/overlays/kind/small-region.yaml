@@ -1,0 +1,16 @@
+# One region, one distribution system, a fraction of the memory: the
+# mirror world's size, on one machine.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: region
+  namespace: wholesky
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: skyd
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {memory: 2Gi}

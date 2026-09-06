@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -176,7 +177,7 @@ func newServer(s *seat) *mcp.Server {
 			if err != nil {
 				return nil, nil, err
 			}
-			return text(out), nil, nil
+			return text(compactLobby(out, s.held())), nil, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "take_seat", Description: "Take a carrier: from now on you run it. Every department stays on autopilot until you take it manual. The token is kept for this session."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a takeArgs) (*mcp.CallToolResult, any, error) {
@@ -223,7 +224,7 @@ func newServer(s *seat) *mcp.Server {
 			if err != nil {
 				return nil, nil, err
 			}
-			return text(out), nil, nil
+			return text(compactState(out)), nil, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "The decisions the day is waiting on you for, each with its options, default and deadline. Unanswered decisions fall to the default at the deadline."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
@@ -295,6 +296,10 @@ func newServer(s *seat) *mcp.Server {
 			out, err := s.call(ctx, "GET", "/carrier/"+code+"/tape", nil)
 			if err != nil {
 				return nil, nil, err
+			}
+			if items, ok := out["items"].([]any); ok && len(items) > 40 {
+				out["items"] = items[len(items)-40:]
+				out["note"] = fmt.Sprintf("the last 40 of %d lines", len(items))
 			}
 			return text(out), nil, nil
 		})
@@ -379,4 +384,93 @@ func envOr(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// held is the carrier this session holds, if any.
+func (s *seat) held() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.code
+}
+
+// The world answers with everything; a model reads a page. The compact
+// views below keep what a seat decides on and count the rest: a lobby of
+// five hundred carriers becomes the top of the table plus the seats held
+// and one's own; a state with five hundred departures becomes the ones
+// the day has touched, the next few to leave, and the totals.
+
+func num(v any) float64 {
+	f, _ := v.(float64)
+	return f
+}
+
+// compactLobby keeps the top of the table, every held seat and the
+// caller's own carrier.
+func compactLobby(out map[string]any, own string) map[string]any {
+	rows, ok := out["carriers"].([]any)
+	if !ok || len(rows) <= 40 {
+		return out
+	}
+	var keep []any
+	for i, r := range rows {
+		m, _ := r.(map[string]any)
+		if m == nil {
+			continue
+		}
+		code, _ := m["code"].(string)
+		if i < 30 || m["seat"] != nil || code == own {
+			m["rank"] = i + 1
+			keep = append(keep, m)
+		}
+	}
+	out["carriers"] = keep
+	out["note"] = fmt.Sprintf("%d of %d carriers: the top thirty, every seat held, and yours", len(keep), len(rows))
+	return out
+}
+
+// compactState keeps the scorecard, the inbox and the departments whole,
+// and of the flights the ones the day has touched plus the next dozen.
+func compactState(out map[string]any) map[string]any {
+	flights, ok := out["flights"].([]any)
+	if !ok {
+		return out
+	}
+	pos := num(out["pos"])
+	byStatus := map[string]int{}
+	var touched, upcoming []any
+	for _, f := range flights {
+		m, _ := f.(map[string]any)
+		if m == nil {
+			continue
+		}
+		st, _ := m["status"].(string)
+		byStatus[st]++
+		annotated := num(m["delay_min"]) >= 15
+		for _, k := range []string{"slot", "crew", "retimed", "substituted", "rushed", "cancelled"} {
+			if v, _ := m[k].(string); v != "" {
+				annotated = true
+			}
+		}
+		std, _ := m["std"].(string)
+		var stdMin float64 = -1
+		if len(std) == 4 {
+			h, herr := strconv.Atoi(std[:2])
+			mi, merr := strconv.Atoi(std[2:])
+			if herr == nil && merr == nil {
+				stdMin = float64(h*60 + mi)
+			}
+		}
+		if annotated && st != "arrived" {
+			touched = append(touched, m)
+		} else if stdMin >= pos && stdMin < pos+180 && len(upcoming) < 12 {
+			upcoming = append(upcoming, m)
+		}
+	}
+	if len(touched) > 40 {
+		touched = touched[len(touched)-40:]
+	}
+	out["flights"] = append(touched, upcoming...)
+	out["flights_summary"] = map[string]any{"total": len(flights), "by_status": byStatus,
+		"shown": fmt.Sprintf("%d the day has touched (delay 15+, slot, crew, retime, substitution, rush, cancellation) and %d leaving in the next three hours", len(touched), len(upcoming))}
+	return out
 }

@@ -1,0 +1,96 @@
+# The core: the switches, the instruments, the lobby, the state. One
+# replica: it is the process every other machine dials, and a second one
+# would be a second world. Its state (seats, claims, joined worlds, the
+# recordings) lives on a small volume.
+apiVersion: v1
+kind: Service
+metadata:
+  name: core
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: core}
+spec:
+  clusterIP: None            # stable DNS: core-0.core.wholesky.svc
+  selector: {app.kubernetes.io/name: core}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+    - {name: switch-0, port: 7000, targetPort: switch-0}
+    - {name: switch-1, port: 7001, targetPort: switch-1}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: core
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: core}
+spec:
+  serviceName: core
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: core}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: core, app.kubernetes.io/part-of: wholesky}
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext: {runAsNonRoot: true, runAsUser: 100, runAsGroup: 101, fsGroup: 101}
+      containers:
+        - name: skyd
+          image: ghcr.io/adamf/wholesky:latest
+          args:
+            - -state=/data/state.json
+            - -world=/etc/wholesky/whole.json
+            - -memlimit=3200MiB
+            - -role=core
+            - -gds-list=1G,1S,1A
+            - -switches=2
+            - -carriers=0
+            - -warp=6
+            - -console=0.0.0.0:8080
+            - -pprof=127.0.0.1:6060
+            # The address the world's own machines dial the switch at.
+            - -advertise=core-0.core.wholesky.svc
+            - -link-bind=::
+            - -link-port=7000
+            # The addresses strangers dial: the edge's, set per overlay.
+            - -public-switch=$(PUBLIC_HOST):7000,$(PUBLIC_HOST):7001
+            - -public-url=https://$(PUBLIC_HOST)
+            - -world-name=$(WORLD_NAME)
+            - -want-peer-movements
+            - -max-messages=2000
+            - -max-records=4000
+            - -stats-snapshot=/tmp/wholesky-stats.json
+          env:
+            - name: PUBLIC_HOST
+              valueFrom: {configMapKeyRef: {name: world, key: PUBLIC_HOST}}
+            - name: WORLD_NAME
+              valueFrom: {configMapKeyRef: {name: world, key: WORLD_NAME}}
+            - name: SKYD_LINK_SECRET
+              valueFrom: {secretKeyRef: {name: wholesky-link, key: SKYD_LINK_SECRET}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: switch-0, containerPort: 7000}
+            - {name: switch-1, containerPort: 7001}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests: {cpu: "2", memory: 4Gi}
+            limits: {memory: 4Gi}
+          volumeMounts:
+            - {name: state, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata: {name: state}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 2Gi}}

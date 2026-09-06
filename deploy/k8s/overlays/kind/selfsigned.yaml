@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+  namespace: wholesky
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wholesky-tls
+  namespace: wholesky
+spec:
+  secretName: wholesky-tls
+  dnsNames: [localhost]
+  issuerRef: {name: selfsigned, kind: Issuer}

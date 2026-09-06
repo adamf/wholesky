@@ -1,0 +1,27 @@
+# cert-manager issues the edge's certificate from Let's Encrypt. DNS-01
+# through Cloud DNS needs no port open and covers the wildcard; the issuer
+# below assumes a service account with dns.admin on the zone, bound to
+# cert-manager's KSA by Workload Identity (see the README).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@example.org
+    privateKeySecretRef: {name: letsencrypt-account}
+    solvers:
+      - dns01:
+          cloudDNS:
+            project: my-gcp-project
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wholesky-tls
+  namespace: wholesky
+spec:
+  secretName: wholesky-tls
+  dnsNames: [sky.example.org]
+  issuerRef: {name: letsencrypt, kind: ClusterIssuer}

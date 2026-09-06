@@ -1,0 +1,134 @@
+admin:
+  address: {socket_address: {address: 127.0.0.1, port_value: 9901}}
+static_resources:
+  listeners:
+    - name: https
+      address: {socket_address: {address: 0.0.0.0, port_value: 8443}}
+      listener_filters:
+        - name: envoy.filters.listener.tls_inspector
+          typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector}
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                alpn_protocols: [h2, http/1.1]
+                tls_params: {tls_minimum_protocol_version: TLSv1_2}
+                tls_certificates:
+                  - certificate_chain: {filename: /etc/envoy/tls/tls.crt}
+                    private_key: {filename: /etc/envoy/tls/tls.key}
+                    # cert-manager renews into the same files; Envoy
+                    # picks the new pair up without a restart.
+                    watched_directory: {path: /etc/envoy/tls}
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: https
+                codec_type: AUTO
+                use_remote_address: true
+                xff_num_trusted_hops: 0
+                # The event streams (/eye/stream, /carrier/XX/events,
+                # the consoles' /api/stream) stay open for hours.
+                stream_idle_timeout: 0s
+                request_timeout: 0s
+                common_http_protocol_options: {idle_timeout: 3600s}
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}
+                route_config:
+                  name: world
+                  virtual_hosts:
+                    - name: world
+                      domains: ["*"]
+                      response_headers_to_add:
+                        - header: {key: Strict-Transport-Security, value: "max-age=31536000"}
+                      routes:
+                        - match: {prefix: /}
+                          route:
+                            cluster: core-http
+                            timeout: 0s
+                            idle_timeout: 0s
+    - name: http
+      address: {socket_address: {address: 0.0.0.0, port_value: 8080}}
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: http
+                codec_type: AUTO
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}
+                route_config:
+                  name: redirect
+                  virtual_hosts:
+                    - name: redirect
+                      domains: ["*"]
+                      routes:
+                        # The certificate challenge, when HTTP-01 is used.
+                        - match: {prefix: /.well-known/acme-challenge/}
+                          route: {cluster: acme-solver}
+                        - match: {prefix: /}
+                          redirect: {https_redirect: true, port_redirect: 443}
+    - name: switch-0
+      address: {socket_address: {address: 0.0.0.0, port_value: 7000}}
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.tcp_proxy
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                stat_prefix: switch0
+                cluster: core-switch-0
+                # A quiet link is the world's to reap (its listener's
+                # idle_timeout), not the edge's.
+                idle_timeout: 0s
+    - name: switch-1
+      address: {socket_address: {address: 0.0.0.0, port_value: 7001}}
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.tcp_proxy
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                stat_prefix: switch1
+                cluster: core-switch-1
+                idle_timeout: 0s
+  clusters:
+    - name: core-http
+      type: STRICT_DNS
+      connect_timeout: 5s
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: core-http
+        endpoints:
+          - lb_endpoints:
+              - endpoint: {address: {socket_address: {address: core-0.core.wholesky.svc, port_value: 8080}}}
+    - name: core-switch-0
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: core-switch-0
+        endpoints:
+          - lb_endpoints:
+              - endpoint: {address: {socket_address: {address: core-0.core.wholesky.svc, port_value: 7000}}}
+    - name: core-switch-1
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: core-switch-1
+        endpoints:
+          - lb_endpoints:
+              - endpoint: {address: {socket_address: {address: core-0.core.wholesky.svc, port_value: 7001}}}
+    - name: acme-solver
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: acme-solver
+        endpoints:
+          - lb_endpoints:
+              - endpoint: {address: {socket_address: {address: acme-solver.wholesky.svc, port_value: 8089}}}

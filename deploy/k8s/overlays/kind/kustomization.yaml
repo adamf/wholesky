@@ -1,0 +1,30 @@
+# A laptop cluster (kind, minikube, Docker Desktop): NodePorts instead of
+# a load balancer, a self-signed certificate, and a small world so it
+# fits. The image comes from a local build:
+#   docker build -t ghcr.io/adamf/wholesky:dev . && kind load docker-image ghcr.io/adamf/wholesky:dev
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wholesky
+resources:
+  - ../../base
+  - selfsigned.yaml
+patches:
+  - path: nodeport.yaml
+  - path: small-region.yaml
+  - path: small-gds.yaml
+  - path: small-core.yaml
+images:
+  - name: ghcr.io/adamf/wholesky
+    newTag: dev
+configMapGenerator:
+  - name: world
+    behavior: merge
+    literals:
+      - PUBLIC_HOST=localhost
+      - WORLD_NAME=laptop
+      - DEMAND_PER_GDS=20
+secretGenerator:
+  - name: wholesky-link
+    literals: [SKYD_LINK_SECRET=laptop]
+generatorOptions:
+  disableNameSuffixHash: true

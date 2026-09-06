@@ -1,0 +1,70 @@
+# The regions: the carriers' tenants, sharded across the replicas. The
+# ordinal is the shard; the replica count is the shard count, so scaling
+# the StatefulSet re-shards the carriers (restart the set together).
+apiVersion: v1
+kind: Service
+metadata:
+  name: region
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: region}
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: region}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: region
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: region}
+spec:
+  serviceName: region
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app.kubernetes.io/name: region}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: region, app.kubernetes.io/part-of: wholesky}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 100, runAsGroup: 101}
+      containers:
+        - name: skyd
+          image: ghcr.io/adamf/wholesky:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              ORD="${HOSTNAME##*-}"
+              exec /usr/local/bin/skyd -world /etc/wholesky/whole.json -memlimit 3200MiB \
+                -gds-list 1G,1S,1A -role region -shard "$ORD" -shards "$SHARDS" -carriers 0 \
+                -console 0.0.0.0:8080 -pprof 127.0.0.1:6060 \
+                -core-url http://core-0.core.wholesky.svc:8080 \
+                -avs-interval 60s -max-messages 2000 -max-records 4000 -tenant-max-messages 300
+          env:
+            - name: SHARDS
+              valueFrom: {configMapKeyRef: {name: world, key: REGION_SHARDS}}
+            - name: SKYD_LINK_SECRET
+              valueFrom: {secretKeyRef: {name: wholesky-link, key: SKYD_LINK_SECRET}}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests: {cpu: "2", memory: 4Gi}
+            limits: {memory: 4Gi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: tmp
+          emptyDir: {}

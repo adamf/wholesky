@@ -1,0 +1,25 @@
+# GKE Standard: a regional cluster, one node pool of e2-standard-8 (two
+# nodes carry the whole demo), cert-manager installed, a reserved static
+# address for the edge, and DNS A and AAAA records at it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wholesky
+resources:
+  - ../../base
+  - certificate.yaml
+patches:
+  - path: edge-static-ip.yaml
+  - path: storage.yaml
+configMapGenerator:
+  - name: world
+    behavior: merge
+    literals:
+      - PUBLIC_HOST=sky.example.org
+      - WORLD_NAME=demo
+secretGenerator:
+  # kubectl create secret generic wholesky-link -n wholesky --from-literal=SKYD_LINK_SECRET=$(openssl rand -hex 24)
+  # is the same thing done by hand; this reads it from an env file kept out of git.
+  - name: wholesky-link
+    envs: [link.env]
+generatorOptions:
+  disableNameSuffixHash: true

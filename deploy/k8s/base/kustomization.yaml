@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wholesky
+resources:
+  - namespace.yaml
+  - world.yaml
+  - core.yaml
+  - gds.yaml
+  - region.yaml
+  - edge.yaml
+configMapGenerator:
+  - name: envoy
+    files: [envoy.yaml=envoy-config.yaml]
+  # What differs between deployments of the same image: where the world is
+  # reached, what it is called, how much demand, how many shards. Overlays
+  # merge their own values; the link secret is a Secret, never here.
+  - name: world
+    literals:
+      - PUBLIC_HOST=sky.example.org
+      - WORLD_NAME=demo
+      - DEMAND_PER_GDS=1170
+      - REGION_SHARDS=2
+generatorOptions:
+  disableNameSuffixHash: true
+images:
+  - name: ghcr.io/adamf/wholesky
+    newTag: latest

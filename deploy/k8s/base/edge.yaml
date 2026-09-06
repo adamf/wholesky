@@ -1,0 +1,65 @@
+# The edge. Envoy terminates TLS for the console and the API (with
+# timeouts that leave the event streams open), redirects plain HTTP, and
+# passes the two switch ports through as raw TCP: a Type B link is a
+# long-lived plaintext socket, and it must reach the core untouched. The
+# Service is a layer-4 load balancer with the client's address preserved,
+# so the world's per-address limits see the visitor, not the balancer.
+# The Envoy configuration itself is envoy-config.yaml, mounted by the
+# kustomization as the envoy ConfigMap.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: envoy}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: envoy}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: envoy, app.kubernetes.io/part-of: wholesky}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 101, runAsGroup: 101}
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.31.0
+          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+          ports:
+            - {name: https, containerPort: 8443}
+            - {name: http, containerPort: 8080}
+            - {name: switch-0, containerPort: 7000}
+            - {name: switch-1, containerPort: 7001}
+          readinessProbe:
+            tcpSocket: {port: https}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/envoy, readOnly: true}
+            - {name: tls, mountPath: /etc/envoy/tls, readOnly: true}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: config
+          configMap: {name: envoy}
+        - name: tls
+          secret: {secretName: wholesky-tls}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge
+  namespace: wholesky
+  labels: {app.kubernetes.io/name: envoy}
+spec:
+  type: LoadBalancer
+  # The visitor's address reaches Envoy, and so the world's per-address
+  # limits; the cost is that only nodes running an Envoy answer.
+  externalTrafficPolicy: Local
+  selector: {app.kubernetes.io/name: envoy}
+  ports:
+    - {name: https, port: 443, targetPort: https}
+    - {name: http, port: 80, targetPort: http}
+    - {name: switch-0, port: 7000, targetPort: switch-0}
+    - {name: switch-1, port: 7001, targetPort: switch-1}

@@ -310,6 +310,32 @@ reasoning against the tape. `skyagent -record run.jsonl` also keeps every
 call and answer locally. A replay page takes `?src=` too, so a recording
 copied to a static site plays there without the world.
 
+## Recording an agent's day
+
+The run on the site (wholesky.io/replay) was made like this, and any run can
+be:
+
+```sh
+go run ./cmd/worldc -countries "United Kingdom,Ireland,Spain,Portugal,France" -carriers 8 -o west.json
+go run ./cmd/skyd -world west.json -carriers 0 -warp 60 -fill 0.8 -demand 300 \
+    -link-secret demo -allow-private-peers -state ./state.json -console 127.0.0.1:8095
+# the books take a few minutes to fill; hold the clock meanwhile, then let it go
+curl -X POST -H "X-Skyd-Secret: demo" -d '{"warp":0}'  localhost:8095/eye/time
+curl -X POST -H "X-Skyd-Secret: demo" -d '{"warp":60}' localhost:8095/eye/time
+# the agent: Claude Code in print mode with skyagent as its MCP server
+claude -p "$(cat prompt.md)" --mcp-config mcp.json --strict-mcp-config \
+    --allowedTools mcp__wholesky__lobby,mcp__wholesky__take_seat,mcp__wholesky__inbox,mcp__wholesky__decide,mcp__wholesky__note,... \
+    --output-format stream-json --verbose --max-turns 320
+```
+
+`mcp.json` points `skyagent -world http://127.0.0.1:8095 -record run.jsonl`
+at the world; the prompt tells the agent to take a carrier, take every
+department manual, answer the inbox until the clock passes 23:00, narrate
+with `note`, and release the seat. Released, the run is on the core's disk
+and `/replay/<id>` plays it; `curl /recording/<id>.json` is the file the
+site's copy was made from. `asciinema rec --headless` around the `claude`
+command records the agent's side; `docs/replay/terminal.html` plays it.
+
 ## What a stranger can and cannot do
 
 The lobby, the ops centre, the sky and every carrier's console are public
