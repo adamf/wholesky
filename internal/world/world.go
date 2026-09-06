@@ -233,11 +233,28 @@ func Mirror(m *Manifest, prefix string) {
 		return
 	}
 	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	// Every designator the data knows is taken: a mirror must not collide
+	// with a real carrier the other world flies (QF, QR and QZ are real; Q0
+	// is not), so the codes are drawn from the prefix on and any that the
+	// source world already uses are skipped.
+	taken := map[string]bool{}
+	for _, c := range m.Carriers {
+		taken[c.Designator] = true
+	}
 	codes := map[string]string{}
 	p := strings.ToUpper(prefix)[0]
+	next := 0
 	for i := range m.Carriers {
 		c := &m.Carriers[i]
-		code := string([]byte{p + byte(i/len(alphabet)), alphabet[i%len(alphabet)]})
+		var code string
+		for {
+			code = string([]byte{p + byte(next/len(alphabet)), alphabet[next%len(alphabet)]})
+			next++
+			if !taken[code] {
+				break
+			}
+		}
+		taken[code] = true
 		codes[c.Designator] = code
 		if len(c.TTYAddress) >= 2 {
 			c.TTYAddress = c.TTYAddress[:len(c.TTYAddress)-2] + code
