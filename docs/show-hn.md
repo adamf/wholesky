@@ -31,6 +31,17 @@ https://github.com/adamf/jetway (Go, MIT, an airline messaging gateway that
 is also a GDS, seat inventory, fare engine, DCS, settlement writer and
 switch, meant to be usable for real, not only for this)
 
+You can also run one of the airlines. Every carrier flies on autopilot;
+take a seat at https://wholesky-demo.fly.dev/ops/ and, department by
+department, the autopilot stops deciding and asks you -- take this slot or
+ask for a better one, announce this delay or hold it, match a rival's fare
+cut or hold, rush these bags or hold them -- with a default and a
+deadline. Agents get the same API as MCP tools. Every run is recorded and
+plays back with the sim clock on every line. Claude ran Jet2 for a day
+(159 decisions, none defaulted, no cancellations, 87 notes on why):
+https://wholesky.io/replay/?src=jet2-claude.json -- and the terminal it
+did it from: https://wholesky.io/replay/terminal.html
+
 Click any aircraft and you get what its carrier holds: the name list that
 went to the airport at T-180 (a full 737 is three parts), the records
 pushed to the state's passenger information unit (PNRGOV), check-in in
@@ -67,12 +78,18 @@ Things I learned building it that surprised me:
   the 60-line message envelope, and deadlocked a link because both ends
   answered from inside their read loops. The first run of the release
   gate found 88 oversold cabins, 83 of them business cabins on Hawaii legs.
-  All fixed upstream, each with a test watched to fail first. Eighty-four
+  All fixed upstream, each with a test watched to fail first. Ninety-five
   jetway releases so far.
 - Flight numbers are not flight identifiers. Southwest flies one number
   over several legs a day. Everything keyed on number alone was wrong.
 - A seat inventory has to be rebuilt from the book of record at boot.
   Anything that remembers sold seats in memory oversells after a restart.
+- Letting strangers run the airlines meant a security pass first. Six
+  audits over both codebases found what a private deployment never meets:
+  the control plane between the world's machines was open, the switch
+  ports took any peer's word for its name, a page reflected its URL.
+  What was fixed and the decisions still open are written down:
+  https://github.com/adamf/wholesky/blob/main/docs/security.md
 - Free specs exist for more than you would think. IATA's PNRGOV guide,
   the DISH 23 settlement handbook, the PAXLST guide, ICAO Annex 10 and the
   Type B whitepaper are all public, and each one corrected bugs whose
