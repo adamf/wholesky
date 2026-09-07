@@ -190,7 +190,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="two">
       <div class="card">
         <h3>A message behind every mark</h3>
-        <p class="muted">An aircraft appears when a Type B departure message crosses the switch. It lands when the arrival message crosses. A passenger is on a name list because reservations sent that list to the airport. A red halo marks a closed airport. Its size is the number of queue items an agent must now rework. The globe draws nothing without a message.</p>
+        <p class="muted">An aircraft appears when a Type B departure message crosses the switch, and lands when the arrival message crosses. A passenger is on a name list because reservations sent that list to the airport. When an airport closes, a red halo grows over it, sized by the bookings a person must now rework. The globe draws nothing without a message.</p>
       </div>
       <div class="card">
         <h3>Separate state for every node</h3>
@@ -236,7 +236,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="panel active" id="tab-eye" role="tabpanel">
       <div>
         <h3>The eye</h3>
-        <p>The eye is an orthographic globe drawn from the switch's message bus. An aircraft appears when its carrier's MVT departure message crosses the switch. It lands when the arrival message crosses. Sparks are messages in flight to and from a carrier's home. A red halo marks a closed airport. Its size is the number of queue items an agent must now rework.</p>
+        <p>The eye is an orthographic globe drawn from the switch's message bus. An aircraft appears when its carrier's MVT departure message crosses the switch and lands when the arrival message crosses. Sparks are messages in flight to and from a carrier's home. A red halo marks a closed airport. Its size is the number of queue items a person must now rework.</p>
         <p>Click any aircraft to see what its carrier holds for that flight. The panel shows the schedule and, on a recorded day, the recorded outcome. From departure control it shows the clock and the name list with its parts and amendments. It also shows the seat map by cabin, the connections, the load and the loadsheet. From the operations desk it shows the callsign, the flight plan and the tower replies. It lists the manifest name by name, and under each name the bookings, under the locators the selling channels issued, each with its fare.</p>
         <dl class="kv">
           <dt>modes</dt><dd><b>sky</b> the globe · <b>net</b> a force-directed graph of the nodes that exchange messages</dd>
@@ -286,7 +286,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <div>
         <h3>The switch</h3>
         <p>The switch is a full <code>jetwayd</code> in relay mode with about 500 TCP listeners. It frames each link and relays by Type B address line and EDIFACT UNB recipient. It has a write-ahead spool, per-peer rate limits with a shared cap, and a lease for standby takeover. Each link has an outbox that refuses new messages when a peer stops reading, rather than stalling. Every message crosses the switch. The globe is therefore drawn from the switch's bus alone.</p>
-        <p>Global reservations traffic in the industry is a few thousand messages a second. The switch peaks above 16,000 messages a second on one 4-vCPU machine during the departure banks. The topology is harder than the throughput.</p>
+        <p>Global reservations traffic in the industry is a few thousand messages a second. The switch peaks above 16,000 messages a second on one 4-vCPU machine during the departure banks, so throughput was never the hard part. The hard part is the topology, where 522 nodes each hold one link and address every other node through it.</p>
         <dl class="kv">
           <dt>invariants</dt><dd>the switch captures before it interprets · it never regenerates raw bytes from a parse · it discards nothing it cannot decode</dd>
           <dt>metrics</dt><dd><code>jetway_outbox_depth</code> · <code>jetway_outbox_congested_total</code> · <code>jetway_ingress_links</code> · <code>jetway_spool_depth</code></dd>
@@ -315,7 +315,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       </div>
       <div>
         <div class="shot"><img src="the-stats.jpg" alt="The instrument panel, showing messages, wire formats, traffic classes, bookings, airborne, movements, undeliverable and queues"></div>
-        <p class="caption">The instrument panel. The panel labels the number that should be zero.</p>
+        <p class="caption">The instrument panel, with the undeliverable count that should read zero.</p>
       </div>
     </div>
 
@@ -400,7 +400,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="two">
       <div class="card">
         <h3>1 · A group on the demo without an install</h3>
-        <p class="muted">Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat holder switches their own departments to manual and answers the decisions the simulator sends. The leaderboard is shared. The 500 carriers with no seat holder run on autopilot and form the baseline. Each seat covers one carrier, so 100 people can run 100 airlines on one world at the same time.</p>
+        <p class="muted">Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat holder switches their own departments to manual and answers the decisions the simulator sends. The leaderboard is shared, and the 500 carriers that nobody holds run on autopilot alongside you. Each seat covers one carrier, so 100 people can run 100 airlines on one world at the same time.</p>
       </div>
       <div class="card">
         <h3>2 · Your own world for a group</h3>
@@ -526,7 +526,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         </table></div>
         <p class="muted" style="margin-top:12px">For a carrier's host or a switch that carries production traffic, the SRE plan has its own page, <a href="production.html">deploy to production</a>. It covers topology, the lease, database provisioning, DR, the alerts, and load testing as the release gate.</p>
         <p class="muted">Both apps deploy from <code>fly.toml</code> and <code>fly.thanksgiving.toml</code>. The roles are <code>core</code>, <code>gds</code>, <code>region -shard N -shards M</code> and <code>all</code>. Peers find the core with <code>-core-url</code> and advertise themselves with <code>-self-url</code>. Stores are in memory by default, or in Postgres with <code>-tenant-dsn</code> and <code>-gds-dsn</code>. Records are partitioned by their retirement day and dropped when the day ends.</p>
-        <p class="muted">The deployments taught five lessons, and each is now in the code. A filled 737's name list has three parts. A link's outbox must refuse rather than stall. A seat inventory must be rebuilt from the book at boot. Two worlds must not share one small database. A partition that cannot be created must not stop the write.</p>
+        <p class="muted">Running the demo taught five lessons, and each is now in the code. A filled 737's name list does not fit in one Type B message, so the name list has three parts. A link's outbox refuses new messages rather than stalling when the peer stops reading. A seat inventory is rebuilt from the book of record at boot, because a count kept in memory oversells after a restart. Two worlds no longer share one small database, and a partition that cannot be created no longer stops the write.</p>
       </div>
     </div>
   </div>
@@ -560,14 +560,14 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <ul class="tight muted">
           <li>Comments explain <b>why</b>. Write Go doc on every exported symbol, in prose. Use British spelling.</li>
           <li>Commit messages have a body that explains the reasoning, wrapped at 72 columns.</li>
-          <li>When wholesky finds a bug in jetway, fix it in jetway, tag a release and pin it. Simulation-only behaviour stays in wholesky. jetway must remain usable in production.</li>
+          <li>When wholesky finds a bug in jetway, fix it in jetway, tag a release and pin it. Nothing that exists only for the simulation goes into jetway, which must stay usable in production.</li>
           <li>Migrations are numbered without gaps. Do not edit a migration after it has been applied anywhere. Do not drop a partition by hand under a running process.</li>
           <li>Open an issue or a pull request on either repository. Both are MIT-licensed.</li>
         </ul>
       </div>
     </div>
     <h3 style="margin-top:32px">Missing systems</h3>
-    <p class="prose muted">The following systems are not implemented yet. IATA's IS-XML for the interline invoices is missing, though the proration, billing and agency memos are done. A revenue management forecast learned from history is missing, though the ladders, the booking-curve forecaster and the network programme's bid prices are done. Secure Flight-style vetting is missing. WorldTracer's own formats are missing, though the AHL, OHD and FWD story of a short-shipped bag runs as a profile. The FAA's CDM ground stops and the slot-swapping dialogue are missing, though weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done. Crew pairings across days are missing, though Part 117 legality, reserves and crew cancellations are done. Also missing are maintenance and rotation, weather and air-traffic flow, airport systems, cargo, and Type B over MQ as some carriers still receive it. The ordered list, with what each would add and exercise, is <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>. The cost of full load is in <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</p>
+    <p class="prose muted">Several systems are still missing. The interline invoices have their proration, billing and agency memos, but not IATA's IS-XML to carry them. Revenue management has ladders, a booking-curve forecaster and the network programme's bid prices, but no forecast learned from history. There is no Secure Flight-style vetting. A short-shipped bag runs its AHL, OHD and FWD story as a profile, without WorldTracer's own formats. Weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done, while the FAA's CDM ground stops, the slot-swapping dialogue and weather that closes an area outright are not. Crew has Part 117 legality, reserves and cancellations, and no pairings across days. Maintenance and rotation, airport systems, cargo, and Type B over MQ as some carriers still receive it are absent. The ordered list, with what each would add and exercise, is <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>. The cost of full load is in <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</p>
   </div>
 </section>
 

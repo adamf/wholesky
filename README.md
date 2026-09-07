@@ -1,9 +1,9 @@
 # wholesky
 
 wholesky simulates one day of passenger aviation for the whole Earth on
-[Jetway](https://github.com/adamf/jetway). It simulates every scheduled
-flight, every booking, and every Type B and EDIFACT message that the
-flights and bookings need. The messages cross TCP sockets.
+[Jetway](https://github.com/adamf/jetway): every scheduled flight, every
+booking, and every Type B and EDIFACT message that the flights and
+bookings need, crossing TCP sockets.
 
 I built it to find out what breaks when the systems are separate and talk
 only by message. Every time the world got bigger, it found bugs in Jetway.
@@ -60,7 +60,7 @@ between carriers and their interline partners. Carriers broadcast
 availability to their interline partners, as they do in the airline
 industry.
 
-The net mode has 2 layouts of the same graph. The **web** layout is
+The net mode has two layouts of the same graph. The **web** layout is
 force-directed. The messages act as springs, and the springs pull regional
 communities together. The layout receives no geography, but China appears
 upper-left, the Americas upper-right and Europe below. The **ring** layout
@@ -73,7 +73,7 @@ console.
 ![The web layout of the world's interline conversations](docs/the-web.gif)
 
 **Every node has a console.** The world has 522 Jetway systems: the switch,
-3 distribution systems and 518 carriers. Each system serves the full Jetway
+three distribution systems and 518 carriers. Each system serves the full Jetway
 console at `/node/{code}/` under its own identity. Open `/node/FR/` to see
 Ryanair's reservation system, with its own message tape, records and
 queues. The core proxies each console from the machine that runs the
@@ -92,12 +92,12 @@ replay is live while the seat is held. An agent narrates its run with the
 **Claude ran Jet2 for a day.** Claude Code took the Jet2.com seat on a
 western Europe world of 5,364 flights at warp 60. It used `skyagent` as
 its Model Context Protocol (MCP) server. Claude held the seat from 06:55
-to 22:49. In the morning wave, 3 weather cells imposed slots on the flights.
+to 22:49. In the morning wave, three weather cells imposed slots on the flights.
 Claude received 159 decisions and answered every one before its deadline.
 
 Claude accepted slots under 20 minutes and sent REA for the rest. It
 announced every delay and rushed every bag. It held fares on 8 fare cuts
-and matched 3. It did not cancel a flight, and it wrote 87 notes that give
+and matched three. It did not cancel a flight, and it wrote 87 notes that give
 its reasons. The final scorecard was 393 of 394 flights flown, 0 cancelled,
 on-time 79%, load factor 53%, and profit $3.3M on $13.0M revenue. Jet2
 finished at the top of the lobby.
@@ -114,7 +114,7 @@ gives the steps.
 
 ![The replay of Claude's day at Jet2: the final scorecard, the score line, and the tape with the agent's notes in italics, to its closing note](docs/the-replay.jpg)
 
-![Ryanair's console, 1 of 522](docs/the-tenant-console.jpg)
+![Ryanair's console, one of 522](docs/the-tenant-console.jpg)
 
 `/stats` is the instrument panel of the cluster. It shows 10 minutes of
 time series at a resolution of 2 s: message rates by wire format and
@@ -167,8 +167,9 @@ The design is in the design note "The Whole Sky" (2026-08-31). In summary,
 the sky is busy, but its message volume is small. The reservation fabric
 of the airline industry peaks at a few thousand messages a second. With
 availability at the industry's churn rate and 1 baggage message per bag
-per scan, the total is tens of thousands of messages a second. The topology is more interesting than the throughput. The topology
-here mirrors the topology of the airline industry:
+per scan, the total is tens of thousands of messages a second. The
+topology matters more than the throughput, and the topology here mirrors
+the airline industry's:
 
 - **The switch** is a Jetway node in relay mode. It has the role that SITA
   has in the airline industry. Every other node holds one link to the switch
@@ -209,12 +210,12 @@ industry:
   therefore at the distribution systems, where the bookings happen.
 - **region0 / region1** run the 518 carriers, sharded by stable hash. Each
   region flies its slice of the flight day and runs the airports of its
-  carriers. The carriers keep their books of record in 1 shared Managed
-  Postgres, 1 node per carrier. The books are in Postgres because the
+  carriers. The carriers keep their books of record in one shared Managed
+  Postgres, one node per carrier. The books are in Postgres because the
   4 GB machines ran out of RAM when they held the records of 259
   reservation systems. The simulator purges the books when the simulated
   day ends. Every tenant is a reservation system *and* a departure control
-  system. The 2 communicate over the network, as separate systems do in
+  system. The two communicate over the network, as separate systems do in
   the airline industry. The messages in are PNL, ADL, BSM and BPM, and the
   messages out are PFS, PTM, PSM, ETL, LDM and CPM.
 
@@ -242,7 +243,7 @@ flowchart LR
 In single-box mode, the switch is the only full `jetwayd`. It is the same
 assembly that the standalone binary runs, with its console. The
 distribution systems and every carrier are embedded gateways. Each has
-its own identity, its own store, its own console and 1 socket.
+its own identity, its own store, its own console and one socket.
 
 ```mermaid
 flowchart TB
@@ -284,7 +285,7 @@ rest of the sky continues to fly. To rejoin, the region registers and
 dials in again.
 
 In both shapes, the topology mirrors the airline industry. Most carriers
-are tenants of a few hosted systems, and every node connects to 1 message
+are tenants of a few hosted systems, and every node connects to one message
 network.
 
 ## The recorded day
@@ -325,7 +326,7 @@ warp 1.
 ![The recorded day: the Wednesday before Thanksgiving 2025, every US flight on its recorded tail number](docs/the-recorded-day.jpg)
 
 The passengers were the weak part of the recorded day. Demand at 800
-bookings a minute puts about 2 bookings on each of the 22,889 flights. The
+bookings a minute puts about two bookings on each of the 22,889 flights. The
 name lists were therefore short, and most flights closed with a few names.
 `-fill` simulates the weeks before the day. `internal/fill` reads the
 schedule and writes the book of record of each carrier before the day
@@ -489,19 +490,19 @@ IPv6 or not at all. The trunk from the mirror world to the demo does not
 stay up there. A dedicated address, or the Kubernetes layout in
 `deploy/k8s`, gives the switch ports the raw TCP that they need.
 
-![Lufthansa's operations centre on the demo: the scorecard, 1 decision open, every department on manual, the levers](docs/the-ops-centre.jpg)
+![Lufthansa's operations centre on the demo: the scorecard, one decision open, every department on manual, the levers](docs/the-ops-centre.jpg)
 
 ![The lobby: a leaderboard of 518 carriers and who holds each seat](docs/the-lobby.jpg)
 
 ### Multiplayer, in four shapes
 
 1. **A group on the demo.** Each person opens `/ops/` on the demo, takes a
-   carrier, and plays. Each carrier has 1 seat. The leaderboard is shared.
+   carrier, and plays. Each carrier has one seat. The leaderboard is shared.
 2. **Your own world for a group.** Compile a world with `worldc`. Run
    `skyd -console :8080 -decision-window 90s`. Share the URL. `-warp` sets
    the speed of the day.
 3. **Agents in the seats.** Run `cmd/skyagent -world URL` as an MCP
-   server. People and agents share 1 leaderboard and can hand a seat
+   server. People and agents share one leaderboard and can hand a seat
    between them.
 4. **Bring your own jetway.** Claim a carrier. Run `jetwayd` with the
    pack. Register the URL of your node. The URL must be one that the
@@ -564,7 +565,7 @@ Here is what works. `go test ./...` proves it on every run.
   - It closes its cheap classes while full fare is still open.
   - It waitlists the next party and refuses after that.
   - It turns away a connecting passenger whose through fare does not cover
-    the seats taken from the local passengers of 2 flights (bid-price
+    the seats taken from the local passengers of two flights (bid-price
     control).
   - The availability that the carrier broadcasts says how many seats
     remain.
@@ -610,7 +611,7 @@ Here is what works. `go test ./...` proves it on every run.
     pulls their bags.
   - Passengers that no flight can carry stay on the queue for a person.
 - The connecting passengers of another airline are through-checked over
-  interline through check-in (IATCI). Of all connections, 1 in 4 is
+  interline through check-in (IATCI). Of all connections, one in four is
   interline. The onward seat is on the manifest.
 - Every international door close tells the state who is on board
   (Advance Passenger Information System (APIS), to the public PAXLST
@@ -689,14 +690,14 @@ Since then, the following changed:
 - The demo's shape runs on Kubernetes with an Envoy edge, for a world that
   stays up.
 
-Every time the world gets bigger, it exposes bugs in Jetway. There have
-been 95 Jetway releases so far. Each fix is in Jetway with a regression
-test that failed before the fix.
+Each of those came from the world growing and Jetway breaking somewhere
+new. There have been 95 Jetway releases so far, and every fix carries a
+regression test that failed before it.
 
 The following are not yet done:
 
 - Filling a recorded day to the passenger load that the day had.
-- Weather systems that close a geographic area instead of 1 airport.
+- Weather systems that close a geographic area instead of one airport.
 - Booking curves with the seasonality of the airline industry.
 
 [docs/missing-systems.md](docs/missing-systems.md) lists the systems that
