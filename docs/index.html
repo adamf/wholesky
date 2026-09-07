@@ -135,6 +135,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <a href="#system">the system</a>
     <a href="#run">run a carrier</a>
     <a href="#play">multiplayer</a>
+    <a href="replay/?src=jet2-claude.json">watch a run</a>
     <a href="jetway.html">jetway</a>
     <a href="production.html">production</a>
     <a href="#architecture" class="hide-sm">architecture</a>
@@ -374,11 +375,11 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="two">
       <div class="card">
         <h3>For people: the operations centre</h3>
-        <p class="muted">The lobby is a leaderboard: revenue, cost, profit, on-time, cancellations, load factor, score, and who holds the seat. Take a carrier and you get its inbox, its departments as switches (operations, crew, slots, pricing, ground), the levers -- cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, call reserves -- and the departures board with what the day is doing to each flight: the slot and its cause, the crew's legality, the late aircraft, the bags. <a href="https://wholesky-demo.fly.dev/ops/">Open the lobby →</a></p>
+        <p class="muted">The lobby is a leaderboard: revenue, cost, profit, on-time, cancellations, load factor, score, and who holds the seat. Take a carrier and you get its inbox, its departments as switches (operations, crew, slots, pricing, ground), the levers -- cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, call reserves -- and the departures board with what the day is doing to each flight: the slot and its cause, the crew's legality, the late aircraft, the bags. <a href="https://wholesky-demo.fly.dev/ops/">Open the lobby →</a> The lobby has a search box and favourites, answers in under a second, and links each seat's last run. Hold a seat and the carrier's own jetway console at <code>/node/XX/</code> is yours to book and board from; everyone else reads.</p>
       </div>
       <div class="card">
         <h3>For agents: the same API, as MCP tools</h3>
-        <p class="muted">Everything the page does is JSON over HTTP, and <code>cmd/skyagent</code> serves it as MCP tools over stdio -- <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code>, <code>weather</code> -- so Claude Code or Claude Desktop can run an airline against the world with no code at all. Nothing an agent can do is hidden from a person; a seat can be handed between them mid-day.</p>
+        <p class="muted">Everything the page does is JSON over HTTP, and <code>cmd/skyagent</code> serves it as MCP tools over stdio -- <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code>, <code>weather</code> -- so Claude Code or Claude Desktop can run an airline against the world with no code at all. Nothing an agent can do is hidden from a person; a seat can be handed between them mid-day. A <code>note</code> tool puts the agent's reasoning on the carrier's tape, and the run is recorded from take to release: <code>/replay/&lt;id&gt;</code> plays it back against the scorecard.</p>
       </div>
     </div>
     <div class="shot" style="margin-top:14px"><img src="the-ops-centre.jpg" alt="Lufthansa's operations centre on the demo: the scorecard, two decisions open -- LH220 FRA-BOG will leave 90 minutes late, announce or hold; UA has cut FRA-SFO fares by 12%, match or hold -- every department on manual, and the levers"></div>
@@ -437,7 +438,7 @@ skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
       </div>
       <div class="card">
         <h3>What is still rough</h3>
-        <p class="muted">There are no accounts: a seat is a token, and a token is whoever holds it. The scorecard's costs are a chosen shape; the day asks about four kinds of decision. The honest list, and the order it will be done in, is at the end of <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>; the design is <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>; what a stranger on the internet can and cannot do to a world, and the decisions still open, is <a href="https://github.com/adamf/wholesky/blob/main/docs/security.md">docs/security.md</a>.</p>
+        <p class="muted">There are no accounts: a seat is a token, and a token is whoever holds it. On the demo the switch ports sit behind Fly's shared IPv4, which carries HTTP only, so a node dialling <code>wholesky-demo.fly.dev:7000</code> needs IPv6 and the mirror world's trunk does not stay up there; a dedicated address or the Kubernetes layout fixes that. The scorecard's costs are a chosen shape, the lobby ranks it against the world while the ops centre shows it raw, and the day asks about five kinds of decision. The honest list, and the order it will be done in, is at the end of <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>; the design is <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>; what a stranger on the internet can and cannot do to a world, and the decisions still open, is <a href="https://github.com/adamf/wholesky/blob/main/docs/security.md">docs/security.md</a>.</p>
       </div>
     </div>
   </div>

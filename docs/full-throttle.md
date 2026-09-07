@@ -175,3 +175,18 @@ happens to a GDS PNR after departure, not before) and hold them only at
 the carriers, with the selling channel's locator kept on the record. The
 first is right; the second is cheaper and gets the passengers on the
 aeroplanes, which is the point.
+
+## Since this was written
+
+Three things moved the numbers above. The regions ran out of memory every
+few hours on a filled day: the carriers' books kept every record and its
+history until the day wrapped, and the settlement kept every airline's HOT
+file. Flown records now leave three hours after their last departure
+(jetway `store.Pruner`), availability beliefs go with their flights, and a
+HOT file is built when it is asked for. The lobby answered in twenty
+seconds because it asked every machine and every joined world on each
+request; it is a cache rebuilt in the background, the peers asked at once,
+and answers in under a second. And a carrier's state page took minutes on
+a filled book because jetway's inventory answered "seats sold by class"
+with a scan of every key it held; it is indexed by pool since v0.1.95, and
+the biggest carrier's state answers in half a second.

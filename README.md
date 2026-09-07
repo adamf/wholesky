@@ -373,20 +373,31 @@ the fares, REA, reserves) go out on the wire as the real messages. The
 scorecard -- revenue, the world's cost shape, on-time, cancellations -- is
 the same for every carrier, so the autopilot is the bar.
 
+The lobby answers at once from a cache rebuilt in the background, has a
+search box over code, name, hub, world and holder, and pins the carriers
+you star. Holding a carrier's seat also makes its jetway console yours:
+`/node/BA/` is read-only for everyone else, and books, cancels and boards
+for the seat. Every run is recorded from take to release and plays back at
+`/replay/<id>` -- see below.
+
 The same thing for agents: the JSON API under `/carrier/<code>/…`, and
 `cmd/skyagent`, an MCP server over stdio that Claude Code or Claude Desktop
-can start pointed at a world. The design, the API and the road to a
-federated multiplayer sky (bring your own jetway, worlds trunked to worlds)
-are in [docs/run-a-carrier.md](docs/run-a-carrier.md). The first step of
-that road works: claim a carrier you hold (`POST /carrier/BA/claim`) and the
-world severs its own tenant and hands you the jetway configuration, link
-token and SSIM schedule for your own `jetwayd` to dial in as BA -- on the
-demo, over the internet, at `wholesky-demo.fly.dev:7000`. With jetway's
+can start pointed at a world, with a `note` tool so the agent narrates its
+run for the replay. The design, the API and the road to a federated
+multiplayer sky (bring your own jetway, worlds trunked to worlds) are in
+[docs/run-a-carrier.md](docs/run-a-carrier.md). The first step of that road
+works: claim a carrier you hold (`POST /carrier/BA/claim`) and the world
+severs its own tenant and hands you the jetway configuration, link token
+and SSIM schedule for your own `jetwayd` to dial in as BA. With jetway's
 operations desk (`pkg/ops`, in the pack's configuration) your node opens
 its flights from its own name lists and files the MVTs the globe draws.
 And worlds join worlds: `skyd -peer-world URL` trunks two skies' switches,
 each sells the other's flights, and a seat sold in one lands in the other's
-carrier's book over the trunk.
+carrier's book over the trunk. One caveat on the demo: Fly's shared IPv4
+carries HTTP only, so the switch ports at `wholesky-demo.fly.dev:7000` and
+`:7001` answer over IPv6 or not at all, and the mirror world's trunk to the
+demo does not stay up there. A dedicated address, or the Kubernetes layout
+in `deploy/k8s`, gives the switch ports the raw TCP they need.
 
 ![Lufthansa's operations centre on the demo: the scorecard, one decision open, every department on manual, the levers](docs/the-ops-centre.jpg)
 
@@ -401,12 +412,17 @@ carrier's book over the trunk.
 3. **Agents in the seats.** `cmd/skyagent -world URL` as an MCP server;
    people and agents share one leaderboard and can hand a seat between them.
 4. **Bring your own jetway.** Claim a carrier, run `jetwayd` with the pack,
-   register your node's URL and the world keeps your hours. Then join
-   whole worlds: `-peer-world` on the second, with its own `-world-code`
-   and `-world-city`.
+   register your node's URL (one the internet reaches) and the world keeps
+   your hours. Then join whole worlds: `-peer-world` on the second, with
+   its own `-world-code` and `-world-city`.
 
-The page at <https://wholesky.io#play> walks through each with the
-commands; the design is in [docs/run-a-carrier.md](docs/run-a-carrier.md).
+Every shape is recorded: a seat's run plays back at `/replay/<id>` while it
+is held and after. For a world that stays up for other people,
+`deploy/k8s` is the demo's shape on Kubernetes with an Envoy edge. What a
+stranger on the internet can and cannot do to a world is in
+[docs/security.md](docs/security.md). The page at <https://wholesky.io#play>
+walks through each shape with the commands; the design is in
+[docs/run-a-carrier.md](docs/run-a-carrier.md).
 
 ## Status
 
@@ -516,8 +532,22 @@ four-hour day, so a departure's ground story unfolds at a pace a person can
 watch and each flight carries ten times the bookings. What it would take
 to fly real loads is worked out in [docs/full-throttle.md](docs/full-throttle.md).
 
+Since then: a security pass over everything the internet can reach, with
+six auditors over both codebases -- the control plane between the world's
+machines behind the world's secret, tokens required on the switch ports,
+the consoles read-only for strangers, a reflected XSS and several
+server-side request forgeries closed, bounds on everything a stranger can
+grow ([docs/security.md](docs/security.md) has the findings and the
+decisions left open); a flight recorder, so every seat's run plays back
+with the sim clock on every line; Claude running Jet2 for a recorded day
+(above); regions that no longer run out of memory, because flown records
+leave the books three hours after departure and settlement files are
+built on request; a lobby that answers in under a second from a cache;
+and the demo's shape on Kubernetes with an Envoy edge, for a world that
+stays up.
+
 The pattern that keeps paying: every time the world gets bigger, it finds
-real bugs in Jetway — eighty-eight releases so far, each fix landed upstream with
+real bugs in Jetway — ninety-five releases so far, each fix landed upstream with
 a regression test that was watched to fail first. Not yet: filling a
 recorded day to its real passenger load, weather systems that close regions
 rather than airports, and booking curves with real seasonality. The

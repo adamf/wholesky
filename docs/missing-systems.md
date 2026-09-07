@@ -280,7 +280,35 @@ should be done:
    side. The ops page does not show the weather bearing on your carrier;
    the MCP server has no event push.
 8. **Federation as one protocol.** Register, token, world, revenue and
-   distribution are separate ad hoc endpoints without a version.
+   distribution are separate ad hoc endpoints without a version. They are
+   at least behind one secret now (docs/security.md).
+9. ~~Recording and replay.~~ Done: every seat's run is recorded take to
+   release with the sim clock on every line, plays back at `/replay/<id>`,
+   and an agent narrates its own with the `note` tool. The first recorded
+   day is on the site.
+10. ~~A security pass.~~ Done for what needed no decision; the seven
+    decisions it left -- TLS on the trunks, invite-only joins, a public
+    console that can book, anonymous weather, signed Type B origin, a relay
+    hop count, where seats live -- are in docs/security.md.
+11. **A world that stays up.** `deploy/k8s` is the demo's shape on
+    Kubernetes with an Envoy edge that gives the switch ports real TCP;
+    not yet run on a cluster. Fly's shared IPv4 carries HTTP only, which
+    is why the mirror's trunk to the demo flaps there.
+
+Known bugs, found by the recorded run and not yet fixed:
+
+- A world booted with `-fill` cannot refill after the day wraps: the
+  end-of-day purge leaves the fill's own records, and the refill hits
+  duplicate locators (`fill A5: store: duplicate`). The Thanksgiving world
+  runs with `-fill 0.85`.
+- The fill writes about eleven flights a second: eight minutes for a
+  5,364-flight world, during which the clock has to be held.
+- The lobby ranks a carrier's score against the world while the ops centre
+  shows the raw score, so the same carrier reads 139.6 in one and 89.6 in
+  the other.
+- A world booted mid-day shows the flights already departed with the
+  demand's bookings alone, so their load factor reads near zero until the
+  filled flights fly.
 
 ## In order
 

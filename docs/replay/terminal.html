@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8"><title>wholesky — the agent's terminal</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.css">
 <style>
   html,body{margin:0;background:#06090d;color:#9fb4c8;font:13px/1.45 "SF Mono",ui-monospace,Menlo,monospace}
   header{display:flex;gap:18px;align-items:baseline;padding:12px 18px;border-bottom:1px solid #1d2836;flex-wrap:wrap}
@@ -14,5 +14,5 @@
 <p class="muted">Claude Code in print mode with <code>skyagent</code> as its MCP server, against a western-Europe world at warp 60 (a sim-hour a minute). Every line is a tool call the agent made or a note it wrote for the record; the world's side of the same day is <a href="./?src=jet2-claude.json">the replay</a>. Idle gaps are cut to two seconds.</p>
 <div id="player"></div>
 </main>
-<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.min.js"></script>
 <script>AsciinemaPlayer.create('jet2-claude.cast', document.getElementById('player'), {cols:132, rows:44, speed:2, idleTimeLimit:2, theme:'monokai', fit:'width', poster:'npt:0:20'});</script>

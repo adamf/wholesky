@@ -104,7 +104,9 @@ These need the author's call, not a patch.
 1. **Should the switch ports carry TLS?** Tokens and Type B traffic cross
    the internet in the clear on 7000/7001. jetway supports TLS and mutual
    TLS on every listener; turning it on changes how a player's node is
-   set up (a certificate, not just a token from the pack).
+   set up (a certificate, not just a token from the pack). The Kubernetes
+   layout (`deploy/k8s`) terminates TLS for HTTP at its Envoy edge and
+   passes the switch ports through as the raw TCP they are today.
 2. **Should any world be able to join, or only invited ones?** A join is
    open by design (the mirror joins the demo with no prior arrangement);
    it is vetted and paced now, but a hostile world can still bring
