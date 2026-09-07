@@ -1,0 +1,83 @@
+<!doctype html><meta charset="utf-8"><title>wholesky — a day in the seat</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.css">
+<style>
+  :root { --bg:#06090d; --ink:#9fb4c8; --dim:#5b6b7d; --hot:#5fd38d; --warn:#e05a5a; --amber:#e0b93c; --plane:#e8eef4; --line:#1d2836; --card:#0b1118; }
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "SF Mono",ui-monospace,Menlo,monospace}
+  a{color:#8fa6bc;text-decoration:none} a:hover{color:var(--plane)}
+  header{display:flex;gap:18px;align-items:baseline;padding:10px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header b{color:var(--plane);letter-spacing:.08em}
+  .clock{font-size:22px;color:var(--plane);font-weight:600;margin-left:auto}
+  .clock small{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
+  main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;padding:12px 18px;min-height:calc(100vh - 60px)}
+  @media (max-width:1100px){main{grid-template-columns:1fr}}
+  section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0}
+  section h2{margin:0 0 8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  #player{border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:8px 12px;margin-bottom:8px}
+  .kpi b{display:block;font-size:16px;color:var(--plane);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .kpi span{color:var(--dim);font-size:10px}
+  body.still .ap-overlay-start, body.still .ap-control-bar{display:none !important}
+  .kpi.bad b{color:var(--warn)} .kpi.good b{color:var(--hot)}
+  canvas{width:100%;height:90px;display:block;background:#080d13;border:1px solid var(--line);border-radius:4px;margin-bottom:8px}
+  #tape{overflow:auto;max-height:52vh;font-size:12px} #tape div{padding:2px 0;border-bottom:1px solid #0e151d}
+  #tape .k-agent{background:#0c1410;border-left:3px solid var(--hot);padding-left:8px;color:#c9d8e6;font-style:italic}
+  #tape .k-decision{color:#9fd8b3} #tape .k-action{color:var(--amber)} #tape .k-incident{color:#e08a8a} #tape .k-seat,#tape .k-department{color:#7d90a3}
+  #tape .p{color:var(--dim);margin-right:8px;font-style:normal}
+  .muted{color:var(--dim)} .note{padding:8px 18px;color:var(--dim);font-size:11px;border-top:1px solid var(--line)}
+</style>
+<header><b>WHOLESKY</b> <span>a day in the seat: Claude runs Jet2.com</span> <span class="muted" id="sub">the agent's terminal on the left, the world's tape and scorecard on the right, on one clock</span>
+<span class="clock" id="clock">--:--z<small>sim</small></span>
+<span><a href="./?src=jet2-claude.json">the replay alone →</a> · <a href="terminal.html">the terminal alone →</a> · <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">how this works →</a></span></header>
+<main>
+<section><h2>The agent · Claude Code, print mode, skyagent as its MCP server</h2><div id="player"></div></section>
+<section><h2>The world · Jet2's scorecard and tape at the same moment</h2><div class="kpis" id="kpis"><div class="muted">loading the day…</div></div><canvas id="chart"></canvas><div id="tape"></div></section>
+</main>
+<div class="note">Press play on the terminal. The world's side follows its clock: the recording ran at a sim-hour a minute, so a second of the agent's day is a minute of the airline's. Idle gaps in the terminal are cut to two seconds; the clock skips with them. The tape's italic lines are what the agent said it was thinking, written with the <code>note</code> tool as it went.</div>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.min.js"></script>
+<script>
+const $=s=>document.querySelector(s); const params=new URLSearchParams(location.search);
+const money=c=>"$"+(c/100).toLocaleString(undefined,{maximumFractionDigits:0}); const pct=x=>(100*x).toFixed(0)+"%";
+const mmz=m=>String(Math.floor(m/60)%24).padStart(2,"0")+":"+String(Math.floor(m)%60).padStart(2,"0")+"z";
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+// The clock: the world was let go at 06:44 (pos 404) the second the terminal recording began, at a sim-hour a
+// wall-minute, so a second of the recording is a minute of the day.
+const POS0=404, IDLE=2, CAST="jet2-claude.cast", REC="jet2-claude.json";
+let rec=null, times=[], comp=[], player=null, shown=0, still=params.has("t");
+if(still) document.documentElement.addEventListener("DOMContentLoaded",()=>{}), document.addEventListener("DOMContentLoaded",()=>document.body.classList.add("still"));
+function compressed(t){ // original seconds -> the player's timeline with idle gaps cut
+  let c=0, prev=0; for(let i=0;i<times.length;i++){ const T=times[i]; if(T>t){ return c+Math.min(t-prev, IDLE); } c+=Math.min(T-prev, IDLE); prev=T; } return c+Math.min(t-prev, IDLE); }
+function original(c){ // the player's time -> original seconds
+  let cc=0, prev=0; for(let i=0;i<times.length;i++){ const T=times[i]; const gap=Math.min(T-prev, IDLE); if(cc+gap>=c){ return prev+(c-cc); } cc+=gap; prev=T; } return prev+(c-cc); }
+async function boot(){
+  const [castText, recJson]=await Promise.all([fetch(CAST).then(r=>r.text()), fetch(REC).then(r=>r.json())]);
+  rec=recJson; times=castText.split("\n").slice(1).filter(l=>l.trim()).map(l=>JSON.parse(l)[0]);
+  const t0=still?+params.get("t"):0; const c0=compressed(t0);
+  player=AsciinemaPlayer.create(CAST, $("#player"), {cols:132, rows:44, speed: +(params.get("speed")||2), idleTimeLimit:IDLE, theme:"monokai", fit:"width", startAt:c0, poster:"npt:"+c0.toFixed(1), autoPlay: params.has("autoplay")});
+  render(POS0+t0);
+  if(!still){ tick(); }
+}
+async function tick(){
+  try{ const c=await player.getCurrentTime(); if(typeof c==="number"){ render(POS0+original(c)); } }catch(e){}
+  setTimeout(tick, 250);
+}
+function sampleAt(p){ let s=null; for(const x of rec.scores){ if(x.pos<=p) s=x; else break; } return s; }
+function render(pos){
+  $("#clock").innerHTML=mmz(pos)+"<small>sim</small>";
+  const s=sampleAt(pos); const k=(v,l,cls)=>"<div class='kpi "+(cls||"")+"'><b>"+v+"</b><span>"+l+"</span></div>";
+  if(s){ const c=s.score; $("#kpis").innerHTML=k(c.score.toFixed(1),"score")+k(money(c.profit),"profit",c.profit<0?"bad":"good")+k(money(c.revenue),"revenue")+k(pct(c.otp),"on time",c.otp<0.8?"bad":"good")+k(c.flown+"/"+c.flights,"flown")+k(c.cancelled,"cancelled",c.cancelled?"bad":"")+k(pct(c.load_factor),"load factor"); }
+  else $("#kpis").innerHTML="<div class='muted'>the seat is taken at "+mmz(rec.start_pos)+"; the first scorecard follows</div>";
+  const vis=rec.events.filter(e=>e.pos<=pos);
+  if(vis.length!==shown){ $("#tape").innerHTML=vis.slice(-60).map(e=>"<div class='k-"+esc(e.kind)+"'><span class='p'>"+mmz(e.pos)+"</span>"+esc(e.text)+"</div>").join(""); $("#tape").scrollTop=$("#tape").scrollHeight; shown=vis.length; }
+  chart(pos);
+}
+function chart(pos){
+  const cv=$("#chart"); const W=cv.width=cv.clientWidth*devicePixelRatio, H=cv.height=cv.clientHeight*devicePixelRatio; const g=cv.getContext("2d"); g.clearRect(0,0,W,H);
+  if(!rec.scores.length) return; const x0=rec.start_pos, x1=Math.max(rec.end_pos,x0+1); const X=p=>(p-x0)/(x1-x0)*W;
+  const vals=rec.scores.map(s=>s.score.score); const lo=Math.min(0,...vals), hi=Math.max(1,...vals); const Y=v=>H-(v-lo)/(hi-lo)*(H-8)-4;
+  g.strokeStyle="#1d2836"; g.lineWidth=1; for(let h=0;h<=24;h+=3){ const x=X(Math.floor(x0/60)*60+h*60); if(x>=0&&x<=W){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); } }
+  const seen=rec.scores.filter(s=>s.pos<=pos); if(seen.length){ g.strokeStyle="#5fd38d"; g.lineWidth=2*devicePixelRatio; g.beginPath(); seen.forEach((s,i)=>{ const x=X(s.pos), y=Y(s.score.score); i?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke(); }
+  rec.events.filter(e=>e.pos<=pos&&(e.kind==="agent"||e.kind==="action")).forEach(e=>{ g.fillStyle=e.kind==="agent"?"#e8eef4":"#e0b93c"; g.fillRect(X(e.pos)-1,H-6,2,6); });
+  g.strokeStyle="#e05a5a"; g.lineWidth=1.5*devicePixelRatio; g.beginPath(); g.moveTo(X(pos),0); g.lineTo(X(pos),H); g.stroke();
+}
+boot();
+</script>

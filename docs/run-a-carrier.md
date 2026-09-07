@@ -334,7 +334,11 @@ department manual, answer the inbox until the clock passes 23:00, narrate
 with `note`, and release the seat. Released, the run is on the core's disk
 and `/replay/<id>` plays it; `curl /recording/<id>.json` is the file the
 site's copy was made from. `asciinema rec --headless` around the `claude`
-command records the agent's side; `docs/replay/terminal.html` plays it.
+command records the agent's side; `docs/replay/terminal.html` plays it,
+and `docs/replay/day.html` plays both on one clock (the world ran at a
+sim-hour a minute from the second the recording began, so a second of the
+terminal is a minute of the day; `?t=SECONDS` renders one still, which is
+how the video was made, frame by frame in headless Chrome).
 
 ## What a stranger can and cannot do
 

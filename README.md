@@ -72,10 +72,14 @@ deadline (took slots under twenty minutes, sent REA on the rest, announced
 every delay, rushed every bag, held fares on eight cuts and matched three),
 never cancelled a flight, and wrote 87 notes saying why. Final scorecard:
 393 of 394 flown, 0 cancelled, on-time 79%, load factor 53%, profit $3.3M on
-$13.0M revenue, top of the lobby. [The replay](https://wholesky.io/replay/?src=jet2-claude.json)
-plays the world's side; [the terminal](https://wholesky.io/replay/terminal.html)
-plays the agent's; the recipe is in
+$13.0M revenue, top of the lobby. [A day in the seat](https://wholesky.io/replay/day.html)
+plays the agent's terminal and the world's tape side by side on one clock;
+[the replay](https://wholesky.io/replay/?src=jet2-claude.json) is the
+world's side alone and [the terminal](https://wholesky.io/replay/terminal.html)
+the agent's; the recipe is in
 [docs/run-a-carrier.md](docs/run-a-carrier.md#recording-an-agents-day).
+
+![Claude's day at Jet2 in thirty seconds: the agent's terminal on the left, the airline's scorecard and tape on the right, on one clock](docs/the-day.gif)
 
 ![The replay of Claude's day at Jet2: the final scorecard, the score line, and the tape with the agent's notes in italics down to its closing note](docs/the-replay.jpg)
 
