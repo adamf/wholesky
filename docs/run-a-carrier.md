@@ -157,7 +157,7 @@ each other and with the autopilot.
 **Bring your own jetway** is the next step. It keeps jetway usable outside
 the simulation. A carrier in the world is a jetway node with the schedule
 and addresses of the world. The switch does not depend on where that node
-runs. The 2 switches identify a link by its hello and route by teletype
+runs. The two switches identify a link by its hello and route by teletype
 address. The `link_dial` egress (v0.1.69) is a node that holds a circuit
 open to a switch anywhere on the internet. The steps are:
 

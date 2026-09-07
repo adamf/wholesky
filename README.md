@@ -1,9 +1,13 @@
 # wholesky
 
-wholesky simulates 1 day of passenger aviation for the whole Earth on
+wholesky simulates one day of passenger aviation for the whole Earth on
 [Jetway](https://github.com/adamf/jetway). It simulates every scheduled
 flight, every booking, and every Type B and EDIFACT message that the
 flights and bookings need. The messages cross TCP sockets.
+
+I built it to find out what breaks when the systems are separate and talk
+only by message. Every time the world got bigger, it found bugs in Jetway.
+Ninety-five Jetway releases came out of that.
 
 **Live demo:** https://wholesky-demo.fly.dev/eye shows the Eye, the view
 of the whole sky. The demo world has 518 carriers, 2,883 airports and
@@ -37,7 +41,7 @@ not read from the map. The panel shows:
 - The manifest, name by name, with the seat, status and bags of each
   passenger.
 - The bookings behind those names, under the locators that the selling
-  channels gave them. Each booking is 1 click from the record.
+  channels gave them. Each booking is one click from the record.
 
 The panel queries the carrier's book first, because a distribution
 system's ledger is bounded and turns over in minutes at this volume. When
@@ -167,13 +171,13 @@ per scan, the total is tens of thousands of messages a second. The topology is m
 here mirrors the topology of the airline industry:
 
 - **The switch** is a Jetway node in relay mode. It has the role that SITA
-  has in the airline industry. Every other node holds 1 link to the switch
+  has in the airline industry. Every other node holds one link to the switch
   and addresses every other node by teletype address.
 - **Carriers** are tenants of a host process. In the airline industry,
   most carriers are tenants of a few hosted reservation systems. The
   efficient topology and the realistic topology are therefore the same.
-- **The distribution systems** are Jetway gateways. Each has 1 switch link
-  and a peer entry per carrier. A sell crosses 2 links and comes back
+- **The distribution systems** are Jetway gateways. Each has one switch link
+  and a peer entry per carrier. A sell crosses two links and comes back
   confirmed. Capacity holds across channels, because the carrier's
   inventory is the single authority for every channel.
 - **Online travel agencies (OTAs) are not nodes.** They are demand, in the
@@ -288,7 +292,7 @@ network.
 The synthetic world flies a schedule that the compiler generates from the
 OpenFlights routes. The recorded world flies a day that happened.
 
-`worldc -bts` reads 1 day of the on-time performance file of the Bureau of
+`worldc -bts` reads one day of the on-time performance file of the Bureau of
 Transportation Statistics (BTS). The file lists every US scheduled
 passenger flight. For each flight, it gives the tail number, the scheduled
 and reported times, and the cause of delay. It also says whether the
@@ -306,7 +310,7 @@ recorded tail numbers, 64 cancellations and 44 diversions. Of the flights,
 7,157 are sold under a major carrier's number and flown by a regional
 carrier.
 
-At warp 1, the day takes 1 day. The delays are the recorded delays, and
+At warp 1, the day takes one day. The delays are the recorded delays, and
 the MVTs carry the causes from the record as reason codes. The carrier
 announces a cancelled flight by ASM 2 hours before departure, after its
 counter has opened. A diverted flight sends its DIV to the airport where
@@ -424,7 +428,7 @@ console, served on `-console`. Open any message there to read it field by
 field.
 
 To run a world for other people, use `deploy/k8s`, which lays out the
-demo's shape on Kubernetes. The core, 3 distribution systems and 2 regions
+demo's shape on Kubernetes. The core, three distribution systems and two regions
 run as StatefulSets. An Envoy edge terminates TLS and passes the switch
 ports through as raw TCP. cert-manager provides the certificate. There is
 a Google Kubernetes Engine (GKE) overlay and a laptop overlay.
@@ -479,7 +483,7 @@ Worlds also join worlds. `skyd -peer-world URL` trunks the switches of 2
 worlds. Each world sells the flights of the other. A seat sold in 1
 world lands in the carrier's book in the other world, over the trunk.
 
-The demo has 1 limitation. Fly's shared IPv4 carries HTTP only. The switch
+The demo has one limitation. Fly's shared IPv4 carries HTTP only. The switch
 ports at `wholesky-demo.fly.dev:7000` and `:7001` therefore answer over
 IPv6 or not at all. The trunk from the mirror world to the demo does not
 stay up there. A dedicated address, or the Kubernetes layout in
@@ -515,7 +519,7 @@ gives the design.
 
 ## Status
 
-The following systems work. `go test ./...` tests them on every run.
+Here is what works. `go test ./...` proves it on every run.
 
 - World compilation works at any scale from a continent to the planet,
   and it is deterministic by seed.
@@ -624,7 +628,7 @@ The following systems work. `go test ./...` tests them on every run.
   (`worldc -ssim`) and flown from one (`skyd -ssim`). A carrier's own
   schedule file is therefore a source.
 - `skyd -switches 2` runs 2 message switches joined by a trunk. Every
-  carrier is homed on 1 switch by hash. A booking on a carrier across the
+  carrier is homed on one switch by hash. A booking on a carrier across the
   trunk sells and settles as traffic between the providers of the airline
   network does.
 - A settlement plan gives every airline its Billing and Settlement Plan
@@ -636,7 +640,7 @@ The following systems work. `go test ./...` tests them on every run.
   files are served at `/settlement.json` and `/settlement/<carrier>.hot`.
   The day's gross is on the money bar of the globe.
 - Carriers bill each other for interline coupons. Every codeshare coupon
-  that 1 carrier flies on another carrier's ticket is prorated by mileage
+  that one carrier flies on another carrier's ticket is prorated by mileage
   (jetway's `pkg/prorate`) and invoiced at `/billing.json`, less the
   interline service charge.
 - A ticketed booking that cancels is refunded first. The settlement plan
@@ -656,7 +660,7 @@ The following systems work. `go test ./...` tests them on every run.
   every shard and exits non-zero on a cabin over capacity or a shard that
   did not answer.
 - A multi-machine test boots the core, a distribution system and a region
-  in 1 process. It verifies that a booking crosses 3 machines and settles.
+  in one process. It verifies that a booking crosses three machines and settles.
 
 At warp 60, a day takes 24 minutes and about 17,000 aircraft are
 airborne. At that warp, the departure banks peaked above 16,000 messages a

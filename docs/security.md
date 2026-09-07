@@ -70,7 +70,7 @@ that added this page.
   world, without validation. The targets could be loopback, the private
   network of Fly, or cloud metadata. Both must now resolve to public
   addresses, and `-allow-private-peers` allows private addresses for a test
-  on 1 machine. The core does not follow redirects. Every response read is
+  on one machine. The core does not follow redirects. Every response read is
   bounded: 48 MB for a manifest, 4 MB for a lobby, 32 MB for a revenue feed.
 - Names supplied by strangers caused unbounded growth in peer-state keys,
   joined worlds and their carriers, and event-stream subscription tables. On
@@ -131,7 +131,7 @@ The author must make these decisions. They are not patches.
    the link that it arrived on would stop this. That would also block
    legitimate multi-address traffic.
 6. **Relay loops across 3 or more worlds.** A message cannot loop between 2
-   worlds. It can loop around a ring of 3 worlds. The fix is a hop count or
+   worlds. It can loop around a ring of three worlds. The fix is a hop count or
    a seen-set in the switch. The choice between them is a protocol choice.
 7. **Storage of seat tokens.** Regions keep seat tokens at the core, because
    the free tier allows 1 volume. An alternative keeps them on the machine

@@ -1,7 +1,7 @@
 # Running a world on Kubernetes
 
 These manifests run the same image as the Fly demo, in the demo's layout.
-The layout is 1 core, 3 distribution systems, 2 regions of carrier
+The layout is one core, three distribution systems, two regions of carrier
 tenants and an Envoy edge in front. The core runs the switches, the
 instruments, the lobby and the state. The manifests are Kustomize. The
 `base/` directory is the world. The overlays are for a Google Kubernetes
@@ -18,7 +18,7 @@ deploy/k8s/
 
 Envoy terminates TLS for the console and the API, and redirects plain
 HTTP. Stream and route timeouts are off, and the event streams stay open
-for hours. The 2 switch ports, 7000 and 7001, pass through as raw TCP. A
+for hours. The two switch ports, 7000 and 7001, pass through as raw TCP. A
 Type B link is a long-lived plaintext socket, and it reaches the core
 unchanged. The core closes an idle link, through jetway's `idle_timeout`.
 Envoy does not. The Service is a layer-4 load balancer with

@@ -45,7 +45,14 @@ every sentence you write or change.
   "the state is the core's to keep".
 - Do not use the possessive construction "X is Y's to do". Say "Y does X".
 - Write numbers as digits with a space before the unit: 5,364 flights,
-  4 GB, 160 s. Give a number only if the reader uses it.
+  4 GB, 160 s. Write one, two and three as words when they count things in
+  a sentence ("one switch", "two regions"). Use digits for measurements,
+  ratios (1 in 150), settings (warp 1) and numbers that are compared. Give
+  a number only if the reader uses it.
+- First person is allowed where the author speaks for himself: what he
+  built, wanted, learned or did not buy. Use it for one sentence, not a
+  paragraph, and never for the software ("I send" is wrong; "the core
+  sends" is right).
 - Give the full form of an abbreviation the first time it appears in a
   document, then the abbreviation.
 
