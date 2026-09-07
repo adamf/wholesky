@@ -1,4 +1,4 @@
-<!doctype html><meta charset="utf-8"><title>wholesky — the agent's terminal</title>
+<!doctype html><meta charset="utf-8"><title>wholesky · the agent's terminal</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.css">
 <style>
@@ -8,10 +8,10 @@
   main{padding:14px 18px;max-width:1200px;margin:0 auto} .muted{color:#5b6b7d}
   #player{border:1px solid #1d2836;border-radius:6px;overflow:hidden}
 </style>
-<header><b>WHOLESKY</b> <span>the agent's terminal: Claude runs Jet2 for a day</span>
-<span style="margin-left:auto"><a href="day.html">both on one clock →</a> · <a href="./?src=jet2-claude.json">the replay →</a> · <a href="https://wholesky-demo.fly.dev/ops/">the lobby →</a> · <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">how this works →</a></span></header>
+<header><b>WHOLESKY</b> <span>the terminal of the agent while Claude runs Jet2 for a day</span>
+<span style="margin-left:auto"><a href="day.html">the terminal and the replay together →</a> · <a href="./?src=jet2-claude.json">the replay →</a> · <a href="https://wholesky-demo.fly.dev/ops/">the lobby →</a> · <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">how this works →</a></span></header>
 <main>
-<p class="muted">Claude Code in print mode with <code>skyagent</code> as its MCP server, against a western-Europe world at warp 60 (a sim-hour a minute). Every line is a tool call the agent made or a note it wrote for the record; the world's side of the same day is <a href="./?src=jet2-claude.json">the replay</a>. Idle gaps are cut to two seconds.</p>
+<p class="muted">The terminal shows Claude Code in print mode, with <code>skyagent</code> as its Model Context Protocol (MCP) server. The agent works in a western-Europe world at warp 60, which is 1 simulation hour per minute. Every line is a tool call that the agent made or a note that it wrote. <a href="./?src=jet2-claude.json">The replay</a> shows the world side of the same day. Idle gaps are cut to 2 seconds.</p>
 <div id="player"></div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.min.js"></script>

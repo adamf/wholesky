@@ -172,13 +172,13 @@ type Action struct {
 var Actions = []struct {
 	Kind, Needs, About string
 }{
-	{"cancel", "flight, board, reason", "cancel the departure: ASM CNL to distribution, the airport told, the flight plan withdrawn; IROPS reprotects the passengers"},
+	{"cancel", "flight, board, reason", "cancel the departure. An ASM CNL goes to distribution, the airport is informed, the flight plan is withdrawn, and IROPS reprotects the passengers"},
 	{"retime", "flight, board, minutes", "announce a delay to distribution as an ASM TIM and move the bookings to the new times"},
-	{"substitute", "flight, board", "swap the aircraft for a smaller type: the cabin is re-seated, distribution hears the EQT"},
-	{"class", "flight, board, class, status", "force a booking class on the departure closed (C) or back to the ladder (empty status)"},
-	{"fares", "multiplier, optionally from and to", "move the carrier's fares by the factor -- every market, or one when from and to name it: 0.9 is a sale, 1.2 a premium, 0 the filing. Travellers shop: fares above the filing lose buyers"},
-	{"ready", "flight, board", "tell the Network Manager the flight is ready (REA) and ask for a slot improvement"},
-	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling it"},
+	{"substitute", "flight, board", "replace the aircraft with a smaller type. The cabin is re-seated and distribution receives an ASM EQT"},
+	{"class", "flight, board, class, status", "close a booking class on the departure (status C) or return it to the ladder (empty status)"},
+	{"fares", "multiplier, optionally from and to", "multiply the carrier's fares, in every market or in the one that from and to name. 0.9 is a sale, 1.2 a premium, 0 restores the filing. Fares above the filing lose price-sensitive passengers"},
+	{"ready", "flight, board", "send REA (ready) to the Network Manager and request a slot improvement"},
+	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling the flight"},
 }
 
 // World is what the simulation gives the seats to act on.

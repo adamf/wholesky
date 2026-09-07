@@ -1,87 +1,101 @@
 # Run a carrier
 
-wholesky flies 518 carriers on autopilot. This is how a person, or an agent,
-takes one over -- and where that leads: many people running many carriers,
-their own jetway nodes on the wire, worlds joined to worlds.
+wholesky runs 518 carriers on autopilot. This page describes how a person or
+an agent takes a carrier. It also describes where that leads: many people
+running many carriers, players running their own jetway nodes, and worlds
+joined to other worlds.
 
-Live: **https://wholesky-demo.fly.dev/ops/** (the lobby), then
-`/ops/<code>` for a carrier's operations centre. The same thing as MCP tools:
+The demo lobby is at **https://wholesky-demo.fly.dev/ops/**. The operations
+centre of a carrier is at `/ops/<code>`. The same functions are available as
+Model Context Protocol (MCP) tools:
 `go run ./cmd/skyagent -world https://wholesky-demo.fly.dev`.
 
 ## The idea
 
-Every carrier in the world is already an airline's systems: a reservations
-host answering the distribution systems over Type B and EDIFACT, a seat
-inventory under revenue management, a departure control system at every
-airport it touches, an operations desk filing flight plans and reading the
-towers, a bag office, and a settlement position at the end of the day. What
-runs those systems today is the autopilot: rules in `internal/host` and
-`internal/sim` that decide, at every point a real airline has a person
-deciding, what the airline does.
+Every carrier in the world has the systems of an airline:
 
-A **seat** is someone taking those decisions instead. Taking a seat changes
-nothing by itself; every **department** stays on autopilot until the seat
-takes it manual. Where a department is manual, the simulation stops deciding
-and **asks**: a decision appears in the seat's inbox with the situation, the
-options, what each costs, a default and a deadline. What comes back is what
-happens -- on the wire, as the real messages. An unanswered decision falls to
-the default when the deadline passes, so a slow player degrades into the
-autopilot and never into chaos. **Levers** are the actions a seat can pull
-at any moment without being asked. The **scorecard** is the same for every
-carrier, seat or not, so the bar to beat is the autopilot running the other
-five hundred.
+- a reservations host that answers the distribution systems over Type B and
+  EDIFACT
+- a seat inventory under revenue management
+- a departure control system (DCS) at every airport that the carrier serves
+- an operations desk that files flight plans and reads the messages from the
+  towers
+- a bag office
+- a settlement position at the end of the day
 
-That is the whole design, and the reason it is fun: the world does not
-stop for you, the machine is competent, and every choice you make is a
-message someone else's system has to handle.
+The autopilot runs those systems. The autopilot is a set of rules in
+`internal/host` and `internal/sim`. At every point where an airline has a
+person deciding, the rules decide what the carrier does.
 
-## Departments and what they ask
+A **seat** is a person or an agent who takes those decisions instead of the
+autopilot. Taking a seat changes nothing by itself. Every **department** stays
+on autopilot until the seat sets it to manual. When a department is manual,
+the simulator stops deciding and sends a **decision** to the seat. The
+decision appears in the inbox of the seat with the situation, the options,
+the cost of each option, a default and a deadline. The simulator applies the
+answer and sends the resulting messages to the other systems.
 
-| Department | The autopilot's rule | What the seat is asked |
+If the seat does not answer before the deadline, the simulator applies the
+default. A slow player therefore gets the results of the autopilot. **Levers**
+are actions that a seat can take at any moment, without a decision from the
+simulator. The **scorecard** uses the same formula for every carrier, with or
+without a seat. A seat competes against the autopilot, which runs every other
+carrier.
+
+That is the whole design. The world does not stop for a seat. The autopilot
+is competent. Every choice that a seat makes becomes a message that another
+system must handle.
+
+## Departments and decisions
+
+| Department | Autopilot rule | Decision sent to the seat |
 | --- | --- | --- |
-| **ops** (operations control) | A flight running 46 minutes late or more is announced two hours out as an ASM TIM; an aircraft going technical after check-in is substituted by a smaller type. | *Announce the delay, or hold it* (the sold segments move to TK, or the passengers find out at the airport). *Substitute a smaller aircraft, or cancel.* |
-| **crew** | Under 14 CFR 117 a crew that has timed out cancels the flight (code A) unless it leaves the carrier's base, where reserves fly it. | *Cancel, or call reserves* (+90 minutes, a callout paid for) -- asked at T-150, before the cancellation would be announced. |
-| **slots** (flow management) | The Network Manager's SAM is taken as given. | *Take the slot, or send REA* -- ready -- and ask for an improvement; the NM answers with an SRM about half the time. |
-| **pricing** | The tariff as filed; EMSR-b ladders and network bid prices; the autopilot holds its fares. | About once an hour of the day, *a rival has cut fares on one of your markets: match or hold.* Matching lowers that market's multiplier; travellers shop, so fares above the filing lose buyers (elasticity 1.5, the world's shape) and fares below it sell every seat they can. |
-| **ground** (baggage) | Short-shipped bags are rushed on the next flight over the sector. | *Rush them, or hold for tomorrow* (and pay the claims). |
+| **ops** (operations control) | When a flight runs 46 minutes late or more, the autopilot announces the delay 2 hours before departure. The announcement is an ad hoc schedule message (ASM) of type TIM. When an aircraft goes technical after check-in, the autopilot substitutes a smaller type. | *Announce the delay, or hold it.* An announced delay moves the sold segments to TK. With a held delay, the passengers learn of it at the airport. *Substitute a smaller aircraft, or cancel.* |
+| **crew** | Under 14 CFR 117, a crew that has timed out cancels the flight (code A). If the flight leaves the base of the carrier, reserves fly it instead. | *Cancel, or call reserves.* Reserves add 90 minutes and a paid callout. The simulator sends this decision at T-150, before the cancellation would be announced. |
+| **slots** (flow management) | The autopilot accepts the slot allocation message (SAM) from the Network Manager. | *Take the slot, or send a ready message (REA)* to ask for an improvement. The Network Manager answers with a slot revision message (SRM) about half the time. |
+| **pricing** | The autopilot sells the tariff as filed, with EMSR-b ladders and network bid prices. It does not change its fares. | About once an hour of the day: *a rival has cut fares on one of your markets. Match, or hold.* Matching lowers the multiplier of that market. Travellers compare fares. Fares above the filing lose buyers. The elasticity is 1.5, a parameter of the world. Fares below the filing sell every seat that they can. |
+| **ground** (baggage) | The autopilot rushes short-shipped bags on the next flight over the sector. | *Rush the bags, or hold them for tomorrow.* If the bags are held, the carrier pays the claims. |
 
 ## Levers
 
-| Lever | On the wire |
+| Lever | Effect |
 | --- | --- |
-| `cancel` a departure | ASM CNL to every distribution system (and the marketing carrier's for a codeshare), the airport's departure control told, the flight plan withdrawn (CNL to the towers); IROPS reprotects the bookings; the flight plan holds it cancelled so it never departs. |
-| `retime` by N minutes | ASM TIM; the systems that sold it move their segments to TK; the flight departs at the new time. |
-| `substitute` the aircraft | The cabin rebuilt to a smaller type, re-seated or denied, ASM EQT to distribution. |
-| `class` closed or reopened on a flight | An inventory override; AVS goes out as the availability changes. |
-| `fares` multiplier, optionally a market (`from`, `to`) | Every fare the carrier files scales from now on -- or one market's -- in every distribution system's pricing. Above the filing, fewer travellers buy. |
-| `ready` | REA to the Network Manager; an SRM with a better CTOT when the regulation has room. |
-| `reserves` | A crew-timed-out cancellation becomes a 90-minute delay with a callout cost, if the announcement has not gone. |
+| `cancel` a departure | The carrier sends ASM CNL to every distribution system, and to the marketing carrier for a codeshare. It tells the DCS at the airport and withdraws the flight plan with CNL to the towers. Irregular operations (IROPS) reprotects the bookings. The flight plan holds the flight cancelled, and the flight never departs. |
+| `retime` by N minutes | The carrier sends ASM TIM. The systems that sold the flight move their segments to TK. The flight departs at the new time. |
+| `substitute` the aircraft | The carrier rebuilds the cabin to a smaller type and re-seats or denies passengers. It sends ASM EQT to the distribution systems. |
+| `class` closed or reopened on a flight | The carrier overrides the inventory. It sends availability status (AVS) messages as the availability changes. |
+| `fares` multiplier, optionally a market (`from`, `to`) | From now on, the multiplier scales every fare that the carrier files, in the pricing of every distribution system. With a market, it scales only the fares of that market. Above the filing, fewer travellers buy. |
+| `ready` | The carrier sends REA to the Network Manager. When the regulation has room, the Network Manager answers with an SRM that has a better calculated take-off time (CTOT). |
+| `reserves` | If the cancellation has not been announced, a cancellation for a timed-out crew becomes a 90-minute delay with a callout cost. |
 
 ## The scorecard
 
-Per carrier, all day, recomputed on demand:
+The simulator computes the scorecard per carrier, over the whole day, on
+demand:
 
-- **Revenue**: what the day's bookings on its legs were sold for (the
-  revenue ledger, per leg, from the priced records).
-- **Costs**: block hours by aircraft size, delay minutes past fifteen,
-  cancellations per booked passenger, reserve callouts, mishandled bags. The
-  numbers are the world's own shape of a cost base and are labelled as such
-  in `internal/sim/airline.go`; they are the same for everyone.
-- **Punctuality**: departures within fifteen minutes (D15) over flights flown;
-  completion; delay minutes.
+- **Revenue**: the sale value of the bookings of the day on the legs of the
+  carrier. The source is the revenue ledger, per leg, from the priced records.
+- **Costs**: block hours by aircraft size, delay minutes past 15, cancellations
+  per booked passenger, reserve callouts, and mishandled bags. The cost rates
+  are a cost base chosen for the world, and `internal/sim/airline.go` labels
+  them as such. They are the same for every carrier.
+- **Punctuality**: departures within 15 minutes (D15) as a fraction of flights
+  flown, completion, and delay minutes.
 - **Score** = 100 × margin + 50 × on-time fraction − 2 × cancellations. The
-  lobby ranks by it. The autopilot's carriers are on the board too.
+  lobby ranks all carriers by score, including the carriers on autopilot.
 
 ## Interfaces
 
-**People**: `/ops/` is the lobby (leaderboard, take a carrier);
-`/ops/<code>` the operations centre: scorecard, the inbox with its option
-buttons, departments as switches, the levers, the departures board with what
-the day has done to each flight (delay in its parts, slot, crew legality,
-retimed, substituted, rushed), and a live tape. The carrier's own console --
-the jetway node's messages, records, queues -- is one link away.
+**People**: `/ops/` is the lobby. It shows the leaderboard and lets you take a
+carrier. `/ops/<code>` is the operations centre. It shows the scorecard, the
+inbox with its option buttons, a toggle for each department, the levers, the
+departures board and a live tape. The departures board shows the state of each
+flight. This includes the parts of its delay, its slot, its crew legality, and
+whether it was retimed, substituted or rushed. A link on the page opens the
+console of the carrier, with the messages, records and queues of its jetway
+node.
 
-**Agents**: the same HTTP API, JSON in and out.
+**Agents**: agents use the same HTTP API, with JSON requests and responses.
 
 ```
 GET  /carriers.json                      the lobby
@@ -97,180 +111,201 @@ GET  /carrier/{XX}/tape                  the recent events
 GET  /dayplan.json                       the weather and the regulations
 ```
 
-**MCP**: `cmd/skyagent` wraps that API as tools -- `lobby`, `take_seat`,
-`carrier_state`, `inbox`, `set_department`, `decide`, `act`, `tape`,
-`weather`, `release_seat` -- over stdio, so Claude Code or Claude Desktop can
-run a carrier with no code at all:
+**MCP**: `cmd/skyagent` wraps that API as MCP tools over stdio. The tools are
+`lobby`, `take_seat`, `carrier_state`, `inbox`, `set_department`, `decide`,
+`act`, `tape`, `weather` and `release_seat`. Claude Code or Claude Desktop can
+then run a carrier with no code:
 
 ```json
 { "mcpServers": { "wholesky": { "command": "skyagent", "args": ["-world", "https://wholesky-demo.fly.dev"] } } }
 ```
 
-Nothing an agent can do is hidden from a person and nothing a person can do
-is beyond an agent; a seat can be handed between them mid-day (the token is
-the seat).
+A person and an agent have the same capabilities. The seat can move between
+a person and an agent during the day. Whoever holds the seat token holds the
+seat.
 
-On the six-machine demo the core runs no carriers: its lobby merges every
-region's, and a seat's requests are forwarded to the machine that runs the
-carrier. On a single machine everything is local.
+On the 6-machine demo, the core runs no carriers. The core lobby merges the
+lobbies of every region. The core forwards a seat's requests to the
+machine that runs the carrier. On a single machine, everything is local.
 
-## What makes it hard
+## Sources of difficulty
 
-- The day does not wait. Decisions have real-time deadlines (45 seconds by
-  default; `-decision-window` on `skyd`); at warp 6 that is four and a half
-  minutes of the day.
-- The autopilot is competent. It announces delays, substitutes, rushes bags
-  and takes its slots; its scorecard is the baseline, and a seat that only
-  answers what it is asked will at best match it.
-- Everything costs. Holding a delay announcement saves nothing and strands
-  connections; cancelling clears a crew problem and pays for every passenger;
-  reserves are cheap on a full flight and dear on an empty one; a fare
-  multiplier moves demand you cannot see directly.
-- The weather is the same for everyone and the Network Manager does not care
-  who you are: a regulation over your hub slots every arrival first come
-  first served.
-- Protocol is the game. Every lever is a real message another system
-  consumes. A retime you announce is a TK on every sold segment in three
-  distribution systems, each of which queues a task an agent must work.
+- The world does not wait for a decision. Decisions have wall-clock deadlines.
+  The default deadline is 45 seconds, set by `-decision-window` on `skyd`. At
+  warp 6, 45 seconds is 4.5 minutes of the day.
+- The autopilot is competent. It announces delays, substitutes aircraft,
+  rushes bags and takes its slots. Its scorecard is the baseline. A seat that
+  only answers the decisions it receives can at best match the autopilot.
+- Every action has a cost. Holding a delay announcement saves nothing and
+  strands connections. Cancelling clears a crew problem, but the carrier pays
+  for every passenger. Reserves are cheap on a full flight and expensive on
+  an empty one. A fare multiplier moves demand that the seat cannot see
+  directly.
+- The weather is the same for every carrier, and the Network Manager treats
+  every carrier the same. A regulation over your hub gives slots to every
+  arrival on a first-come, first-served basis.
+- Every lever sends a message that another system consumes. An announced
+  retime becomes a TK on every sold segment in 3 distribution systems. Each
+  distribution system then queues a task that an agent must work.
 
-## The north star: a multiplayer world
+## A multiplayer world
 
-**Many seats, one world** works today: any number of people or agents take
-any number of carriers on the same world, and the leaderboard compares them
-with each other and with the autopilot.
+**Many seats, one world** works today. Any number of people or agents take
+any number of carriers on the same world. The leaderboard compares them with
+each other and with the autopilot.
 
-**Bring your own jetway** is the next step, and it is what keeps jetway the
-real thing. A carrier in the world is a jetway node with the world's schedule
-and addresses. Nothing in the switch cares where that node runs: the two
-switches already identify a link by its hello and route by teletype address,
-and the `link_dial` egress (v0.1.69) is a node holding a circuit open to a
-switch anywhere on the internet. So:
+**Bring your own jetway** is the next step. It keeps jetway usable outside
+the simulation. A carrier in the world is a jetway node with the schedule
+and addresses of the world. The switch does not depend on where that node
+runs. The 2 switches identify a link by its hello and route by teletype
+address. The `link_dial` egress (v0.1.69) is a node that holds a circuit
+open to a switch anywhere on the internet. The steps are:
 
-1. `skyd -external BA` boots the world without BA's tenant. BA's addresses
-   stay in the switch's routing table; the GDSes sell into them as before.
-2. `GET /carrier/BA/pack` hands a player BA's start pack: the jetway config
-   (identity, teletype and AFTN addresses, the switch's address and a link
-   token, the distribution systems as peers), BA's schedule as an SSIM file
-   (`worldc -ssim`), and the tariff for its markets.
-3. The player runs `jetwayd` with that config on their own machine. Their
-   node dials the switch; the world's booking traffic arrives on their
-   socket; their inventory answers it; their DCS sends the PNL; the world's
-   sortation and towers answer them back. The scorecard reads their side
-   from the settlement and the messages the switch saw, because that is all
-   a real BSP and a real network see.
-4. Hard mode: the world's ground story for an external carrier is driven by
-   the player's own systems. A missed PNL is a flight the airport never
-   opens. The messages have to be right.
+1. `skyd -external BA` boots the world without the tenant of BA. The
+   addresses of BA stay in the routing table of the switch. The distribution
+   systems sell into them as before.
+2. `GET /carrier/BA/pack` gives a player the start pack of BA. The pack
+   contains the jetway configuration, the schedule of BA as a Standard
+   Schedules Information Manual (SSIM) file (`worldc -ssim`), and the tariff
+   for its markets. The configuration contains the identity and the teletype
+   and Aeronautical Fixed Telecommunication Network (AFTN) addresses. It also
+   contains the address of the switch, a link token, and the distribution
+   systems as peers.
+3. The player runs `jetwayd` with that configuration on their own machine.
+   Their node dials the switch. The booking traffic of the world arrives on
+   their socket, and their inventory answers it. Their DCS sends the
+   passenger name list (PNL). The sortation and towers of the world answer
+   them. The scorecard reads their side from the settlement and from the
+   messages that the switch saw. A Billing and Settlement Plan (BSP) and a
+   network see only those sources.
+4. In hard mode, the systems of the player drive the ground handling of the
+   world for an external carrier. If the player misses a PNL, the airport
+   never opens the flight. The messages must be correct.
 
-**Worlds joined to worlds** works. Two `skyd` instances -- two skies, each
-with its own carriers, distribution systems, switch and day -- become one
-network the way two real networks do. The second is told where the first
-is:
+**Worlds joined to worlds** works. It makes 1 network from 2 `skyd`
+instances, each with its own carriers, distribution systems, switch and day.
+The command for the second instance names the address of the first:
 
 ```sh
 skyd -world eu.json  -world-name europe  -console :8080 -public-url http://eu.example:8080 -link-port 7000
 skyd -world am.json  -world-name americas -world-code 1Z -world-city MIA -console :8081 -public-url http://am.example:8081 -link-port 7100 -peer-world http://eu.example:8080
 ```
 
-The handshake (`POST /federation/world`) carries what each side needs: its
-switch's designator and address, a token for the trunk, the address its
-globe watches, its carriers and distribution systems, and where its
-manifest is. Each side adds the other's switch as a trunk (one accepts, one
-dials, jetway v0.1.90 dialling a link added while running), routes the
-other's carriers and distribution systems down it, fetches the other's
-manifest so its own distribution systems sell the other's flights, prices
-those markets, and tells its carriers to copy their movements to the
-other's globe. The traffic itself is Type B and EDIFACT over the trunk,
-exactly as within one world.
+The handshake (`POST /federation/world`) carries what each side needs. It
+carries the designator and address of the switch, a token for the trunk,
+and the address that the globe watches. It also carries the carriers and
+distribution systems of the side, and the location of its manifest. Each
+side adds the switch of the other side as a trunk. One side accepts the
+trunk and the other side dials it. jetway v0.1.90 dials a link that was
+added while it runs.
 
-Three things must differ between worlds, because in this network they are
-addresses: the carriers' designators (the join is refused where they
-overlap), the switches' codes (`-world-code`), and the distribution
-systems' cities (`-world-city`). Tested with two compiled worlds in one
-process: the trunk comes up both ways and a seat sold by each world's
-distribution system on the other's carrier lands in that carrier's book.
+Each side then routes the carriers and distribution systems of the other
+side down the trunk, and fetches the manifest of the other side. Its own
+distribution systems then sell the flights of the other side, and it prices
+those markets. It also instructs its carriers to copy their movements to the
+globe of the other side. The traffic over the trunk is Type B and EDIFACT,
+the same as within a single world.
 
-It runs for real: **https://wholesky-mirror.fly.dev** is a second world --
-the same data with every carrier renamed (`worldc -mirror Q`, so its
-designators are nobody else's) -- trunked to the demo at boot. Its
-carriers appear on the demo's lobby under *mirror*, the demo's
-distribution systems sell its flights over the trunk, and its aircraft fly
-on the demo's globe. The release gate boots a small mirror beside the
-small world and waits for the join.
+The worlds must differ in 3 things, because the network uses them as
+addresses. These are the designators of the carriers, the codes of the
+switches (`-world-code`), and the cities of the distribution systems
+(`-world-city`). The world refuses a join where the designators overlap. A
+test with 2 compiled worlds in 1 process covers this path. The trunk comes up
+in both directions. A seat that the distribution system of each world sells
+on a carrier of the other world lands in the book of that carrier.
 
-Then the regions are continents, the operators are people, and the sky is
-whoever showed up.
+The mirror world at **https://wholesky-mirror.fly.dev** is a second world
+that trunks to the demo at boot. It has the same data as the demo, with
+every carrier renamed by `worldc -mirror Q`. The renamed designators collide
+with no other carrier. Its carriers appear in the demo lobby under *mirror*.
+The distribution systems of the demo sell its flights over the trunk, and
+its aircraft fly on the demo globe. The release gate boots a small mirror
+beside the small world and waits for the join.
 
-Steps 1 to 3 work, and on the demo. Two ways in:
+In that design, each region is a continent, and different people operate
+the regions. Anyone who connects a node takes part.
 
-- **Claim a running carrier.** Take the seat, then
-  `POST /carrier/BA/claim` with the seat's token. The world severs BA's
-  tenant from the switch, every switch starts demanding BA's link token on
-  the hello (jetway v0.1.87 sets it at runtime and cuts the old link), and
-  the start pack comes back: the jetway configuration (YAML, ready for
-  `jetwayd -config`), the token, the switch address, BA's schedule as an
-  SSIM file, and the notes. `POST /carrier/BA/unclaim` gives it back.
-- **Boot without it.** `skyd -external BA` never boots BA's tenant.
+Steps 1 to 3 work, including on the demo. There are 2 ways to start:
 
-The demo's switches listen on the internet: `wholesky-demo.fly.dev:7000`
-(the first switch) and `:7001` (the second); the pack names the one that
-homes your carrier. The link secret is a Fly secret, so a token survives a
-restart. jetway v0.1.86's token check means a node that names a carrier
-without its token is refused before any message.
+- **Claim a running carrier.** Take the seat, then send
+  `POST /carrier/BA/claim` with the seat token. The world severs the tenant
+  of BA from the switch. Every switch then demands the link token of BA on the
+  hello. jetway v0.1.87 sets the token at runtime and cuts the old link. The
+  response is the start pack. It contains the jetway configuration as YAML for
+  `jetwayd -config`, the token and the switch address. It also contains the
+  schedule of BA as an SSIM file, and the notes. `POST /carrier/BA/unclaim`
+  returns the carrier to the world.
+- **Boot without the carrier.** `skyd -external BA` never boots the tenant
+  of BA.
 
-Your node is a carrier, not only a gateway. The pack's `ops:` block
-(jetway v0.1.88, `pkg/ops`) gives it an operations desk: the schedule from
-the SSIM file beside the configuration, departure control at your stations
-opening flights from your own name lists, the aircraft's OOOI reports from
-the world's datalink provider turned into the MVTs the globe draws, the
-towers' and the Network Manager's messages filed against the callsign. The
-world keeps flying the network side of your day -- the slot two hours out,
-the datalink reports, the towers -- and leaves the carrier's side to you:
-sending the PNL, checking in, closing the door, announcing your own
-cancellations, from the node's console or its API.
+The demo switches listen on the internet. The first switch is at
+`wholesky-demo.fly.dev:7000` and the second at `:7001`. The pack names the
+switch that homes your carrier. The link secret is a Fly secret, and a token
+therefore survives a restart. The token check in jetway v0.1.86 refuses a
+node that names a carrier without its token, before any message.
 
-The whole path is tested end to end in `internal/sim/byo_test.go`: a
-jetway node built from nothing but the pack's YAML dials the small world's
-switch, comes up as the carrier, a seat the world's distribution system
-sells on one of its flights lands in the node's own book, and when the
-world's datalink reports the departure the node's MVT reaches the
+Your node is a carrier as well as a gateway. The `ops:` block of the pack
+(jetway v0.1.88, `pkg/ops`) gives it an operations desk. The desk reads the
+schedule from the SSIM file beside the configuration. The DCS at your
+stations opens flights from your own name lists. The datalink provider of
+the world sends out-off-on-in (OOOI) reports from the aircraft. The desk
+converts them into the movement messages (MVT) that the globe draws. It
+files the messages from the towers and the Network Manager against the
+callsign.
+
+The world runs the network side of your day: the slot 2 hours before
+departure, the datalink reports, and the towers. You run the carrier side
+from the console or the API of the node. This side includes sending the
+PNL, checking in, closing the door, and announcing your own cancellations.
+
+`internal/sim/byo_test.go` tests the whole path end to end. A jetway node
+built only from the YAML of the pack dials the switch of the small world and
+comes up as the carrier. A seat that the distribution system of the world
+sells on one of its flights lands in the book of the node. When the datalink
+of the world reports the departure, the MVT of the node reaches the
 distribution system.
 
-A claimed carrier's scorecard reads what the distribution systems sold
-on its legs -- money and passengers, from their ledgers, federated by the
-core -- since its own book is now on your node. Joined worlds' carriers
-appear on each other's leaderboards, labelled with their world, and a
-seat's request for one of them is answered by that world. A join made at
-a federated core reaches its peers: the distribution systems' machines
-take the other world's carriers and flights to sell, the regions' tenants
-copy their movements to the other world's globe.
+The book of a claimed carrier is on your node. Its scorecard therefore reads
+the sales of the distribution systems on its legs: money and passengers,
+from their ledgers, federated by the core.
 
-If you would rather watch than work the counter, tell the world where your
-node answers: `POST /carrier/BA/node {"url": "http://your-node:8080"}` with
-the seat's token. The URL has to be one the internet reaches -- the world
-will not fetch from its own network on a stranger's say-so, so loopback,
-private ranges and Fly's `.internal` names are refused (a world started
-with `-allow-private-peers`, as a test on one machine is, allows them). The world then keeps your ground story's hours the way it
-keeps its own tenants' -- three hours before each departure it asks your
-node's desk for the name list (`POST /api/ops/flight/BA0117/26NOV/LHR/pnl`,
-jetway v0.1.93), and forty-five minutes out for the rest (`.../run`: every
-passenger accepted with a bag, the counter closed, the cabin boarded, the
-door closed with the load, the closure's messages sent). Forget the URL
-(`{"url": ""}`) and the hours are yours again.
+The carriers of joined worlds appear on the leaderboards of each other,
+labelled with their world. The world that runs a carrier answers the
+a seat's requests for it. A join made at a federated core reaches its
+peers. The machines of the distribution systems take the carriers and
+flights of the other world to sell. The tenants of the regions copy their
+movements to the globe of the other world.
 
-None of it is a new protocol; all of it is jetway doing what it does
-across a longer wire.
+If you prefer to watch rather than work the counter, tell the world where
+your node answers. Send `POST /carrier/BA/node {"url": "http://your-node:8080"}`
+with the seat token. The URL must be reachable from the internet. The world
+does not fetch from its own network at the request of a stranger. It
+refuses loopback addresses, private ranges and the `.internal` names of
+Fly. A world started with `-allow-private-peers`, as in a test on 1
+machine, allows them.
+
+The world then keeps the ground handling hours of your carrier, as it does for
+its own tenants. It requests the name list from the desk of your node 3 hours
+before each departure (`POST /api/ops/flight/BA0117/26NOV/LHR/pnl`, jetway
+v0.1.93). It requests the rest 45 minutes before departure (`.../run`). The
+rest is every passenger accepted with a bag, the counter closed and the cabin
+boarded. It ends with the door closed with the load, and the closure messages
+sent. Send `{"url": ""}` to clear the URL. You then run the hours again.
+
+None of this is a new protocol. jetway does the same work as before, over
+the internet.
 
 ## Bring your own jetway
 
-Against the demo, with the seat's token from `/ops/`:
+Run this against the demo, with the seat token from `/ops/`:
 
 ```sh
 curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/BA/claim | jq -r .config_yaml > ba.yaml
 go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml     # or `skyagent`'s claim tool
 ```
 
-Locally (`-allow-private-peers`, because your node lives on loopback):
+For a local run, add `-allow-private-peers`, because your node is on
+loopback:
 
 ```sh
 go run ./cmd/skyd -world /tmp/world.json -external BA -link-secret dev -allow-private-peers -console :8080 &
@@ -278,10 +313,11 @@ curl -s localhost:8080/carrier/BA/pack | jq -r .config_yaml > ba.yaml
 cd ../jetway && go run ./cmd/jetwayd -config ../wholesky/ba.yaml
 ```
 
-Your node dials the world's switch as BA; the distribution systems' sells
-for BA's flights land on your socket and your inventory answers them.
+Your node dials the switch of the world as BA. The sells of the distribution
+systems for the flights of BA land on your socket, and your inventory
+answers them.
 
-## Try it locally
+## A local world
 
 ```sh
 go run ./cmd/worldc -countries "United Kingdom,France" -carriers 6 -o /tmp/world.json
@@ -291,29 +327,33 @@ open http://localhost:8080/ops/
 go run ./cmd/skyagent -world http://localhost:8080
 ```
 
-Take a carrier, switch ops and crew to manual, and watch the inbox as the
+Take a carrier, set ops and crew to manual, and watch the inbox when the
 afternoon banks meet the weather.
 
-## The flight recorder
+## Recordings
 
-Every run is recorded from take to release: what the day asked, what the
-seat answered and when, what it did on its own, what the scorecard did
-about it, and what the seat said it was thinking. The sim clock is on every
-line. While a seat is held, `/replay/BA` plays the run so far; when it is
-released the run is kept and `/replay/<id>` plays it for good -- the lobby
-links each seat's last run, and `/recordings.json` lists them all.
+The simulator records every run from take to release. The recording
+contains each decision that the simulator sent, and each answer of the seat
+with its time. It also contains each lever that the seat used, the changes
+to the scorecard, and the notes of the seat. Every line carries the
+simulation clock.
 
-The seat's own words come from `POST /carrier/BA/note {"text": "..."}` with
-the seat's token; `skyagent` exposes it as the `note` tool and tells the
-agent to narrate, so a replay of an agent's day reads as the agent's
-reasoning against the tape. `skyagent -record run.jsonl` also keeps every
-call and answer locally. A replay page takes `?src=` too, so a recording
-copied to a static site plays there without the world.
+While a seat is held, `/replay/BA` plays the run so far. When the seat is
+released, the world keeps the run, and `/replay/<id>` plays it permanently.
+The lobby links the last run of each seat, and `/recordings.json` lists all
+runs.
+
+The seat writes its notes with `POST /carrier/BA/note {"text": "..."}`
+and the seat token. `skyagent` exposes this as the `note` tool and instructs
+the agent to narrate. A replay of the day of an agent therefore shows the
+reasoning of the agent beside the tape. `skyagent -record run.jsonl` also
+keeps every call and answer locally. A replay page also accepts `?src=`, and
+a recording copied to a static site plays there without the world.
 
 ## Recording an agent's day
 
-The run on the site (wholesky.io/replay) was made like this, and any run can
-be:
+The commands below made the run on the site (wholesky.io/replay). Use the
+same commands for any run:
 
 ```sh
 go run ./cmd/worldc -countries "United Kingdom,Ireland,Spain,Portugal,France" -carriers 8 -o west.json
@@ -329,25 +369,32 @@ claude -p "$(cat prompt.md)" --mcp-config mcp.json --strict-mcp-config \
 ```
 
 `mcp.json` points `skyagent -world http://127.0.0.1:8095 -record run.jsonl`
-at the world; the prompt tells the agent to take a carrier, take every
-department manual, answer the inbox until the clock passes 23:00, narrate
-with `note`, and release the seat. Released, the run is on the core's disk
-and `/replay/<id>` plays it; `curl /recording/<id>.json` is the file the
-site's copy was made from. `asciinema rec --headless` around the `claude`
-command records the agent's side; `docs/replay/terminal.html` plays it,
-and `docs/replay/day.html` plays both on one clock (the world ran at a
-sim-hour a minute from the second the recording began, so a second of the
-terminal is a minute of the day; `?t=SECONDS` renders one still, which is
-how the video was made, frame by frame in headless Chrome).
+at the world. The prompt instructs the agent to take a carrier and set every
+department to manual. It also instructs the agent to answer the inbox until
+the clock passes 23:00, narrate with `note`, and release the seat. After the
+release, the run is on the disk of the core, and `/replay/<id>` plays it.
+`curl /recording/<id>.json` returns the file that the copy on the site was
+made from.
 
-## What a stranger can and cannot do
+`asciinema rec --headless` around the `claude` command records the side of
+the agent. `docs/replay/terminal.html` plays that recording.
+`docs/replay/day.html` plays the terminal and the replay together.
 
-The lobby, the ops centre, the sky and every carrier's console are public
-to read. Changing anything needs a credential: a seat's token for its
-carrier, the world's own secret for the control plane between machines and
-for the operator's controls (the clock, cutting a circuit), a token the
-switch knows for a link on 7000/7001. The carriers' consoles at
-`/node/XX/` are read-only for everyone but the seat: take a carrier and
-its console is yours to book, cancel and board from, as the airline. The
-model, the audit that shaped it and the decisions still open are in
-[security.md](security.md).
+The world ran at 1 simulation hour per minute from the second that the
+terminal recording began. Each second of the terminal is therefore 1 minute
+of the day. `?t=SECONDS` renders 1 still frame. Headless Chrome rendered
+these stills frame by frame to make the video.
+
+## Access control
+
+Anyone can read the lobby, the operations centre, the sky and the console
+of every carrier. Every change needs a credential. A change to a carrier
+needs its seat token. The control plane between machines and the controls
+of the operator need the link secret. The controls of the operator are the
+clock and the cutting of a circuit. A link on 7000/7001 needs a token that
+is configured on the switch.
+
+The consoles of the carriers at `/node/XX/` are read-only for everyone
+except the seat holder. When you take a carrier, you can book, cancel and
+board from its console, as the airline. The threat model, the audit that
+shaped it and the decisions still open are in [security.md](security.md).

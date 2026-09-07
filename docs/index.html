@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wholesky — one day of the world's airline network, on the wire</title>
-<meta name="description" content="wholesky simulates one Earth-day of passenger aviation on Jetway: every carrier a reservations and departure-control system, three distribution systems, one switch, and every Type B and EDIFACT message between them over real sockets.">
+<title>wholesky: one simulated day of the world's airline network</title>
+<meta name="description" content="wholesky simulates one day of passenger aviation on Jetway. Every carrier is a reservations and departure-control system, three distribution systems sell into them, and every Type B and EDIFACT message crosses a TCP socket. Take a carrier and run it, or let an agent run it.">
 <meta property="og:title" content="wholesky">
-<meta property="og:description" content="One Earth-day of passenger aviation, simulated on real airline wire protocols.">
+<meta property="og:description" content="One day of passenger aviation, simulated on the airline industry\'s wire protocols. Take a carrier and run it.">
 <meta property="og:image" content="https://wholesky.io/the-whole-sky.jpg">
 <meta property="og:url" content="https://wholesky.io/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230b0f14' stroke='%235fd38d' stroke-width='2'/%3E%3Cpath d='M8 20 L24 12' stroke='%23e8eef4' stroke-width='2'/%3E%3C/svg%3E">
@@ -149,12 +149,12 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 <header class="hero" id="top">
   <div class="wrap">
     <div class="eyebrow">an open-source simulation, built on the jetway airline messaging gateway · Go · MIT</div>
-    <h1>One day of the world's airline network, on the wire.</h1>
-    <p class="lede">Every carrier is its own reservations and departure-control system. Three distribution systems sell into them. One switch relays between them. Nothing moves except a real Type B or EDIFACT message over a real socket, and the globe draws only what the messages say.</p>
+    <h1>One day of the world's airline network as message traffic</h1>
+    <p class="lede">Every carrier runs its own reservations and departure-control system. Three distribution systems sell into them. One switch relays between them. Systems communicate only by Type B and EDIFACT messages over TCP sockets. The globe shows only what the messages contain.</p>
     <div class="engine">
       <div class="engine-mark">jetway</div>
       <div class="engine-text">
-        <b>Everything under the globe is jetway</b>, an open-source gateway that is also a GDS, a seat inventory, a departure-control system, a fare engine, a datalink and AFTN endpoint and a switch. Type B/AIRIMP, EDIFACT/PADIS, NDC, MATIP; PNRs, tickets, EMDs, queues, IROPS; PNL/ADL, bags, loadsheets, MVT, ACARS, flight plans. Meant to be run for real; wholesky is what proves it can.
+        <b>Every system under the globe is jetway</b>, an open-source airline messaging gateway. jetway is also a GDS, a seat inventory, a departure-control system, a fare engine, a datalink and AFTN endpoint and a switch. It speaks Type B/AIRIMP, EDIFACT/PADIS, NDC and MATIP. It handles PNRs, tickets, EMDs, queues, IROPS, PNL/ADL, bags, loadsheets, MVT, ACARS and flight plans. jetway is built for production use. wholesky demonstrates that at scale.
       </div>
       <div class="engine-cta">
         <a class="btn primary" href="jetway.html">Everything jetway does →</a>
@@ -168,8 +168,8 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <a class="btn" href="https://github.com/adamf/wholesky">github.com/adamf/wholesky</a>
       <a class="btn" href="production.html">deploy to production</a>
     </div>
-    <div class="shot"><img src="the-whole-sky.gif" alt="The globe turning once through the synthetic world's evening: eight and a half thousand aircraft over the Americas, the Atlantic, Europe, Asia and the Pacific, with the bar reading what the aircraft in the air were sold for and what has been bought since boot"></div>
-    <p class="caption">The whole sky at 21:50 on the synthetic day, once round: 8,500 aircraft over 518 carriers' networks. Every aircraft is a movement message that crossed the switch; the bar at the top is what the aircraft in the air were sold for.</p>
+    <div class="shot"><img src="the-whole-sky.gif" alt="The globe turning once in the evening of the synthetic day. About 8,500 aircraft are over the Americas, the Atlantic, Europe, Asia and the Pacific. The bar at the top shows the sale value of the aircraft in the air and the bookings made since boot."></div>
+    <p class="caption">The globe at 21:50 on the synthetic day, turning once. 8,500 aircraft fly the networks of 518 carriers. Each aircraft marks a movement message that crossed the switch. The bar at the top shows the sale value of the aircraft in the air.</p>
 
     <div class="numbers">
       <div><b>518</b><span>carriers, each a reservations system and a DCS</span></div>
@@ -185,32 +185,32 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 <section id="different">
   <div class="wrap">
     <div class="eyebrow">why it is different</div>
-    <h2>Not an animation of aviation. The systems, running.</h2>
-    <p class="lead">Flight-tracking sites draw positions; airline simulators draw aircraft. wholesky draws nothing it was not told over the industry's own wire. Under the globe is a working airline IT stack, and that changes what the picture means.</p>
+    <h2>Working airline systems under the globe</h2>
+    <p class="lead">Flight-tracking sites draw positions. Airline simulators draw aircraft. wholesky draws only what the industry's own messages tell it. A working airline IT stack runs under the globe.</p>
     <div class="two">
       <div class="card">
-        <h3>Every mark is a message</h3>
-        <p class="muted">An aircraft appears because a Type B movement message crossed the switch and lands because the arrival did. A passenger is on a name list because reservations sent it to the airport. A red halo is a closed airport sized by the real queue items an agent now has to rework. If the message did not happen, neither did the picture.</p>
+        <h3>A message behind every mark</h3>
+        <p class="muted">An aircraft appears when a Type B departure message crosses the switch. It lands when the arrival message crosses. A passenger is on a name list because reservations sent that list to the airport. A red halo marks a closed airport. Its size is the number of queue items an agent must now rework. The globe draws nothing without a message.</p>
       </div>
       <div class="card">
-        <h3>The state separation is real</h3>
-        <p class="muted">Every carrier has its own book of record, its own locator space, its own seat inventory and its own console. The distribution systems hold their own copies under their own locators. Nothing is shared but the wire. A region can die and rejoin; the switch cannot tell whether a peer is across a loopback or across a continent.</p>
+        <h3>Separate state for every node</h3>
+        <p class="muted">Every carrier has its own book of record, locator space, seat inventory and console. The distribution systems hold their own copies under their own locators. Nodes share nothing except the messages between them. A region can fail and rejoin. The switch cannot tell whether a peer is on loopback or on another continent.</p>
       </div>
       <div class="card">
-        <h3>The engine is meant for real</h3>
-        <p class="muted"><a href="jetway.html">jetway</a> is not a prop built for the demo. It is a gateway, GDS, DCS and switch with a spool, a lease, retention, rate limits, metrics and a production plan, and everything sim-only stays in wholesky. When the world finds a bug, the fix goes upstream with a test that was watched to fail.</p>
+        <h3>An engine built for production</h3>
+        <p class="muted"><a href="jetway.html">jetway</a> is built for production use. It is a gateway, GDS, DCS and switch with a spool, a lease, retention, rate limits, metrics and a production plan. Simulation-only behaviour stays in wholesky. When wholesky exposes a bug in jetway, the fix goes into jetway with a regression test.</p>
       </div>
       <div class="card">
-        <h3>It says what it actually knows</h3>
-        <p class="muted">Most airline formats live in paid documents that were not bought. Every package says whether its layer is specified by a public standard, inferred closely from published examples, or inferred. The passengers, aircraft types and fares are synthetic and labelled so; the schedule, tails, delays, cancellations and diversions on the recorded day are not.</p>
+        <h3>Labelled sources for every format</h3>
+        <p class="muted">Most airline formats are defined in paid documents that this project did not buy. Every package states whether its layer is specified by a public standard, inferred closely from published examples, or inferred. The passengers, aircraft types and fares are synthetic and labelled as synthetic. The schedule, tails, delays, cancellations and diversions on the recorded day come from the BTS record.</p>
       </div>
       <div class="card">
-        <h3>A recorded day, at real time</h3>
-        <p class="muted">The Wednesday before Thanksgiving 2025 is flown from the BTS record: 22,889 flights on their real tails, delayed for their recorded reasons, cancelled and diverted as they were, with 1.4 million pre-sold bookings at a holiday load and a price on every one. It takes a day, because it took a day.</p>
+        <h3>A recorded day at real time</h3>
+        <p class="muted">The simulator flies the Wednesday before Thanksgiving 2025 from the BTS record. The 22,889 flights fly on their recorded tails, with their recorded delays, cancellations and diversions. 1.4 million pre-sold bookings at a holiday load each carry a price. The run takes 24 hours, the same as the recorded day.</p>
       </div>
       <div class="card">
-        <h3>It audits itself while it flies</h3>
-        <p class="muted">The invariant suite is the release gate: no oversell across selling channels, message conservation at the switch, interline convergence, and a live check any shard can be asked for. Its first run against the recorded day found 88 oversold cabins and a filler that had never looked at the aircraft. The failures are real too, and they are all in the changelog.</p>
+        <h3>A live audit of the running world</h3>
+        <p class="muted">The invariant suite is the release gate. It checks for no oversell across selling channels, message conservation at the switch and interline convergence. Any shard answers a live check on request. Its first run against the recorded day found 88 oversold cabins. The cause was a filler that did not read the aircraft type. Every failure is in the changelog.</p>
       </div>
     </div>
   </div>
@@ -219,8 +219,8 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 <section id="system">
   <div class="wrap">
     <div class="eyebrow">the system</div>
-    <h2>Every part is a system the industry actually runs</h2>
-    <p class="lead">The state separation is real: nothing is shared between nodes except a message. Pick a component to see what it does, what it speaks, and how much of it is specified by a public document rather than inferred.</p>
+    <h2>Components that match the industry's own systems</h2>
+    <p class="lead">Nodes share nothing except messages. Select a component to see what it does and which formats it speaks. Each component states which parts are specified by a public document and which are inferred.</p>
 
     <div class="tabs" role="tablist" aria-label="Components">
       <button role="tab" aria-selected="true" data-tab="eye">the eye</button>
@@ -236,73 +236,73 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="panel active" id="tab-eye" role="tabpanel">
       <div>
         <h3>The eye</h3>
-        <p>An orthographic globe drawn from the switch's own message bus. An aircraft appears because its carrier's MVT departure message crossed the switch; it lands because the arrival did. Sparks are messages in flight to and from a carrier's home; a red halo is a closed airport, sized by the real queue items an agent now has to rework.</p>
-        <p>Click any aircraft and you get what its carrier holds: the schedule and, on a recorded day, what really happened to it; departure control's clock, the name list's parts and amendments, seat map by cabin, connections, the load and loadsheet; the operations desk's callsign and flight plan and what the towers said back; the manifest name by name; and the bookings behind the names under the locators the selling channels issued, each with its fare.</p>
+        <p>The eye is an orthographic globe drawn from the switch's message bus. An aircraft appears when its carrier's MVT departure message crosses the switch. It lands when the arrival message crosses. Sparks are messages in flight to and from a carrier's home. A red halo marks a closed airport. Its size is the number of queue items an agent must now rework.</p>
+        <p>Click any aircraft to see what its carrier holds for that flight. The panel shows the schedule and, on a recorded day, the recorded outcome. From departure control it shows the clock and the name list with its parts and amendments. It also shows the seat map by cabin, the connections, the load and the loadsheet. From the operations desk it shows the callsign, the flight plan and the tower replies. It lists the manifest name by name, and under each name the bookings, under the locators the selling channels issued, each with its fare.</p>
         <dl class="kv">
-          <dt>modes</dt><dd><b>sky</b> the globe · <b>net</b> the logical web of who converses with whom, laid out by its own springs</dd>
-          <dt>controls</dt><dd>pause the day, run it at ten hours a minute, close an airport, cut a carrier's circuit</dd>
+          <dt>modes</dt><dd><b>sky</b> the globe · <b>net</b> a force-directed graph of the nodes that exchange messages</dd>
+          <dt>controls</dt><dd>pause the day, run it at 10 hours a minute, close an airport, cut a carrier's circuit</dd>
           <dt>instruments</dt><dd><a href="https://wholesky-demo.fly.dev/stats">/stats</a> messages, movements, bookings, sold per second · <a href="https://wholesky-demo.fly.dev/fleet">/fleet</a> every node and its console</dd>
         </dl>
       </div>
       <div>
-        <div class="shot"><img src="the-flight.jpg" alt="The flight panel: one departure as its carrier holds it, from the schedule down to the loadsheet"></div>
-        <p class="caption">One departure as its carrier holds it, from the schedule down to the loadsheet.</p>
+        <div class="shot"><img src="the-flight.jpg" alt="The flight panel for one departure, showing the carrier's data from the schedule to the loadsheet"></div>
+        <p class="caption">The flight panel for one departure, from the schedule to the loadsheet.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-carrier" role="tabpanel">
       <div>
-        <h3>Carriers: a reservations system and a departure-control system each</h3>
-        <p>Each carrier is a jetway gateway with its own book of record, its own seat inventory, its own locator space and its own console. It answers sells from its cabins, files its schedule changes, and runs its airports: reservations sends the airport the name list at T−180, the counter fills in waves with seat assignments and bag tags to sortation, the ADL goes at T−60, the counter closes, the gate boards, the sortation system reports the hold, the door closes at T−10 -- not over a loaded bag whose passenger is not on board; those are named and pulled first -- and the final sales, transfer, service and load messages and an AHM 560-method loadsheet go out.</p>
-        <p>The reservations and departure-control halves talk over the network like the separate systems they usually are. A carrier hosted on another machine is asked through federation; the switch cannot tell the difference.</p>
+        <h3>Carriers, each a reservations system and a departure-control system</h3>
+        <p>Each carrier is a jetway gateway with its own book of record, seat inventory, locator space and console. It answers sells from its cabins, files its schedule changes and runs its airports. Reservations sends the airport the name list at T−180. The counter fills in waves, sending seat assignments and bag tags to sortation. The ADL goes at T−60, the counter closes, the gate boards, and the sortation system reports the hold. The door closes at T−10, after the airport names and pulls any loaded bag whose passenger is not on board. The final sales, transfer, service and load messages then go out with an AHM 560-method loadsheet.</p>
+        <p>The reservations and departure-control halves communicate over the network as separate systems. Requests to a carrier hosted on another machine go through federation. The switch cannot tell the difference.</p>
         <div class="tags">
           <span class="tag spec">Type B · IATA whitepaper</span><span class="tag spec">EDIFACT · ISO 9735</span><span class="tag inf">AIRIMP · inferred profile</span><span class="tag inf">PNL/ADL · RP 1708 family</span><span class="tag inf">PSM PTM LDM CPM · worked examples</span><span class="tag spec">MATIP · RFC 2351</span>
         </div>
       </div>
       <div>
-        <div class="shot"><img src="the-tenant-console.jpg" alt="A carrier's own console, one of 522"></div>
-        <p class="caption">Ryanair's own console, one of 522. Every node has one.</p>
+        <div class="shot"><img src="the-tenant-console.jpg" alt="Ryanair's jetway console, one of 522 node consoles"></div>
+        <p class="caption">Ryanair's console, one of the 522 node consoles. Every node has one.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-gds" role="tabpanel">
       <div>
         <h3>Distribution: three global distribution systems</h3>
-        <p>1G, 1S and 1A each run a jetway gateway with queues, an availability cache and its share of demand. A booking is made at the GDS; the sell goes to the carrier as AIRIMP over Type B or PADIS over EDIFACT, the carrier answers KK, US or UC from its inventory, and the record carries every carrier's locator for the same booking. Interline itineraries settle across carriers; tickets are issued and advised; a slice of demand arrives as NDC orders on the GDS's HTTP endpoint.</p>
-        <p>What the carriers said is what the record shows. A carrier that cannot be reached lands the booking on the divergence queue, each item naming the gap that caused it.</p>
+        <p>1G, 1S and 1A each run a jetway gateway with queues, an availability cache and a share of demand. A booking starts at the GDS. The GDS sends the sell to the carrier as AIRIMP over Type B or PADIS over EDIFACT. The carrier answers KK, US or UC from its inventory, and the record carries every carrier's locator for the same booking. Interline itineraries settle across carriers, and the GDS issues and advises tickets. A share of demand arrives as NDC orders on the GDS's HTTP endpoint.</p>
+        <p>The record shows what the carriers answered. When a carrier cannot be reached, the GDS puts the booking on the divergence queue. Each queue item names the gap that caused it.</p>
         <dl class="kv">
           <dt>queues</dt><dd>confirmation · waitlist · unable · divergence · schedule change · ticketing</dd>
           <dt>books</dt><dd>bounded memory, or Postgres with one node view per system</dd>
-          <dt>IROPS</dt><dd>a cancelled flight queues every booking on it; reaccommodation protects on own metal, then on the codeshares the carrier markets under its own number, then interlines, and waits for each carrier's answer</dd>
+          <dt>IROPS</dt><dd>a cancelled flight queues every booking on it. Reaccommodation protects on own metal first, then on the codeshares the carrier markets under its own number, then on interline partners. It waits for each carrier's answer</dd>
         </dl>
       </div>
       <div>
-        <div class="shot"><img src="the-fares.jpg" alt="A flight's bookings, priced: 65 records under the selling channels' locators, each with its fare and fare basis"></div>
-        <p class="caption">United 2408 Denver to Washington: 65 records under the selling channels' locators, each priced.</p>
+        <div class="shot"><img src="the-fares.jpg" alt="The bookings on one flight, 65 records under the selling channels' locators, each with its fare and fare basis"></div>
+        <p class="caption">The 65 bookings on United 2408 Denver to Washington, under the selling channels' locators, each with its fare.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-switch" role="tabpanel">
       <div>
         <h3>The switch</h3>
-        <p>A full <code>jetwayd</code> in relay mode: 500-odd TCP listeners, real framing, relay by Type B address line and EDIFACT UNB recipient, a write-ahead spool, an outbox per link that refuses rather than stalls when a peer stops reading, per-peer rate limits with a shared cap, and a lease so a standby takes over. It is the only piece every message crosses, which is why the globe can be drawn from its bus alone.</p>
-        <p>The sky is loud but not big. Real global reservations traffic is a few thousand messages a second; the switch peaks above 16,000 a second on one 4-vCPU machine during the departure banks. Topology is the interesting part, not throughput.</p>
+        <p>The switch is a full <code>jetwayd</code> in relay mode with about 500 TCP listeners. It frames each link and relays by Type B address line and EDIFACT UNB recipient. It has a write-ahead spool, per-peer rate limits with a shared cap, and a lease for standby takeover. Each link has an outbox that refuses new messages when a peer stops reading, rather than stalling. Every message crosses the switch. The globe is therefore drawn from the switch's bus alone.</p>
+        <p>Global reservations traffic in the industry is a few thousand messages a second. The switch peaks above 16,000 messages a second on one 4-vCPU machine during the departure banks. The topology is harder than the throughput.</p>
         <dl class="kv">
-          <dt>invariants</dt><dd>capture precedes interpretation · raw bytes are never regenerated from a parse · nothing undecodable is discarded</dd>
+          <dt>invariants</dt><dd>the switch captures before it interprets · it never regenerates raw bytes from a parse · it discards nothing it cannot decode</dd>
           <dt>metrics</dt><dd><code>jetway_outbox_depth</code> · <code>jetway_outbox_congested_total</code> · <code>jetway_ingress_links</code> · <code>jetway_spool_depth</code></dd>
         </dl>
       </div>
       <div>
-        <div class="shot"><img src="the-web.gif" alt="The net mode: the world's interline conversations laid out by their own springs"></div>
-        <p class="caption">Net mode: who converses with whom, laid out by its own springs.</p>
+        <div class="shot"><img src="the-web.gif" alt="Net mode, a force-directed graph of the nodes that exchange messages"></div>
+        <p class="caption">Net mode, a force-directed graph of the nodes that exchange messages.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-fares" role="tabpanel">
       <div>
         <h3>Fares and inventory</h3>
-        <p>jetway's <code>pkg/fare</code> is the structure of a filing: fare basis codes, rules for advance purchase, stay, season, change and refund, taxes by kind, passenger types at their discounts, and a pricing step every booking passes through. It carries no fare of its own, because ATPCO's are licensed. wholesky files a synthetic tariff from the schedule's distances, fourteen booking classes to a market, US-shaped taxes, and prices every booking as of its purchase date.</p>
-        <p><code>pkg/inventory</code> is leg-based seat control: cabins per leg, serial nested class authorisations, waitlists a tenth of the cabin deep. A full cabin waitlists, a closed class with seats still in the cabin refuses, and the last seats go at the higher fares. The inventory is rebuilt from the book of record at every boot, because anything that remembers sold seats in memory oversells after a restart.</p>
+        <p>jetway's <code>pkg/fare</code> holds the structure of a fare filing. It has fare basis codes, rules for advance purchase, stay, season, change and refund, taxes by kind, and passenger types with their discounts. Every booking passes through its pricing step. It carries no fares of its own, because ATPCO fares are licensed. wholesky files a synthetic tariff from the schedule's distances, with 14 booking classes per market and US-shaped taxes. It prices every booking as of its purchase date.</p>
+        <p><code>pkg/inventory</code> provides leg-based seat control. It has cabins per leg, serial nested class authorisations, and waitlists one tenth of the cabin deep. A full cabin waitlists a sell. A closed class refuses a sell even when the cabin has seats. The last seats sell at the higher fares. Each carrier rebuilds its inventory from the book of record at every boot, because an in-memory count of sold seats oversells after a restart.</p>
         <div class="table-wrap"><table>
           <tr><th>the recorded day</th><th>value</th></tr>
           <tr><td>whole day, 29,967 legs</td><td class="mono">$719M</td></tr>
@@ -311,57 +311,57 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <tr><td>full-fare Y · business · deep discount</td><td class="mono">$341 · $750–785 · $93–160</td></tr>
           <tr><td>taxes</td><td class="mono">15%</td></tr>
         </table></div>
-        <p class="caption">Synthetic and labelled as such. The shape of a real Thanksgiving Wednesday, not anybody's filing.</p>
+        <p class="caption">These fares are synthetic and labelled as synthetic. They follow the shape of a Thanksgiving Wednesday tariff and copy no carrier's filing.</p>
       </div>
       <div>
-        <div class="shot"><img src="the-stats.jpg" alt="The instrument panel: messages, wire formats, traffic classes, bookings, airborne, movements, undeliverable and queues"></div>
-        <p class="caption">The instrument panel. The number that should be zero is labelled as such.</p>
+        <div class="shot"><img src="the-stats.jpg" alt="The instrument panel, showing messages, wire formats, traffic classes, bookings, airborne, movements, undeliverable and queues"></div>
+        <p class="caption">The instrument panel. The panel labels the number that should be zero.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-ops" role="tabpanel">
       <div>
-        <h3>Operations: datalink, the AFTN, and when the day goes wrong</h3>
-        <p>Aircraft report OUT/OFF/ON/IN over a datalink provider (ARINC 620 shapes, from OAG's published tables); operations derives the MVT from the report instead of asserting it. Flight plans go to the towers over the AFTN (ICAO Annex 10) and the towers send DEP and ARR back. A diversion sends its DIV to the field it really landed at.</p>
-        <p>When a flight is cancelled, every booking on it is queued; the IROPS engine works the queue the way a desk does: the next flights over the same city pair, own metal first, free sale where the availability cache offers it and a request to the carrier where it does not, each request waited on until the carrier answers. A confirmed seat drops the dead leg with a real sell and a real cancel on the wire; a waitlist is kept and named; what nothing can carry stays on the queue for a person, while the airport offloads whoever had checked in and pulls their bags.</p>
+        <h3>Operations: datalink, the AFTN and irregular operations</h3>
+        <p>Aircraft report OUT/OFF/ON/IN over a datalink provider, in ARINC 620 shapes from OAG's published tables. Operations derives the MVT from the report rather than asserting it. Flight plans go to the towers over the AFTN (ICAO Annex 10). The towers send DEP and ARR back. A diverted flight sends its DIV to the field where it landed.</p>
+        <p>When a flight is cancelled, the carrier queues every booking on it. The IROPS engine works the queue, starting with the next flights over the same city pair on own metal. It uses free sale where the availability cache offers it, and otherwise sends a request to the carrier and waits for its answer. A confirmed seat replaces the cancelled leg with a sell and a cancel message on the wire, and a waitlisted seat is kept and named. Bookings that no flight can carry stay on the queue for a person, while the airport offloads checked-in passengers and pulls their bags.</p>
         <div class="tags">
           <span class="tag spec">AFTN · Annex 10</span><span class="tag spec">ATS messages · FAA reproductions of Doc 4444</span><span class="tag inf">ACARS OOOI · ARINC 620, OAG tables</span><span class="tag inf">MVT/DIV · AHM 780/781, OAG examples</span>
         </div>
       </div>
       <div>
-        <div class="shot"><img src="the-fleet.gif" alt="The fleet view: 522 nodes across six machines, into a carrier mid-departure-bank, down to the raw telex, and a circuit cut and restored"></div>
-        <p class="caption">522 nodes across six machines, down to the raw telex, and a circuit cut and restored.</p>
+        <div class="shot"><img src="the-fleet.gif" alt="The fleet view of 522 nodes across six machines, then one carrier during a departure bank, its raw telex, and a circuit cut and restored"></div>
+        <p class="caption">The fleet view of 522 nodes across six machines, one carrier's raw telex, and a circuit cut and restored.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-fill" role="tabpanel">
       <div>
         <h3>The filler and the demand</h3>
-        <p>The weeks before the day. <code>internal/fill</code> reads the schedule and writes each carrier's book of record before the day runs: parties weighted the way holiday travel is, itineraries that connect on legs that actually connect, booking classes placed in cabins that have room for them on every leg, children and infants, special service requests at their real rates, a ticket per name, the carrier's locator and the selling channel's, purchase dates spread over the months before and priced as of that date. Deterministic from a seed, straight into Postgres with <code>COPY</code>. Southwest's day alone is 260,000 records, written in 24 seconds. One party in three thousand has a cello, and the cello has a seat.</p>
-        <p>The demand generator then rides on top as what it is on the day of travel: the late trickle, at hundreds of bookings a minute, with connections, interline, ticketing, cancellations, divides and a slice arriving as NDC orders.</p>
+        <p><code>internal/fill</code> simulates the weeks of sales before the day. It reads the schedule and writes each carrier's book of record before the day runs. Party sizes follow the pattern of holiday travel. Itineraries connect only on legs with a valid connection, and booking classes go into cabins with room on every leg. Records include children, infants and special service requests at industry rates. Each record has a ticket per name, the carrier's locator and the selling channel's locator. Each has a purchase date in the months before, and is priced as of that date. The filler is deterministic from a seed and writes to Postgres with <code>COPY</code>. Southwest's day alone is 260,000 records, written in 24 seconds. One party in 3,000 has a cello, and the cello has a seat.</p>
+        <p>The demand generator then adds the day-of-travel bookings on top. These arrive at hundreds of bookings a minute, with connections, interline, ticketing, cancellations, divides, and a share arriving as NDC orders.</p>
         <dl class="kv">
           <dt>holiday load</dt><dd>0.85: 1,400,987 records, 3.1 million seats held before the first flight, 3.5 GB</dd>
-          <dt>what it found</dt><dd>a Type B line folded by the first family of four; the 60-line envelope overrun by a filled 737; a link deadlocked by both ends answering from inside their read loops. All fixed upstream, with tests watched to fail first.</dd>
+          <dt>what it found</dt><dd>a Type B line folded by the first family of four, the 60-line envelope overrun by a filled 737, and a link deadlocked by both ends answering from inside their read loops. Each fix is in jetway with a regression test.</dd>
         </dl>
       </div>
       <div>
-        <div class="shot"><img src="the-recorded-day.jpg" alt="The recorded day: the Wednesday before Thanksgiving 2025, every US flight on its real tail"></div>
-        <p class="caption">The Wednesday before Thanksgiving 2025 at 17:00Z, every aircraft on its real tail.</p>
+        <div class="shot"><img src="the-recorded-day.jpg" alt="The globe on the recorded day, the Wednesday before Thanksgiving 2025, with every US flight on its recorded tail"></div>
+        <p class="caption">The Wednesday before Thanksgiving 2025 at 17:00Z, with every aircraft on its recorded tail.</p>
       </div>
     </div>
 
     <div class="panel" id="tab-audit" role="tabpanel">
       <div>
-        <h3>The audit: the world answers for its laws while it flies</h3>
-        <p>The invariant suite is the release gate. In process, <code>internal/sim/invariants_test.go</code> proves no oversell across selling channels, message conservation at the switch, interline convergence and that a cancelled flight queues everyone. Live, every shard reports its inventories, the core federates them, and <code>skycheck</code> exits non-zero on a cabin holding more than it has or a shard that did not answer, because a machine being down must not read as a pass.</p>
+        <h3>The audit of the running world</h3>
+        <p>The invariant suite is the release gate. In process, <code>internal/sim/invariants_test.go</code> checks for no oversell across selling channels, message conservation at the switch, and interline convergence. It also checks that a cancelled flight queues every booking. Live, every shard reports its inventories and the core federates them. <code>skycheck</code> exits non-zero when a cabin holds more passengers than seats, or when a shard did not answer. A machine that is down must not read as a pass.</p>
 <pre><code>$ go run ./cmd/skycheck https://wholesky-demo.fly.dev
 6 shards, 8074 cabins, 126321 seats sold, 0 oversold</code></pre>
-        <p>Its first run against the recorded day found 88 oversold cabins, 83 of them business cabins on Hawaii legs holding up to 54 passengers in 32 seats: the filler had drawn booking classes without looking at the aircraft. The gate paid for itself on its first run.</p>
+        <p>Its first run against the recorded day found 88 oversold cabins. 83 of them were business cabins on Hawaii legs, holding up to 54 passengers in 32 seats. The filler had drawn booking classes without reading the aircraft type.</p>
       </div>
       <div class="card">
-        <h3>What is real, what is synthetic</h3>
-        <p class="muted">Real: the wire formats and their published rules, the state separation, the failure modes, the schedule on the recorded day, its tails, delays by cause, cancellations and diversions.</p>
-        <p class="muted">Synthetic and labelled: the passengers, the aircraft types inferred from carrier and stage length, seat counts, and the fares. There is no real tariff in this, only the shape of one.</p>
+        <h3>Recorded data and synthetic data</h3>
+        <p class="muted">Taken from the industry and the BTS record: the wire formats and their published rules, the state separation, the failure modes, and the recorded day's schedule, tails, delays by cause, cancellations and diversions.</p>
+        <p class="muted">Synthetic and labelled as synthetic: the passengers, the aircraft types inferred from carrier and stage length, the seat counts, and the fares. The tariff follows the shape of a published filing but copies none.</p>
       </div>
     </div>
   </div>
@@ -370,75 +370,75 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
 <section id="run">
   <div class="wrap">
     <div class="eyebrow">run a carrier</div>
-    <h2>Take one of the 518 and run it. The other 517 are the bar.</h2>
-    <p class="lead">Every carrier flies on autopilot: rules deciding, wherever a real airline has a person deciding, what the airline does. A seat is you taking those decisions instead. Department by department you switch the autopilot off; where it is off, the day stops deciding and asks you -- a situation, options, what each costs, a default, a deadline -- and what you say goes out on the wire as the real messages. Too slow and the default happens. The scorecard is the same for everyone.</p>
+    <h2>Run one of the 518 carriers against the autopilot</h2>
+    <p class="lead">Every carrier runs on autopilot, with rules making each decision that an airline gives to a person. A seat lets you take those decisions instead, department by department. In each department on manual, the simulator sends you every decision. Each decision states the situation, the options, the cost of each, a default and a deadline. Your answer goes out on the wire as messages, and the simulator applies the default if you miss the deadline. The scorecard uses the same formula for every carrier.</p>
     <div class="two">
       <div class="card">
         <h3>For people: the operations centre</h3>
-        <p class="muted">The lobby is a leaderboard: revenue, cost, profit, on-time, cancellations, load factor, score, and who holds the seat. Take a carrier and you get its inbox, its departments as switches (operations, crew, slots, pricing, ground), the levers -- cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, call reserves -- and the departures board with what the day is doing to each flight: the slot and its cause, the crew's legality, the late aircraft, the bags. <a href="https://wholesky-demo.fly.dev/ops/">Open the lobby →</a> The lobby has a search box and favourites, answers in under a second, and links each seat's last run. Hold a seat and the carrier's own jetway console at <code>/node/XX/</code> is yours to book and board from; everyone else reads.</p>
+        <p class="muted">The lobby is a leaderboard of revenue, cost, profit, on-time rate, cancellations, load factor, score and seat holder. When you take a carrier, you get its inbox and its departments as switches for operations, crew, slots, pricing and ground. You get the levers: cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, and call reserves. The departures board shows the state of each flight, with the slot and its cause, the crew's legality, the late aircraft and the bags. <a href="https://wholesky-demo.fly.dev/ops/">Open the lobby →</a> The lobby has a search box and favourites, answers in under a second, and links each seat's last run. The seat holder can book and board from the carrier's jetway console at <code>/node/XX/</code>. Everyone else can only read it.</p>
       </div>
       <div class="card">
-        <h3>For agents: the same API, as MCP tools</h3>
-        <p class="muted">Everything the page does is JSON over HTTP, and <code>cmd/skyagent</code> serves it as MCP tools over stdio -- <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code>, <code>weather</code> -- so Claude Code or Claude Desktop can run an airline against the world with no code at all. Nothing an agent can do is hidden from a person; a seat can be handed between them mid-day. A <code>note</code> tool puts the agent's reasoning on the carrier's tape, and the run is recorded from take to release: <code>/replay/&lt;id&gt;</code> plays it back against the scorecard.</p>
+        <h3>For agents: the same API as MCP tools</h3>
+        <p class="muted">Every action on the page is JSON over HTTP. <code>cmd/skyagent</code> serves it as MCP tools over stdio: <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code> and <code>weather</code>. Claude Code or Claude Desktop can then run an airline against the world with no code. An agent has no action that a person lacks, and a seat can pass between a person and an agent during the day. A <code>note</code> tool puts the agent's reasoning on the carrier's tape. The core records the run from take to release, and <code>/replay/&lt;id&gt;</code> plays it back against the scorecard.</p>
       </div>
     </div>
-    <div class="shot" style="margin-top:14px"><img src="the-ops-centre.jpg" alt="Lufthansa's operations centre on the demo: the scorecard, two decisions open -- LH220 FRA-BOG will leave 90 minutes late, announce or hold; UA has cut FRA-SFO fares by 12%, match or hold -- every department on manual, and the levers"></div>
-    <p class="caption">Lufthansa's operations centre on the demo, mid-afternoon: 829 departures, 43 cancelled, two decisions open with forty seconds on each: a delay to announce or hold, a rival's fare cut to match or hold. Every department is on manual, so the day asks.</p>
-    <div class="shot"><img src="the-tape.jpg" alt="The departures board and the tape: flights landed with their delays and crews' legality, and the tape of decisions opened and defaulted, a rival's fare cut, crews timing out"></div>
-    <p class="caption">The departures board and the tape underneath: what the day did to each flight, and every decision the seat was asked -- and what happened when it did not answer in time.</p>
-    <p class="muted" style="margin-top:14px">Where it goes: bring your own jetway. A carrier is a jetway node with the world's schedule and addresses, and the switch does not care where that node runs -- a player's <code>jetwayd</code> on their own machine dials the world's switch and the booking traffic lands on their socket. Then worlds trunk to worlds. The design and what is still missing for it is in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
+    <div class="shot" style="margin-top:14px"><img src="the-ops-centre.jpg" alt="Lufthansa's operations centre on the demo. It shows the scorecard, every department on manual, and the levers. Two decisions are open. LH220 FRA-BOG will leave 90 minutes late, announce or hold. UA has cut FRA-SFO fares by 12%, match or hold."></div>
+    <p class="caption">Lufthansa's operations centre on the demo in mid-afternoon. It shows 829 departures, 43 cancelled, and two decisions open with 40 seconds left on each. One is a delay to announce or hold. The other is a rival's fare cut to match or hold. Every department is on manual, so the simulator sends every decision to the seat.</p>
+    <div class="shot"><img src="the-tape.jpg" alt="The departures board and the tape. The board lists flights landed with their delays and crew legality. The tape lists decisions opened and defaulted, a rival's fare cut and crews timing out."></div>
+    <p class="caption">The departures board with the tape underneath. The board shows the outcome for each flight. The tape shows every decision sent to the seat and the default applied when the seat did not answer in time.</p>
+    <p class="muted" style="margin-top:14px">The next step is to bring your own jetway. A carrier is a jetway node with the world's schedule and addresses. The switch accepts that node from any location. A player's <code>jetwayd</code> on their own machine dials the world's switch, and the booking traffic arrives on their socket. Worlds then trunk to other worlds. The design, and the parts still missing, are in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
   </div>
 </section>
 
 <section id="play">
   <div class="wrap">
     <div class="eyebrow">multiplayer</div>
-    <h2>One sky, many hands: people, agents, your own nodes, other worlds</h2>
-    <p class="lead">Everything below is the same three commands and one API. Pick the shape that fits the room.</p>
-    <div class="shot"><img src="the-lobby.jpg" alt="The lobby: a leaderboard of 518 carriers with flights, flown, cancellations, on-time, load factor, revenue, profit, score and who holds the seat"></div>
-    <p class="caption">The lobby is the leaderboard. Every carrier nobody took is the autopilot's baseline; a take button is a seat.</p>
+    <h2>Multiplayer: people, agents, your own nodes and other worlds</h2>
+    <p class="lead">Every option below uses the same three commands and one API. Choose the option that fits your group.</p>
+    <div class="shot"><img src="the-lobby.jpg" alt="The lobby, a leaderboard of 518 carriers with flights, flown, cancellations, on-time rate, load factor, revenue, profit, score and seat holder"></div>
+    <p class="caption">The lobby leaderboard. Carriers with no seat holder run on autopilot and form the baseline. Each take button opens a seat.</p>
     <div class="two">
       <div class="card">
-        <h3>1 · A group on the demo, no install</h3>
-        <p class="muted">Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat switches its own departments to manual and answers what the day asks; the leaderboard is shared and the 500 carriers nobody took are the autopilot's baseline. Seats are per carrier, so a hundred people can run a hundred airlines on one world at once.</p>
+        <h3>1 · A group on the demo without an install</h3>
+        <p class="muted">Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat holder switches their own departments to manual and answers the decisions the simulator sends. The leaderboard is shared. The 500 carriers with no seat holder run on autopilot and form the baseline. Each seat covers one carrier, so 100 people can run 100 airlines on one world at the same time.</p>
       </div>
       <div class="card">
         <h3>2 · Your own world for a group</h3>
-        <p class="muted">One machine, one day, your friends' browsers:</p>
+        <p class="muted">One machine runs the day, and your group connects from their browsers:</p>
         <pre class="code">go run ./cmd/worldc -countries "United Kingdom,France,Germany" -carriers 40 -o world.json
 go run ./cmd/skyd -world world.json -warp 6 -console :8080 -decision-window 90s
 # share http://your-host:8080/ops/</pre>
-        <p class="muted">For a world that stays up, <a href="https://github.com/adamf/wholesky/tree/main/deploy/k8s">deploy/k8s</a> is the demo's shape on Kubernetes: the machines as StatefulSets, an Envoy edge that terminates TLS and passes the switch ports through as raw TCP, a certificate from cert-manager, a GKE overlay and a laptop one. Warp sets how fast the day runs; the decision window is how long a seat has before the autopilot decides. The recorded Thanksgiving eve works the same way with <code>-bts</code> at compile time.</p>
+        <p class="muted">For a world that stays up, <a href="https://github.com/adamf/wholesky/tree/main/deploy/k8s">deploy/k8s</a> reproduces the demo's layout on Kubernetes. It runs the machines as StatefulSets behind an Envoy edge that terminates TLS and passes the switch ports through as raw TCP. It has a certificate from cert-manager, a GKE overlay and a laptop overlay. Warp sets how fast the day runs. The decision window sets how long a seat has before the autopilot decides. The recorded Thanksgiving eve works the same way with <code>-bts</code> at compile time.</p>
       </div>
       <div class="card">
         <h3>3 · Agents in the seats</h3>
-        <p class="muted">An agent runs a carrier through the same API a person uses. <code>cmd/skyagent</code> serves it as MCP tools over stdio, so Claude Code or Claude Desktop needs nothing but a config line:</p>
+        <p class="muted">An agent runs a carrier through the same API a person uses. <code>cmd/skyagent</code> serves it as MCP tools over stdio. Claude Code or Claude Desktop needs only this configuration:</p>
         <pre class="code">{ "mcpServers": { "wholesky": {
     "command": "go", "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest", "-world", "https://wholesky-demo.fly.dev"] } } }</pre>
-        <p class="muted">Every run is recorded: the agent narrates with the <code>note</code> tool, and <code>/replay/&lt;id&gt;</code> plays its reasoning back against the tape and the scorecard, live while it holds the seat. <a href="replay/day.html">Watch Claude run Jet2 for a day</a> -- the agent's terminal beside the world's tape on one clock: 159 decisions answered, none defaulted, no cancellations, 87 notes -- or <a href="replay/?src=jet2-claude.json">the replay alone</a> and <a href="replay/terminal.html">the terminal alone</a>. Then: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em> People and agents share one leaderboard; a seat can be handed between them mid-day (the token is the seat).</p>
+        <p class="muted">The core records every run. The agent narrates with the <code>note</code> tool. <code>/replay/&lt;id&gt;</code> plays its reasoning back against the tape and the scorecard, live while the agent holds the seat. <a href="replay/day.html">Watch Claude run Jet2 for a day</a>, with the agent's terminal beside the world's tape on one clock. That run answered 159 decisions, defaulted none, cancelled no flights and wrote 87 notes. You can also watch <a href="replay/?src=jet2-claude.json">the replay alone</a> or <a href="replay/terminal.html">the terminal alone</a>. Then give the agent this instruction: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em> People and agents share one leaderboard. A seat can pass between them during the day, because the seat token is the seat.</p>
         <div class="shot"><a href="replay/day.html"><video src="replay/jet2-claude-day.mp4" poster="the-replay.jpg" autoplay muted loop playsinline style="display:block;width:100%;height:auto"></video></a></div>
-        <p class="caption">The day in thirty seconds: the agent's terminal on the left, Jet2's scorecard and tape on the right, on one clock. Click it for the page that plays both at any speed.</p>
+        <p class="caption">The day compressed to 30 seconds. The agent's terminal is on the left, and Jet2's scorecard and tape are on the right, on one clock. Click the video for the page that plays both at any speed.</p>
       </div>
       <div class="card">
         <h3>4 · Bring your own jetway</h3>
-        <p class="muted">Hard mode. Take a seat, then claim the carrier: the world severs its own tenant and hands you the start pack -- a jetway configuration with the switch address and a link token, and the carrier's schedule as an SSIM file. Run <code>jetwayd</code> with it and your node <em>is</em> the airline on the world's wire: the distribution systems sell into your inventory, your departure control opens flights from your own name lists, your desk files the MVTs the globe draws. Register your node's URL and the world keeps your ground story's hours for you.</p>
+        <p class="muted">This is the most demanding option. Take a seat, then claim the carrier, and the world disconnects its own tenant and sends you the start pack. The pack holds a jetway configuration with the switch address and a link token, and the carrier's schedule as an SSIM file. Run <code>jetwayd</code> with the pack, and your node <em>is</em> the airline on the world's wire. The distribution systems sell into your inventory, and your departure control opens flights from your own name lists. Your desk files the MVTs that the globe draws. Register the URL of your node and the world runs the timed ground events of your flights: the name list 3 hours before departure, and check-in, boarding and the load 45 minutes before.</p>
         <pre class="code">curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/BA/claim > pack.json
 jq -r .config_yaml pack.json > ba.yaml; jq -r .ssim pack.json > ba.ssim
 go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml</pre>
       </div>
       <div class="card">
         <h3>5 · Worlds joined to worlds</h3>
-        <p class="muted">Two skies become one network the way two real networks do: their switches hold a trunk, each routes the other's subscribers down it, and each sells the other's flights. The second world is told where the first is; the join is a handshake, the traffic is Type B and EDIFACT over the trunk.</p>
+        <p class="muted">Two worlds join into one network through their switches. The switches hold a trunk, each routes the other's subscribers down it, and each sells the other's flights. You give the second world the address of the first. The join is a handshake, and the traffic is Type B and EDIFACT over the trunk.</p>
         <pre class="code"># machine A
 skyd -world europe.json  -world-name europe  -console :8080 -public-url http://a.example:8080 -link-port 7000
 # machine B
 skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
      -console :8080 -public-url http://b.example:8080 -link-port 7000 -peer-world http://a.example:8080</pre>
-        <p class="muted">Carriers' designators, switch codes and distribution-system cities must differ between worlds -- in this network they are addresses. Joined worlds' carriers appear on each other's leaderboards. It runs for real: <a href="https://wholesky-mirror.fly.dev/ops/">wholesky-mirror.fly.dev</a> is a second sky, every carrier renamed, trunked to the demo; its carriers sit on the demo's lobby under <em>mirror</em>.</p>
+        <p class="muted">Carrier designators, switch codes and distribution-system cities must differ between worlds, because the network uses them as addresses. Joined worlds' carriers appear on each other's leaderboards. <a href="https://wholesky-mirror.fly.dev/ops/">wholesky-mirror.fly.dev</a> is a second world with every carrier renamed, trunked to the demo. Its carriers appear in the demo's lobby under <em>mirror</em>.</p>
       </div>
       <div class="card">
-        <h3>What is still rough</h3>
-        <p class="muted">There are no accounts: a seat is a token, and a token is whoever holds it. On the demo the switch ports sit behind Fly's shared IPv4, which carries HTTP only, so a node dialling <code>wholesky-demo.fly.dev:7000</code> needs IPv6 and the mirror world's trunk does not stay up there; a dedicated address or the Kubernetes layout fixes that. The scorecard's costs are a chosen shape, the lobby ranks it against the world while the ops centre shows it raw, and the day asks about five kinds of decision. The honest list, and the order it will be done in, is at the end of <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>; the design is <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>; what a stranger on the internet can and cannot do to a world, and the decisions still open, is <a href="https://github.com/adamf/wholesky/blob/main/docs/security.md">docs/security.md</a>.</p>
+        <h3>Known limitations</h3>
+        <p class="muted">There are no accounts. A seat is a token, and whoever holds the token holds the seat. On the demo the switch ports sit behind Fly's shared IPv4 address, which carries HTTP only. A node that dials <code>wholesky-demo.fly.dev:7000</code> therefore needs IPv6, and the mirror world's trunk does not stay up there. A dedicated address or the Kubernetes layout removes that limit. The scorecard's cost model is a chosen shape. The lobby ranks the score against the world, and the ops centre shows the raw score. The simulator sends five kinds of decision. The list of missing systems, in the planned order, is at the end of <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>. The design is in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>. <a href="https://github.com/adamf/wholesky/blob/main/docs/security.md">docs/security.md</a> states what an anonymous user can and cannot do to a world, and lists the open decisions.</p>
       </div>
     </div>
   </div>
@@ -447,8 +447,8 @@ skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
 <section id="architecture">
   <div class="wrap">
     <div class="eyebrow">architecture</div>
-    <h2>Two shapes, one codebase</h2>
-    <p class="lead"><b>Single-box</b> (<code>-role all</code>, the default and the test bed): one OS process, every jetway instance a library assembly, everything between them crossing real TCP on loopback. <b>Multi-machine</b> (the deployed demo): the same assemblies spread across six machines, dialled together over a private network. The switch cannot tell the difference, which is the point.</p>
+    <h2>Two deployment shapes from one codebase</h2>
+    <p class="lead"><b>Single-box</b> (<code>-role all</code>) is the default and the test bed. It runs one OS process, with every jetway instance as a library assembly and all traffic between them crossing TCP on loopback. <b>Multi-machine</b> is the deployed demo. It spreads the same assemblies across six machines, dialled together over a private network. The switch cannot tell the two shapes apart.</p>
 
     <div class="arch">
       <div class="col">
@@ -471,40 +471,40 @@ skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
 
     <div class="two">
       <div class="card">
-        <h3>Federation is deliberately dumb</h3>
-        <p class="muted">Peers register with the core and heartbeat every few seconds. The reply carries the switch's link addresses, the current warp and the closed-airport set, so liveness, time control and chaos propagate on one pulse. The fleet board merges every peer's rows and proxies drill-downs and consoles to whichever machine owns the node. A region can die and restart while the rest of the sky keeps flying; rejoining is registering and dialling back in.</p>
+        <h3>A minimal federation protocol</h3>
+        <p class="muted">Peers register with the core and send a heartbeat every few seconds. The reply carries the switch's link addresses, the current warp and the closed-airport set. Liveness, time control and chaos therefore travel on one message. The fleet board merges every peer's rows and proxies drill-downs and consoles to the machine that owns the node. A region can fail and restart while the rest of the world keeps flying. To rejoin, it registers and dials back in.</p>
       </div>
       <div class="card">
         <h3>What crosses the wire</h3>
-        <p class="muted">Sells and their answers, availability broadcasts, name lists and their amendments, check-in and bag messages between reservations and the airport, load and passenger lists at door close, movement messages from the datalink provider, flight plans and tower replies over the AFTN, schedule changes, ticket control. Nothing else. Observers are bus taps only.</p>
+        <p class="muted">The links carry sells and their answers, availability broadcasts, name lists and their amendments, and check-in and bag messages between reservations and the airport. They also carry load and passenger lists at door close, and movement messages from the datalink provider. Flight plans and tower replies cross over the AFTN, with schedule changes and ticket control. Nothing else crosses the links. Observers only tap the bus.</p>
       </div>
     </div>
 
     <h3 style="margin-top:32px">The engine</h3>
-    <p class="prose">Everything importable lives in <a href="https://github.com/adamf/jetway">jetway</a>: the codec packages (<code>typeb</code>, <code>edifact</code>, <code>airimp</code>, <code>padis</code>, <code>avs</code>, <code>ssim</code>, <code>ndc</code>, <code>matip</code>, <code>pnr</code>, <code>pnl</code>, <code>baggage</code>, <code>mvt</code>, <code>dcs</code>, <code>aftn</code>, <code>ats</code>, <code>acars</code>, <code>fare</code>) and the application packages (<code>gateway</code>, <code>store</code>, <code>inventory</code>, <code>irops</code>, <code>node</code>, <code>queue</code>, <code>ingress</code>, <code>egress</code>, <code>transport</code>, <code>spool</code>, <code>api</code>). jetway is meant to be usable as a real gateway, DCS or message router; sim-only behaviour stays in wholesky. Each package's doc says whether its format is <b>specified</b> by a public document or <b>inferred</b> from free reproductions, and the roadmap names the paid documents whose absence costs what.</p>
+    <p class="prose">Every importable package lives in <a href="https://github.com/adamf/jetway">jetway</a>. The codec packages are <code>typeb</code>, <code>edifact</code>, <code>airimp</code>, <code>padis</code>, <code>avs</code>, <code>ssim</code>, <code>ndc</code>, <code>matip</code>, <code>pnr</code>, <code>pnl</code>, <code>baggage</code>, <code>mvt</code>, <code>dcs</code>, <code>aftn</code>, <code>ats</code>, <code>acars</code> and <code>fare</code>. The application packages are <code>gateway</code>, <code>store</code>, <code>inventory</code>, <code>irops</code>, <code>node</code>, <code>queue</code>, <code>ingress</code>, <code>egress</code>, <code>transport</code>, <code>spool</code> and <code>api</code>. jetway is built for production use as a gateway, DCS or message router. Simulation-only behaviour stays in wholesky. Each package's doc states whether its format is <b>specified</b> by a public document or <b>inferred</b> from free reproductions. The roadmap names the paid documents that are missing and what each would add.</p>
   </div>
 </section>
 
 <section id="recorded">
   <div class="wrap">
     <div class="eyebrow">the recorded day</div>
-    <h2>The Wednesday before Thanksgiving 2025, at real time</h2>
-    <p class="lead"><code>worldc</code> reads one day of BTS on-time data — every US scheduled flight, real tails, real delays by cause, real cancellations and diversions — and <code>skyd</code> flies it at warp 1, so the day before Thanksgiving takes the day before Thanksgiving.</p>
+    <h2>The Wednesday before Thanksgiving 2025 at real time</h2>
+    <p class="lead"><code>worldc</code> reads one day of BTS on-time data. The data covers every US scheduled flight, with its tail, delays by cause, cancellations and diversions. <code>skyd</code> flies the day at warp 1, so the run takes 24 hours.</p>
     <div class="numbers">
       <div><b>22,889</b><span>flights · 20 carriers · 351 airports</span></div>
-      <div><b>5,313</b><span>airframes on their real tails</span></div>
+      <div><b>5,313</b><span>airframes on their recorded tails</span></div>
       <div><b>64 · 44</b><span>cancellations · diversions, as recorded</span></div>
       <div><b>1,400,987</b><span>pre-sold bookings at 0.85 load</span></div>
       <div class="amber"><b>$255</b><span>average fare per passenger-leg</span></div>
     </div>
-    <p class="prose">The MVTs carry the record's delay codes. Departure control opens each flight three hours out and closes it at the door; the manifest, load and loadsheet are the day's own. Nothing in the recorded schedule is invented; what is synthetic — passengers, fares, aircraft types where BTS does not say — is labelled in the manifest. At the day's wrap the books are purged by daily partition and refilled deterministically from the seed. It runs at <a href="https://wholesky-thanksgiving.fly.dev/eye">wholesky-thanksgiving.fly.dev</a>.</p>
+    <p class="prose">The MVTs carry the record's delay codes. Departure control opens each flight 3 hours out and closes it at the door. The manifest, load and loadsheet come from the simulated day. Every flight in the schedule comes from the record. The synthetic parts, the passengers, fares and aircraft types where BTS gives none, are labelled in the manifest. At the end of the day the books are purged by daily partition and refilled deterministically from the seed. The recorded day runs at <a href="https://wholesky-thanksgiving.fly.dev/eye">wholesky-thanksgiving.fly.dev</a>.</p>
   </div>
 </section>
 
 <section id="deploy">
   <div class="wrap">
     <div class="eyebrow">deploying</div>
-    <h2>Run it on a laptop, or across six machines</h2>
+    <h2>Deployment on a laptop or across six machines</h2>
     <div class="two">
       <div>
         <h3>Locally</h3>
@@ -515,7 +515,7 @@ cd wholesky &amp;&amp; go test ./...
 go run ./cmd/worldc -countries "United Kingdom,France,Germany" -carriers 30 -o europe.json
 go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
 # console on http://127.0.0.1:8080 · the eye at /eye</code></pre>
-        <p class="muted"><code>worldc</code> compiles a deterministic manifest — airports, carriers, daily flights — from the vendored OpenFlights snapshot; same seed, same world. Pass <code>-bts</code> and <code>-date</code> for a recorded day. <code>skyd</code> boots the switch, the tenants and the distribution systems on loopback and runs the flight day at <code>-warp</code>.</p>
+        <p class="muted"><code>worldc</code> compiles a deterministic manifest of airports, carriers and daily flights from the vendored OpenFlights snapshot. The same seed produces the same world. Pass <code>-bts</code> and <code>-date</code> for a recorded day. <code>skyd</code> boots the switch, the tenants and the distribution systems on loopback and runs the flight day at <code>-warp</code>.</p>
       </div>
       <div>
         <h3>The deployed shapes</h3>
@@ -524,9 +524,9 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
           <tr><td class="mono">wholesky-demo</td><td>core · gds1g · gds1s · gds1a · region0 · region1</td><td>the synthetic world at warp 6, carriers' books in bounded memory</td></tr>
           <tr><td class="mono">wholesky-thanksgiving</td><td>one machine, <code>-role all</code></td><td>the recorded day at warp 1, books of record and distribution systems' books in Managed Postgres</td></tr>
         </table></div>
-        <p class="muted" style="margin-top:12px">For a carrier's host or a switch carrying real traffic, the SRE plan is its own page: <a href="production.html">deploy to production</a> — topology, the lease, database provisioning, DR, the alerts, and load testing as the release gate.</p>
-        <p class="muted">Both from <code>fly.toml</code> and <code>fly.thanksgiving.toml</code>. Roles: <code>core</code>, <code>gds</code>, <code>region -shard N -shards M</code>, or <code>all</code>. Peers find the core with <code>-core-url</code> and advertise themselves with <code>-self-url</code>. Stores are memory by default, or Postgres with <code>-tenant-dsn</code> and <code>-gds-dsn</code>; records are partitioned by their retirement day and dropped when the day wraps.</p>
-        <p class="muted">Lessons the deployments taught, all now in the code: a filled 737's name list is three parts; a link's outbox must refuse rather than stall; a seat inventory must be rebuilt from the book at boot; two worlds must not share one small database; and a partition that cannot be created must not stop the write.</p>
+        <p class="muted" style="margin-top:12px">For a carrier's host or a switch that carries production traffic, the SRE plan has its own page, <a href="production.html">deploy to production</a>. It covers topology, the lease, database provisioning, DR, the alerts, and load testing as the release gate.</p>
+        <p class="muted">Both apps deploy from <code>fly.toml</code> and <code>fly.thanksgiving.toml</code>. The roles are <code>core</code>, <code>gds</code>, <code>region -shard N -shards M</code> and <code>all</code>. Peers find the core with <code>-core-url</code> and advertise themselves with <code>-self-url</code>. Stores are in memory by default, or in Postgres with <code>-tenant-dsn</code> and <code>-gds-dsn</code>. Records are partitioned by their retirement day and dropped when the day ends.</p>
+        <p class="muted">The deployments taught five lessons, and each is now in the code. A filled 737's name list has three parts. A link's outbox must refuse rather than stall. A seat inventory must be rebuilt from the book at boot. Two worlds must not share one small database. A partition that cannot be created must not stop the write.</p>
       </div>
     </div>
   </div>
@@ -535,45 +535,45 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
 <section id="contributing">
   <div class="wrap">
     <div class="eyebrow">contributing</div>
-    <h2>How the work is done here</h2>
+    <h2>Working practices</h2>
     <div class="two">
       <div class="card">
-        <h3>The rule that matters most: say what you actually know</h3>
-        <p class="muted">Most airline formats are defined in paid IATA documents that were not bought. Every package says which layer it is: <b>specified</b> (ISO 9735, RFC 2351, Annex 10, the Type B whitepaper, the PNRGOV guide, NDC schemas), <b>inferred closely</b> (built and tested against verbatim published examples), or <b>inferred</b>. Never write a doc comment implying conformance you cannot demonstrate. When public sources disagree, implement one, make it advisory, and document the disagreement.</p>
+        <h3>Conformance labels for every package</h3>
+        <p class="muted">Most airline formats are defined in paid IATA documents that this project did not buy. Every package states its layer. A <b>specified</b> layer follows ISO 9735, RFC 2351, Annex 10, the Type B whitepaper, the PNRGOV guide or the NDC schemas. An <b>inferred closely</b> layer is built and tested against verbatim published examples. Other layers are <b>inferred</b>. Do not write a doc comment that implies conformance you cannot demonstrate. When public sources disagree, implement one, make it advisory, and document the disagreement.</p>
       </div>
       <div class="card">
-        <h3>Search for a free source before writing "blocked"</h3>
-        <p class="muted">Every time this has been done it paid: the free PNRGOV guide fixed four PADIS bugs whose tests had encoded the same guess as the code; the free EMD guide fixed three coupon statuses; the free Type B whitepaper produced the 4 KB cap and PDM. Look for tables of contents, regulator guides, vendor and airport reproductions, and adjacent free standards. Then state precisely what remains unknown.</p>
+        <h3>A search for free sources before declaring a format blocked</h3>
+        <p class="muted">Every search so far has found a source. The free PNRGOV guide fixed four PADIS bugs whose tests had encoded the same guess as the code. The free EMD guide fixed three coupon statuses. The free Type B whitepaper gave the 4 KB cap and PDM. Look for tables of contents, regulator guides, vendor and airport reproductions, and adjacent free standards. Then state precisely what remains unknown.</p>
       </div>
       <div class="card">
         <h3>Testing discipline</h3>
         <ul class="tight muted">
-          <li>A new test does not count until it has been <b>watched to fail</b> against the old behaviour.</li>
-          <li>Check against an external artefact where one exists; fuzz round trips for any codec; write fixtures by hand from the spec, not from your own builder.</li>
-          <li>Store changes pass the conformance suite against both backends (<code>JETWAY_TEST_DSN</code>).</li>
-          <li>Anything that crosses a link gets a scenario; unit tests do not catch what only shows up with a partner on the other end.</li>
+          <li>A new test counts only after you have <b>watched it fail</b> against the old behaviour.</li>
+          <li>Check against an external artefact where one exists. Fuzz round trips for any codec. Write fixtures by hand from the spec rather than from your own builder.</li>
+          <li>Store changes must pass the conformance suite against both backends (<code>JETWAY_TEST_DSN</code>).</li>
+          <li>Write a scenario for anything that crosses a link. Unit tests do not catch faults that appear only with a partner on the other end.</li>
           <li>CI runs <code>gofmt</code> and the race detector. Watch the run after every push.</li>
         </ul>
       </div>
       <div class="card">
         <h3>Conventions</h3>
         <ul class="tight muted">
-          <li>Comments explain <b>why</b>. Go doc on every exported symbol, in prose. British spelling.</li>
-          <li>Commit messages have real bodies explaining the reasoning, wrapped at 72 columns.</li>
-          <li>wholesky finds a bug in jetway → fix it upstream, tag, pin. Sim-only behaviour stays in wholesky; jetway must remain usable as a real system.</li>
-          <li>Migrations are dense-numbered and never edited once applied anywhere. Never drop a partition by hand under a running process.</li>
-          <li>Open an issue or a pull request on either repo; both are MIT.</li>
+          <li>Comments explain <b>why</b>. Write Go doc on every exported symbol, in prose. Use British spelling.</li>
+          <li>Commit messages have a body that explains the reasoning, wrapped at 72 columns.</li>
+          <li>When wholesky finds a bug in jetway, fix it in jetway, tag a release and pin it. Simulation-only behaviour stays in wholesky. jetway must remain usable in production.</li>
+          <li>Migrations are numbered without gaps. Do not edit a migration after it has been applied anywhere. Do not drop a partition by hand under a running process.</li>
+          <li>Open an issue or a pull request on either repository. Both are MIT-licensed.</li>
         </ul>
       </div>
     </div>
-    <h3 style="margin-top:32px">What is not here yet</h3>
-    <p class="prose muted">IATA's IS-XML for the interline invoices (the proration, billing and agency memos are done), a revenue management forecast learned from history (the ladders, the booking-curve forecaster and the network programme's bid prices are done), Secure Flight-style vetting, WorldTracer's own formats (the AHL, OHD and FWD story of a short-shipped bag runs as a profile), the FAA's CDM ground stops and the slot-swapping dialogue (weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done), crew pairings across days (Part 117 legality, reserves and crew cancellations are done), maintenance and rotation, weather and air-traffic flow, airport systems, cargo, and Type B over MQ as some carriers still receive it. The ordered list, with what each would add and exercise, is <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>; what full load costs is <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</p>
+    <h3 style="margin-top:32px">Missing systems</h3>
+    <p class="prose muted">The following systems are not implemented yet. IATA's IS-XML for the interline invoices is missing, though the proration, billing and agency memos are done. A revenue management forecast learned from history is missing, though the ladders, the booking-curve forecaster and the network programme's bid prices are done. Secure Flight-style vetting is missing. WorldTracer's own formats are missing, though the AHL, OHD and FWD story of a short-shipped bag runs as a profile. The FAA's CDM ground stops and the slot-swapping dialogue are missing, though weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done. Crew pairings across days are missing, though Part 117 legality, reserves and crew cancellations are done. Also missing are maintenance and rotation, weather and air-traffic flow, airport systems, cargo, and Type B over MQ as some carriers still receive it. The ordered list, with what each would add and exercise, is <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>. The cost of full load is in <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</p>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <div>wholesky and jetway are MIT-licensed, by <a href="https://github.com/adamf">Adam Fletcher</a>. Data: OpenFlights (ODbL), BTS on-time performance (public domain).</div>
+    <div>wholesky and jetway are MIT-licensed, by <a href="https://github.com/adamf">Adam Fletcher</a>. Data sources: OpenFlights (ODbL) and BTS on-time performance (public domain).</div>
     <div class="mono"><a href="https://wholesky-demo.fly.dev/eye">live</a> · <a href="https://wholesky-thanksgiving.fly.dev/eye">recorded day</a> · <a href="https://github.com/adamf/wholesky">wholesky</a> · <a href="https://github.com/adamf/jetway">jetway</a></div>
   </div>
 </footer>

@@ -171,7 +171,7 @@ type actArgs struct {
 // newServer builds the MCP server over one world.
 func newServer(s *seat) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "skyagent", Version: "0.1"}, nil)
-	mcp.AddTool(srv, &mcp.Tool{Name: "lobby", Description: "The world's carriers with their scorecards, ranked, and who holds each seat. The clock is the sim day's minutes and the warp its speed."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "lobby", Description: "The carriers in the world with their scorecards, ranked, and the holder of each seat. pos is the sim clock in minutes of the day; warp is its speed."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
 			out, err := s.call(ctx, "GET", "/carriers.json", nil)
 			if err != nil {
@@ -179,7 +179,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(compactLobby(out, s.held())), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "take_seat", Description: "Take a carrier: from now on you run it. Every department stays on autopilot until you take it manual. The token is kept for this session."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "take_seat", Description: "Take a carrier. You run it until you release it. Every department stays on autopilot until you set it to manual. The seat token is kept for this session."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a takeArgs) (*mcp.CallToolResult, any, error) {
 			out, err := s.call(ctx, "POST", "/carrier/"+strings.ToUpper(a.Carrier)+"/take", map[string]string{"holder": a.Holder})
 			if err != nil {
@@ -199,7 +199,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "release_seat", Description: "Hand the carrier back to the autopilot. Open decisions fall to their defaults."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "release_seat", Description: "Return the carrier to the autopilot. Open decisions take their defaults."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -214,7 +214,7 @@ func newServer(s *seat) *mcp.Server {
 			s.mu.Unlock()
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "carrier_state", Description: "Everything about a carrier now: the scorecard (revenue, costs, profit, on-time, cancellations, load factor), every departure today with its status and what the day has done to it, the open decisions, and the departments."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "carrier_state", Description: "The carrier now: the scorecard (revenue, costs, profit, on-time, cancellations, load factor), the departures the day has affected and the next ones due, the open decisions, and the departments."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -226,7 +226,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(compactState(out)), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "The decisions the day is waiting on you for, each with its options, default and deadline. Unanswered decisions fall to the default at the deadline."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "inbox", Description: "The open decisions, each with its options, default and deadline. A decision that is not answered by its deadline takes the default."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -238,7 +238,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "set_department", Description: "Take a department off autopilot (manual) or give it back. Manual departments put their decisions in your inbox: ops (delays, substitutions), crew (timed-out crews), slots (the Network Manager's slots), pricing, ground (short-shipped bags)."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "set_department", Description: "Set a department to manual or back to autopilot. A manual department sends its decisions to your inbox: ops (delays, substitutions), crew (timed-out crews), slots (Network Manager slots), pricing, ground (bags left behind)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a deptArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -262,7 +262,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Pull a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), force a booking class closed or back (flight, board, class, status C or empty), move every fare by a multiplier (multiplier), send REA to ask the Network Manager for a better slot (flight, board), call reserves for a crew-timed-out flight (flight, board). Each goes out on the wire as the real messages."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board). Each lever sends the corresponding messages."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a actArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -275,7 +275,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "note", Description: "Say what you are thinking, for the record: a sentence or two before or after a decision or an action -- what you saw, what you weighed, why you chose. It goes on the carrier's tape and into the replay of your run (see the replay URL take_seat returned), which is how people will watch what you did. Use it often; a run without notes is a run nobody can follow."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "note", Description: "Record what you are thinking: one or two sentences before or after a decision or an action, with what you saw, what you compared and why you chose. The note goes on the carrier's tape and into the replay of your run (take_seat returns the replay URL). Write a note for every decision and action."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a noteArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -287,7 +287,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "tape", Description: "The carrier's recent events: decisions opened and closed, actions, incidents the day threw at it."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "tape", Description: "The carrier's recent events: decisions opened and answered, actions, and incidents."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -303,7 +303,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "pack", Description: "The start pack for a carrier the world does not run itself (booted with -external): the jetway node configuration to run as that carrier, the switch address, the link token, and the schedule as an SSIM file. Bring your own jetway."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "pack", Description: "The start pack for a carrier that the world does not run itself (started with -external): the jetway node configuration for that carrier, the switch address, the link token, and the schedule as an SSIM file."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -315,7 +315,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "claim", Description: "Hand the carrier you hold to your own jetway node: the world severs its tenant and returns the start pack (jetway YAML with the switch address and link token, the SSIM schedule). Run jetwayd with the YAML and your node is the carrier. 'unclaim' gives it back."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "claim", Description: "Transfer the carrier you hold to your own jetway node. The world disconnects its tenant and returns the start pack (jetway YAML with the switch address and link token, and the SSIM schedule). Run jetwayd with the YAML and your node is the carrier. unclaim reverses this."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -327,7 +327,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "unclaim", Description: "Give a claimed carrier back to the world: its tenant dials the switch again and the day drives it."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "unclaim", Description: "Return a claimed carrier to the world. Its tenant reconnects to the switch and the simulator runs it again."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -339,7 +339,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "register_node", Description: "Tell the world where your own jetway node answers HTTP (after claim). The world then keeps your carrier's ground-story hours: the name list three hours before each departure, the counter, the door and the load at forty-five minutes. An empty url forgets it."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "register_node", Description: "Give the world the HTTP URL of your jetway node (after claim). The world then drives your carrier's ground schedule: the name list 3 hours before each departure, and check-in, boarding and the load 45 minutes before. An empty url removes it."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a nodeArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -351,7 +351,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "weather", Description: "The day's weather systems and the Network Manager's regulations: which airports are slowed, when, and by how much."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "weather", Description: "The weather systems and Network Manager regulations for the day: the airports with reduced rates, the times, and the fraction of the normal rate."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
 			out, err := s.call(ctx, "GET", "/dayplan.json", nil)
 			if err != nil {

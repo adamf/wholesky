@@ -465,7 +465,7 @@ func (s *Sim) askRetime(ctx context.Context, f world.Flight, dep, arr int) bool 
 	}
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "ops", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s will leave %d minutes late", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, dep),
-		Detail:  fmt.Sprintf("STD %s, now expected %s. Announce it to distribution as an ASM TIM and the systems that sold it move their bookings to the new times and queue the advice; hold it and they find out at the airport.", hhmm(f.DepMin), hhmm(f.DepMin+dep)),
+		Detail:  fmt.Sprintf("STD %s, now expected %s. Announce: an ASM TIM goes to distribution, the systems that sold the flight move their bookings to the new times and queue the advice. Hold: passengers learn of the delay at the airport.", hhmm(f.DepMin), hhmm(f.DepMin+dep)),
 		Options: []airline.Option{{Key: "announce", Label: "announce the delay (ASM TIM)"}, {Key: "hold", Label: "hold the announcement"}}, Default: "announce"})
 	return choice == "announce"
 }
@@ -477,7 +477,7 @@ func (s *Sim) askSubstitute(ctx context.Context, f world.Flight) bool {
 	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s: aircraft unserviceable after check-in opened", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "ops", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s has gone technical", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
-		Detail:  "The aircraft is unserviceable after check-in opened. A smaller type is available: the cabin is re-seated, some passengers may be denied boarding, distribution hears the EQT. Or cancel and reprotect everyone.",
+		Detail:  "The aircraft became unserviceable after check-in opened. Substitute: a smaller type takes the flight, the cabin is re-seated, some passengers may be denied boarding, and distribution receives an ASM EQT. Cancel: every passenger is reprotected.",
 		Options: []airline.Option{{Key: "substitute", Label: "substitute a smaller aircraft"}, {Key: "cancel", Label: "cancel the flight", Cost: costPerCancelledPax * int64(f.Seats) / 2}}, Default: "substitute"})
 	return choice == "substitute"
 }
@@ -489,7 +489,7 @@ func (s *Sim) askCrew(ctx context.Context, f world.Flight, fate dayplan.Flight) 
 	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s: crew timed out (%s)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, fate.Reason), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "crew", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s: the crew has timed out", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
-		Detail:  fate.Reason + ". Cancel (the default away from the base), or call a reserve crew: the flight leaves ninety minutes later than it would have, and the callout is paid for.",
+		Detail:  fate.Reason + ". Cancel: the default away from the base. Call reserves: the flight leaves 90 minutes later than planned, and the callout is charged to the scorecard.",
 		Options: []airline.Option{{Key: "cancel", Label: "cancel the flight"}, {Key: "reserves", Label: "call reserves (+90 min)", Cost: costPerReserveCall}}, Default: "cancel"})
 	if choice == "reserves" {
 		s.fate.Update(f, func(pf *dayplan.Flight) {
@@ -509,7 +509,7 @@ func (s *Sim) askSlot(ctx context.Context, t *host.Tenant, f world.Flight, fate 
 	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s slotted: CTOT %s (+%d) under %s", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM, fate.Regulation), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "slots", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s has a slot: CTOT %s (+%d)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM),
-		Detail:  fmt.Sprintf("Regulation %s, cause %s. Take it, or send REA -- ready -- and ask the Network Manager for an improvement; there is one about half the time.", fate.Regulation, fate.Cause),
+		Detail:  fmt.Sprintf("Regulation %s, cause %s. Take the slot, or send REA (ready) to ask the Network Manager for an earlier one. About half of the requests receive an improvement.", fate.Regulation, fate.Cause),
 		Options: []airline.Option{{Key: "accept", Label: "take the slot"}, {Key: "ready", Label: "send REA, ask for a better one"}}, Default: "accept"})
 	if choice == "ready" {
 		if res, err := s.readyForImprovement(ctx, t, f, s.BookingDate); err == nil {
@@ -524,7 +524,7 @@ func (s *Sim) askRush(ctx context.Context, f world.Flight, day time.Time, bags i
 	}
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "ground", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s left %d bags behind at %s", f.Carrier, strings.TrimLeft(f.Number, "0"), bags, f.From),
-		Detail:  "Rush them on the next flight over the sector (a BUM ahead of each; the arrival station traces them and delivers), or hold them for tomorrow and let the passengers file.",
+		Detail:  "Rush: the bags travel on the next flight over the sector, a BUM goes ahead of each, and the arrival station traces and delivers them. Hold: the bags travel tomorrow and the passengers file claims.",
 		Options: []airline.Option{{Key: "rush", Label: "rush on the next flight"}, {Key: "hold", Label: "hold for tomorrow", Cost: costPerMishandledBag * int64(bags)}}, Default: "rush"})
 	return choice == "rush"
 }
@@ -648,7 +648,7 @@ func (s *Sim) competitorMove(ctx context.Context, code string, rng func(n int) i
 	cut := 10 + rng(16) // 10-25 per cent
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: code, Department: "pricing",
 		Title:   fmt.Sprintf("%s has cut %s-%s fares by %d%%", rival, f.From, f.To, cut),
-		Detail:  fmt.Sprintf("Your %s-%s fares stand at ×%.2f over the filing. Match and your market multiplier drops to ×%.2f: the seats sell, for less. Hold and the price-sensitive share of the market flies %s today.", f.From, f.To, s.tariff.EffectiveMultiplier(code, f.From, f.To), s.tariff.EffectiveMultiplier(code, f.From, f.To)*(1-float64(cut)/100), rival),
+		Detail:  fmt.Sprintf("Your %s-%s fares are at ×%.2f of the filing. Match: the market multiplier drops to ×%.2f and the seats sell at the lower fare. Hold: the price-sensitive passengers fly %s today.", f.From, f.To, s.tariff.EffectiveMultiplier(code, f.From, f.To), s.tariff.EffectiveMultiplier(code, f.From, f.To)*(1-float64(cut)/100), rival),
 		Options: []airline.Option{{Key: "hold", Label: "hold your fares"}, {Key: "match", Label: fmt.Sprintf("match: %s-%s down %d%%", f.From, f.To, cut)}}, Default: "hold"})
 	if choice == "match" {
 		cur := s.tariff.EffectiveMultiplier(code, f.From, f.To) / s.tariff.Multiplier(code)

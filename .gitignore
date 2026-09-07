@@ -8,3 +8,4 @@ data/bts/*.zip
 data/bts/On_Time_*.csv
 data/bts/readme.html
 deploy/k8s/overlays/gke/link.env
+/skyagent

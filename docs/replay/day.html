@@ -1,4 +1,4 @@
-<!doctype html><meta charset="utf-8"><title>wholesky — a day in the seat</title>
+<!doctype html><meta charset="utf-8"><title>wholesky · a day in the seat</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.css">
 <style>
@@ -25,14 +25,14 @@
   #tape .p{color:var(--dim);margin-right:8px;font-style:normal}
   .muted{color:var(--dim)} .note{padding:8px 18px;color:var(--dim);font-size:11px;border-top:1px solid var(--line)}
 </style>
-<header><b>WHOLESKY</b> <span>a day in the seat: Claude runs Jet2.com</span> <span class="muted" id="sub">the agent's terminal on the left, the world's tape and scorecard on the right, on one clock</span>
+<header><b>WHOLESKY</b> <span>Claude runs Jet2 for a day</span> <span class="muted" id="sub">The terminal of the agent is on the left. The tape and the scorecard of the world are on the right. Both follow the same clock.</span>
 <span class="clock" id="clock">--:--z<small>sim</small></span>
 <span><a href="./?src=jet2-claude.json">the replay alone →</a> · <a href="terminal.html">the terminal alone →</a> · <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">how this works →</a></span></header>
 <main>
-<section><h2>The agent · Claude Code, print mode, skyagent as its MCP server</h2><div id="player"></div></section>
-<section><h2>The world · Jet2's scorecard and tape at the same moment</h2><div class="kpis" id="kpis"><div class="muted">loading the day…</div></div><canvas id="chart"></canvas><div id="tape"></div></section>
+<section><h2>The agent · Claude Code in print mode, with skyagent as its MCP server</h2><div id="player"></div></section>
+<section><h2>The world · the scorecard and tape of Jet2 at the same moment</h2><div class="kpis" id="kpis"><div class="muted">Loading…</div></div><canvas id="chart"></canvas><div id="tape"></div></section>
 </main>
-<div class="note">Press play on the terminal. The world's side follows its clock: the recording ran at a sim-hour a minute, so a second of the agent's day is a minute of the airline's. Idle gaps in the terminal are cut to two seconds; the clock skips with them. The tape's italic lines are what the agent said it was thinking, written with the <code>note</code> tool as it went.</div>
+<div class="note">Press play on the terminal. The tape and the scorecard follow the clock of the terminal. The recording ran at 1 simulation hour per minute. Each second of the terminal is 1 minute of the day. Idle gaps in the terminal are cut to 2 seconds, and the clock skips with them. The italic lines in the tape are the notes of the agent about its own reasoning. The agent wrote them with the <code>note</code> tool during the run.</div>
 <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.17.0/dist/bundle/asciinema-player.min.js"></script>
 <script>
 const $=s=>document.querySelector(s); const params=new URLSearchParams(location.search);

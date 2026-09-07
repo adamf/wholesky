@@ -52,11 +52,11 @@ const lobbyHTML = `<!doctype html><meta charset="utf-8"><title>wholesky — run 
 <span style="margin-left:auto"><a href="/eye">the sky →</a> · <a href="/stats">instruments →</a> · <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">how this works →</a></span></header>
 <main>
 <section class="wide"><h2>The bar to beat</h2>
-<p class="muted" style="margin:0 0 8px">Every carrier below is flying on autopilot. Take one and its departments become yours: what you leave on autopilot the machine keeps deciding; what you take, it asks you about, and falls to the default if you are slow. The scorecard is the same for everyone. An agent uses the same API (<code>/carrier/XX/…</code>, or <code>skyagent</code> as MCP tools).</p>
+<p class="muted" style="margin:0 0 8px">Every carrier runs on autopilot. Take a carrier, then choose the departments you run yourself. For each event in those departments the simulator sends you a decision with a deadline. If you do not answer in time, the simulator applies the default. The scorecard uses the same formula for every carrier. Agents use the same API (<code>/carrier/XX/…</code>, or <code>skyagent</code> as MCP tools).</p>
 <div class="row"><input id="holder" placeholder="your name" style="width:180px"> <span class="muted">then pick a carrier</span></div>
 </section>
 <section class="wide lobby"><h2>Leaderboard · <span id="n"></span> carriers</h2>
-<div class="row" style="margin-bottom:8px"><input id="q" placeholder="find a carrier: code, name, hub, world, who's flying it" style="width:340px" autofocus> <label class="muted"><input type="checkbox" id="favonly" style="width:auto;vertical-align:middle"> favourites only</label> <span class="muted" id="shown"></span></div>
+<div class="row" style="margin-bottom:8px"><input id="q" placeholder="find a carrier: code, name, hub, world, seat holder" style="width:340px" autofocus> <label class="muted"><input type="checkbox" id="favonly" style="width:auto;vertical-align:middle"> favourites only</label> <span class="muted" id="shown"></span></div>
 <div class="scroll"><table><thead><tr><th></th><th>#</th><th>carrier</th><th>hub</th><th>flights</th><th>flown</th><th>cxl</th><th>OTP</th><th>LF</th><th>revenue</th><th>profit</th><th>score</th><th>seat</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="14" class="muted">building the lobby: every machine's scorecards, and the worlds joined to this one…</td></tr></tbody></table></div>
 </section>
 </main>
@@ -102,13 +102,13 @@ const opsHTML = `<!doctype html><meta charset="utf-8"><title>{{CARRIER}} — ope
 <header><b>WHOLESKY</b> <span><a href="/ops/">carriers</a> / <b id="code">{{CARRIER}}</b> <span id="name" class="muted"></span></span>
 <span class="muted">day <i id="clock">--:--</i> · warp <i id="warp">-</i></span>
 <span id="seat" class="muted"></span>
-<span style="margin-left:auto" class="row"><button id="takebtn" class="primary">take the seat</button><button id="relbtn" class="danger" hidden>release</button> <a href="/replay/{{CARRIER}}">the run so far →</a> <a href="/node/{{CARRIER}}/" target="_blank">the carrier's console →</a> <a href="/eye">the sky →</a></span></header>
+<span style="margin-left:auto" class="row"><button id="takebtn" class="primary">take the seat</button><button id="relbtn" class="danger" hidden>release</button> <a href="/replay/{{CARRIER}}">this run →</a> <a href="/node/{{CARRIER}}/" target="_blank">the carrier's console →</a> <a href="/eye">the sky →</a></span></header>
 <main>
 <section class="wide"><h2>Scorecard</h2><div class="kpis" id="kpis"></div><div class="muted" id="costs" style="margin-top:8px;font-size:11px"></div></section>
-<section><h2>Decisions <span id="inboxn" class="muted"></span></h2><div id="inbox"><div class="muted">Nothing open. Take a department off autopilot and the day will start asking.</div></div></section>
+<section><h2>Decisions <span id="inboxn" class="muted"></span></h2><div id="inbox"><div class="muted">No open decisions. Switch a department to manual to receive its decisions.</div></div></section>
 <section><h2>Departments</h2><div id="depts"></div>
 <h2 style="margin-top:14px">Levers</h2>
-<div class="lever"><span>fares</span><input id="mult" type="number" step="0.05" min="0" placeholder="1.00"> <button onclick="act({kind:'fares',multiplier:+$('#mult').value})">set multiplier</button> <span class="muted">over the filing; 0 restores it</span></div>
+<div class="lever"><span>fares</span><input id="mult" type="number" step="0.05" min="0" placeholder="1.00"> <button onclick="act({kind:'fares',multiplier:+$('#mult').value})">set multiplier</button> <span class="muted">multiplies the filed fares; 0 restores them</span></div>
 <div class="lever"><span>flight</span><input id="fl" placeholder="{{CARRIER}}0117" style="width:90px"> <input id="bd" placeholder="LHR" style="width:52px"></div>
 <div class="lever"><span></span><input id="mins" type="number" placeholder="minutes" style="width:80px"> <button onclick="act({kind:'retime',flight:$('#fl').value,board:$('#bd').value,minutes:+$('#mins').value})">retime</button>
  <button onclick="act({kind:'substitute',flight:$('#fl').value,board:$('#bd').value})">substitute aircraft</button>
@@ -145,7 +145,7 @@ async function load(){
   $("#costs").textContent="costs: "+Object.entries(s.costs||{}).map(([k,v])=>k+" "+money(v)).join(" · ");
   const inbox=state.inbox||[]; $("#inboxn").textContent=inbox.length?"· "+inbox.length+" open":"";
   if(inbox.length) $("#inbox").innerHTML=inbox.map(d=>"<div class='decision'><span class='due'>"+d.department+" · due "+new Date(d.deadline).toLocaleTimeString()+"</span><b>"+esc(d.title)+"</b><div class='detail'>"+esc(d.detail)+"</div><div class='opts'>"+d.options.map(o=>"<button "+(mine?"":"disabled ")+"onclick='decide(\""+d.id+"\",\""+o.key+"\")' class='"+(o.key===d.default?"primary":"")+"'>"+esc(o.label)+(o.cost?" <span class=muted>"+money(o.cost)+"</span>":"")+(o.key===d.default?" (default)":"")+"</button>").join("")+"</div></div>").join("");
-  else $("#inbox").innerHTML="<div class='muted'>Nothing open."+(mine?" Take a department off autopilot and the day will start asking.":"")+"</div>";
+  else $("#inbox").innerHTML="<div class='muted'>No open decisions."+(mine?" Switch a department to manual to receive its decisions.":"")+"</div>";
   $("#depts").innerHTML=(state.departments||[]).map(d=>{ const on=seat&&seat.manual&&seat.manual[d.key]; return "<div class='dept'><div><em>"+esc(d.name)+"</em><br><span>"+esc(d.about)+"</span></div><button "+(mine?"":"disabled ")+"class='"+(on?"on":"")+"' onclick='dept(\""+d.key+"\","+(!on)+")'>"+(on?"manual":"autopilot")+"</button></div>"; }).join("");
   const fl=state.flights||[]; $("#fln").textContent="· "+fl.length;
   $("#flights").innerHTML=fl.map(f=>{ const day=[f.delay,f.slot,f.crew,f.retimed,f.substituted,f.rushed,f.cancelled].filter(Boolean).join(" · "); return "<tr class='"+f.status+(f.delay_min>=15?" late":"")+"'><td><a href='#' onclick='pick(\""+f.flight+"\",\""+f.from+"\");return false'>"+f.flight+"</a></td><td>"+f.from+"–"+f.to+"</td><td>"+f.std+"</td><td class='etd'>"+f.etd+(f.delay_min?" (+"+f.delay_min+")":"")+"</td><td>"+f.status+"</td><td>"+f.booked+"/"+f.seats+(f.boarded?" · "+f.boarded+" boarded":"")+"</td><td>"+money(f.revenue)+"</td><td class='wrap'>"+esc(day)+"</td></tr>"; }).join("");

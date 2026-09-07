@@ -134,21 +134,21 @@ for(const w of [0,60,300,600]){
 /* The explainer. Shown until dismissed once; the link brings it back. */
 const LEGEND_SKY=
   "<span class='x' onclick='hideLegend()'>✕</span><b>the sky</b><br>"+
-  "Every mark is caused by a real message on the wire; nothing is animated for show.<br>"+
-  "<span class='k' style='color:#e8eef4'>➤</span> an aircraft — it departs and lands because its carrier's MVT movement messages crossed the switch<br>"+
+  "Every mark on the globe comes from a message on the switch.<br>"+
+  "<span class='k' style='color:#e8eef4'>➤</span> an aircraft. It departs and lands when its carrier's MVT messages cross the switch<br>"+
   "<span class='k' style='color:#e0b93c'>➤</span> a diverted aircraft (a DIV message named its alternate)<br>"+
-  "<span class='k' style='color:#5fd38d'>·</span> sparks — messages travelling to and from a carrier's home: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#e05a5a'>red</i> schedule<br>"+
-  "<span class='k' style='color:#e8eef4'>◌</span> an expanding ring — an arrival<br>"+
-  "<span class='k' style='color:#e05a5a'>◎</span> a red halo — a closed airport; its size counts real queue items: bookings an agent now has to rework<br>"+
-  "<span class='k' style='color:#8caadc'>◌</span> a dashed blue disc — a weather system in force; the airports under it take arrivals at the fraction shown, and the Network Manager slots every flight into them (SAM, a calculated take-off time)<br>"+
+  "<span class='k' style='color:#5fd38d'>·</span> sparks: messages to and from a carrier's home: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#e05a5a'>red</i> schedule<br>"+
+  "<span class='k' style='color:#e8eef4'>◌</span> an expanding ring: an arrival<br>"+
+  "<span class='k' style='color:#e05a5a'>◎</span> a red halo: a closed airport. Its size is the number of bookings on the queue for rework<br>"+
+  "<span class='k' style='color:#8caadc'>◌</span> a dashed blue disc: a weather system in force. The airports under it accept arrivals at the fraction shown, and the Network Manager gives every flight into them a slot (SAM, a calculated take-off time)<br>"+
   "<b>click</b> an airport to close or reopen it · <b>click</b> an aircraft to see the bookings riding it · drag to spin, scroll to zoom";
 const LEGEND_NET=
   "<span class='x' onclick='hideLegend()'>✕</span><b>the logical web</b><br>"+
-  "The same world as a network diagram: systems that talk, not places.<br>"+
+  "The same world as a network diagram of the systems that exchange messages.<br>"+
   "<span class='k' style='color:#5fd38d'>●</span> a distribution system (GDS)<br>"+
-  "<span class='k' style='color:#5b7a95'>●</span> a carrier, sized by how many conversations it is holding; quiet carriers park on the outer ring<br>"+
-  "<span class='k' style='color:#82afd7'>—</span> a conversation — bright lines are carrier↔carrier interline, faint ones lead to a GDS<br>"+
-  "<span class='k'>·</span> moving dots — sampled real messages riding their edges: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#5f96be'>blue</i> availability · <i style='color:#e05a5a'>red</i> schedule<br>"+
+  "<span class='k' style='color:#5b7a95'>●</span> a carrier, sized by its number of open conversations. Carriers with none sit on the outer ring<br>"+
+  "<span class='k' style='color:#82afd7'>—</span> a conversation. Bright lines are carrier-to-carrier interline. Faint lines lead to a GDS<br>"+
+  "<span class='k'>·</span> moving dots: sampled messages on their edges: <i style='color:#5fd38d'>green</i> reservations · <i style='color:#e0b93c'>amber</i> movements · <i style='color:#5f96be'>blue</i> availability · <i style='color:#e05a5a'>red</i> schedule<br>"+
   "<b>drag</b> to pan · <b>scroll</b> to zoom · <b>click</b> a node for its console";
 function showLegend(){
   document.getElementById("legend").innerHTML = mode==="net"?LEGEND_NET:LEGEND_SKY;

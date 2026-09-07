@@ -40,11 +40,11 @@ type Department struct {
 
 // Departments a seat can take off autopilot.
 var Departments = []Department{
-	{"ops", "Operations control", "delays and time changes announced to distribution, cancellations, aircraft substitutions"},
-	{"crew", "Crew control", "what happens when a crew times out: reserves, or the cancellation"},
-	{"slots", "Flow management", "the Network Manager's slots: take them, or ask for an improvement"},
-	{"pricing", "Pricing and revenue management", "the fare multiplier over the filing and the booking classes open on each flight"},
-	{"ground", "Ground and baggage", "short-shipped bags: rush them on the next flight, or hold them for tomorrow"},
+	{"ops", "Operations control", "delay announcements to distribution, cancellations and aircraft substitutions"},
+	{"crew", "Crew control", "the response to a crew that times out: reserves or cancellation"},
+	{"slots", "Flow management", "the Network Manager's slots: accept them or request an improvement"},
+	{"pricing", "Pricing and revenue management", "the fare multiplier and the booking classes open on each flight"},
+	{"ground", "Ground and baggage", "bags left behind: rush them on the next flight or hold them for tomorrow"},
 }
 
 func departmentKnown(key string) bool {
