@@ -70,7 +70,7 @@ synthetic tariff, as of its purchase date. Each cabin sells under nested
 authorisations. An expected marginal seat revenue (EMSR-b) controller sets
 the authorisations from a forecaster that reads the booking curve. A
 network linear programme (LP) over each connecting point sets the bid
-prices. At the end of the day a Billing and Settlement Plan (BSP) runs.
+prices. When the sim day ends, a Billing and Settlement Plan (BSP) runs.
 Each carrier gets its HOT file, with refunds, exchanges and agency memos.
 The file is laid out column by column to the International Air Transport
 Association (IATA) public DISH 23 handbook. The plan also writes the

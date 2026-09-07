@@ -21,7 +21,7 @@ Every carrier in the world has the systems of an airline:
 - an operations desk that files flight plans and reads the messages from the
   towers
 - a bag office
-- a settlement position at the end of the day
+- a settlement position when the sim day ends
 
 The autopilot runs those systems. The autopilot is a set of rules in
 `internal/host` and `internal/sim`. At every point where an airline has a
