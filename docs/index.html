@@ -192,7 +192,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
     <a href="jetway.html">jetway</a>
     <a href="production.html">production</a>
     <span class="clock" id="clock">--:--:-- UTC</span>
-    <a class="live" href="https://wholesky-demo.fly.dev/eye"><span class="dot" aria-hidden="true"></span>Live</a>
+    <a class="live" href="replay/day.html"><span class="dot" aria-hidden="true"></span>Watch a run</a>
   </header>
 
   <section class="hero" aria-label="What wholesky is and what is running">
@@ -205,7 +205,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
         <p><a href="jetway.html">jetway</a> is the software every one of those systems runs. It is an open-source airline messaging gateway that is also a reservations system, a seat inventory, a departure-control system, a fare engine, a datalink and AFTN endpoint and a message switch. It speaks Type B/AIRIMP, EDIFACT/PADIS, NDC and MATIP and is built for production use. wholesky runs jetway at the scale of the industry.</p>
       </div>
       <nav class="chips" aria-label="Four ways in">
-        <a class="primary" href="https://wholesky-demo.fly.dev/eye"><span class="k">01</span>Watch the live globe</a>
+        <a class="primary" href="#ways/watch"><span class="k">01</span>Watch a day</a>
         <a href="#ways/take"><span class="k">02</span>Take a carrier</a>
         <a href="#ways/agent"><span class="k">03</span>Point an agent at it</a>
         <a href="#ways/own"><span class="k">04</span>Run your own world</a>
@@ -213,7 +213,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
     </div>
 
     <div class="syscard">
-      <div class="syshead"><span><b>What is running</b> · 522 jetway nodes on six machines</span><span id="sysclock">UTC</span></div>
+      <div class="syshead"><span><b>What runs</b> · 522 jetway nodes on six machines when deployed</span><span id="sysclock">UTC</span></div>
       <svg id="sys" viewBox="0 0 560 330" role="img" aria-label="Diagram of the running system: three distribution systems on the left, the message switch in the centre, 518 carriers and the datalink provider on the right, the eye reading the switch's bus underneath. Messages move along the sockets: a sell from a distribution system to a carrier, its KK confirmation back, a movement message from the datalink to the carrier, an availability broadcast from a carrier to the distribution systems."></svg>
       <div class="legend">
         <span><i></i>a TCP socket · Type B or EDIFACT, nothing else</span>
@@ -224,12 +224,12 @@ td.mono{font-family:var(--mono);font-size:.82rem}
   </section>
 
   <section class="tiles" aria-label="The fixed figures">
-    <div class="tile"><span class="ife">Messages per second</span><b class="live-n">16,000</b><span class="lbl">through the one switch</span><span class="fn">at the departure banks, on one 4-vCPU machine</span></div>
-    <div class="tile"><span class="ife">Aircraft aloft</span><b class="live-n">8,500</b><span class="lbl">in the air at 21:50</span><span class="fn">each one a movement message that crossed the switch</span></div>
+    <div class="tile"><span class="ife">Messages per second</span><b>16,000</b><span class="lbl">through the one switch</span><span class="fn">at the departure banks, on one 4-vCPU machine</span></div>
+    <div class="tile"><span class="ife">Aircraft aloft</span><b>8,500</b><span class="lbl">in the air at 21:50</span><span class="fn">each one a movement message that crossed the switch</span></div>
     <div class="tile"><span class="ife">Flights a day</span><b>103,688</b><span class="lbl">in the synthetic world</span><span class="fn">about the number flown worldwide each day</span></div>
     <div class="tile"><span class="ife">Carriers</span><b>518</b><span class="lbl">airlines, each its own system</span><span class="fn">a reservations system and a departure-control system per carrier</span></div>
     <div class="tile"><span class="ife">Recorded flights</span><b>22,889</b><span class="lbl">US flights on Thanksgiving eve 2025</span><span class="fn">from the BTS record, flown at real time</span></div>
-    <div class="tile"><span class="ife">jetway nodes</span><b>522</b><span class="lbl">on the demo</span><span class="fn">518 carriers, three distribution systems, one switch, across six machines</span></div>
+    <div class="tile"><span class="ife">jetway nodes</span><b>522</b><span class="lbl">on the demo</span><span class="fn">518 carriers, three distribution systems, one switch, across six machines when deployed</span></div>
     <div class="tile"><span class="ife">Pre-sold bookings</span><b>1.4M</b><span class="lbl">before the recorded day starts</span><span class="fn">in Postgres, each with a ticket and a fare</span></div>
     <div class="tile"><span class="ife">Recorded day's sales</span><b>$719M</b><span class="lbl">priced at a synthetic tariff</span><span class="fn">the fares are synthetic and labelled as synthetic</span></div>
   </section>
@@ -238,8 +238,8 @@ td.mono{font-family:var(--mono);font-size:.82rem}
   <section class="row" id="ways" aria-labelledby="ways-h">
     <h2 id="ways-h">Ways in <span>four, one API</span></h2>
     <div class="tabs" role="tablist">
-      <button class="cat" id="watch" aria-expanded="false" aria-controls="p-watch"><span class="n">01 · Watch</span><span class="t">The live globe</span><span class="s">Thousands of aircraft as points, the price bar on top.</span></button>
-      <button class="cat" id="take" aria-expanded="false" aria-controls="p-take"><span class="n">02 · Take a carrier</span><span class="t">In the browser</span><span class="s">The decisions an airline gives to people become yours.</span></button>
+      <button class="cat" id="watch" aria-expanded="false" aria-controls="p-watch"><span class="n">01 · Watch</span><span class="t">A recorded day</span><span class="s">The globe, and an agent's day in a seat, on one clock.</span></button>
+      <button class="cat" id="take" aria-expanded="false" aria-controls="p-take"><span class="n">02 · Take a carrier</span><span class="t">In your own world</span><span class="s">The decisions an airline gives to people become yours.</span></button>
       <button class="cat" id="agent" aria-expanded="false" aria-controls="p-agent"><span class="n">03 · Point an agent at it</span><span class="t">The same API as MCP tools</span><span class="s">Claude Code or Claude Desktop, one config block.</span></button>
       <button class="cat" id="own" aria-expanded="false" aria-controls="p-own"><span class="n">04 · Run your own world</span><span class="t">Three commands</span><span class="s">Clone, compile a world, fly it.</span></button>
     </div>
@@ -248,10 +248,9 @@ td.mono{font-family:var(--mono);font-size:.82rem}
       <div>
         <h3>Watch</h3>
         <p>The globe at night, thousands of aircraft as points, the price bar on top. It shows only what the Type B and EDIFACT messages contain. If a departure is on the globe, an MVT went through the switch. Click any aircraft to see what its carrier holds for that flight, from the schedule to the loadsheet.</p>
-        <p class="small"><a href="https://wholesky-demo.fly.dev/stats">/stats</a> is the instrument panel: time-series charts of the world. <a href="https://wholesky-demo.fly.dev/fleet">/fleet</a> lists every node and opens its console. The recorded Thanksgiving eve runs at <a href="https://wholesky-thanksgiving.fly.dev/eye">wholesky-thanksgiving.fly.dev</a>.</p>
-        <a class="go" href="https://wholesky-demo.fly.dev/eye">Open the live globe</a>
-        <a class="go quiet" href="https://wholesky-demo.fly.dev/stats">/stats</a>
-        <a class="go quiet" href="https://wholesky-demo.fly.dev/fleet">/fleet</a>
+        <p class="small">The public demo is switched off. <a href="replay/day.html">A day in the seat</a> plays a recorded run: Claude's terminal beside Jet2's tape, on one clock. To see the globe itself, <a href="#ways/own">run your own world</a>; it takes three commands and the eye is at <code>/eye</code>, the instrument panel at <code>/stats</code> and every node's console at <code>/fleet</code>.</p>
+        <a class="go" href="replay/day.html">Watch a recorded day</a>
+        <a class="go quiet" href="#ways/own">Run your own world</a>
       </div>
       <figure><img src="the-whole-sky.gif" alt="The globe turning once in the evening of the synthetic day. About 8,500 aircraft are over the Americas, the Atlantic, Europe, Asia and the Pacific. The bar at the top shows the sale value of the aircraft in the air and the bookings made since boot."><figcaption>The globe at 21:50 on the synthetic day, turning once. 8,500 aircraft fly the networks of 518 carriers. Each aircraft marks a movement message that crossed the switch.</figcaption></figure>
     </div>
@@ -261,8 +260,8 @@ td.mono{font-family:var(--mono);font-size:.82rem}
         <h3>Take a carrier in the browser</h3>
         <p>Every carrier runs on autopilot: rules make the decisions that an airline gives to people. Take a seat and those decisions are yours, department by department: operations, crew, slots, pricing and ground. Each decision states the situation, the options, the cost of each, a default and a deadline. Your answer goes out on the wire as messages. Miss the deadline and the simulator applies the default.</p>
         <p class="small">Levers: cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, call reserves. One shared leaderboard: revenue, cost, profit, on-time rate, cancellations, load factor, score. Every run is recorded and replays at <code>/replay/&lt;id&gt;</code>.</p>
-        <p class="small">Type a name, take a carrier, switch departments to manual, answer the decisions.</p>
-        <a class="go" href="https://wholesky-demo.fly.dev/ops/">Open the ops centre</a>
+        <p class="small">Start a world, open <code>/ops/</code>, type a name, take a carrier, switch departments to manual, answer the decisions.</p>
+        <a class="go" href="#ways/own">Run your own world</a>
         <a class="go quiet" href="#run">More on running a carrier</a>
       </div>
       <figure><img src="the-ops-centre.jpg" alt="Lufthansa's operations centre on the demo. It shows the scorecard, every department on manual, and the levers. Two decisions are open."><figcaption>Lufthansa's operations centre: the scorecard, two open decisions, the department switches and the levers.</figcaption></figure>
@@ -276,8 +275,8 @@ td.mono{font-family:var(--mono);font-size:.82rem}
 <pre>{ "mcpServers": { "wholesky": {
     "command": "go",
     "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest",
-             "-world", "https://wholesky-demo.fly.dev"] } } }</pre>
-        <p class="small">Then say: "take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score."</p>
+             "-world", "http://127.0.0.1:8080"] } } }</pre>
+        <p class="small">The world address is your own <code>skyd</code>. Then say: "take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score."</p>
         <a class="go" href="replay/day.html">Watch Claude run Jet2 for a day</a>
         <a class="go quiet" href="https://github.com/adamf/wholesky/tree/main/cmd/skyagent">cmd/skyagent</a>
       </div>
@@ -322,7 +321,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <dl class="kv">
           <dt>modes</dt><dd><b>sky</b> the globe · <b>net</b> a force-directed graph of the nodes that exchange messages</dd>
           <dt>controls</dt><dd>pause the day, run it at 10 hours a minute, close an airport, cut a carrier's circuit</dd>
-          <dt>instruments</dt><dd><a href="https://wholesky-demo.fly.dev/stats">/stats</a> messages, movements, bookings, sold per second · <a href="https://wholesky-demo.fly.dev/fleet">/fleet</a> every node and its console</dd>
+          <dt>instruments</dt><dd><code>/stats</code> messages, movements, bookings, sold per second · <code>/fleet</code> every node and its console</dd>
         </dl>
       </div>
       <figure><img src="the-flight.jpg" alt="The flight panel for one departure, showing the carrier's data from the schedule to the loadsheet"><figcaption>The flight panel for one departure, from the schedule to the loadsheet.</figcaption></figure>
@@ -414,7 +413,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <div>
         <h3>The audit of the running world</h3>
         <p>The invariant suite is the release gate. In process, <code>internal/sim/invariants_test.go</code> checks for no oversell across selling channels, message conservation at the switch, and interline convergence. It also checks that a cancelled flight queues every booking. Live, every shard reports its inventories and the core federates them. <code>skycheck</code> exits non-zero when a cabin holds more passengers than seats, or when a shard did not answer. A machine that is down must not read as a pass.</p>
-<pre><code>$ go run ./cmd/skycheck https://wholesky-demo.fly.dev
+<pre><code>$ go run ./cmd/skycheck http://127.0.0.1:8080
 6 shards, 8074 cabins, 126321 seats sold, 0 oversold</code></pre>
         <p>Its first run against the recorded day found 88 oversold cabins. 83 of them were business cabins on Hawaii legs, holding up to 54 passengers in 32 seats. The filler had drawn booking classes without reading the aircraft type.</p>
       </div>
@@ -442,7 +441,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <p>Every carrier runs on autopilot: rules make the decisions that an airline gives to people. Take a seat and those decisions are yours, department by department. In each department you run, the simulator sends you every decision. Each decision states the situation, the options, the cost of each, a default and a deadline. Your answer goes out on the wire as messages, and the simulator applies the default if you miss the deadline. The scorecard uses the same formula for every carrier.</p>
         <p>The lobby is a leaderboard of revenue, cost, profit, on-time rate, cancellations, load factor, score and seat holder. It has a search box and favourites, answers in under a second, and links each seat's last run. When you take a carrier, you get its inbox and its departments as switches for operations, crew, slots, pricing and ground. You get the levers: cancel, retime, substitute, close a class, move the fares, ask the Network Manager for a better slot, and call reserves. The departures board shows the state of each flight, with the slot and its cause, the crew's legality, the late aircraft and the bags.</p>
         <p class="small">The seat holder can book and board from the carrier's jetway console at <code>/node/XX/</code>. Everyone else can only read it. <a href="https://github.com/adamf/wholesky/blob/main/docs/security.md">docs/security.md</a> states what an anonymous user can and cannot do to a world.</p>
-        <a class="go" href="https://wholesky-demo.fly.dev/ops/">Open the lobby</a>
+        <a class="go" href="#ways/own">Run a world, then open /ops/</a>
         <a class="go quiet" href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>
       </div>
       <div>
@@ -457,7 +456,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <p>Every action on the page is JSON over HTTP. <code>cmd/skyagent</code> serves it as MCP tools over stdio: <code>lobby</code>, <code>take_seat</code>, <code>carrier_state</code>, <code>inbox</code>, <code>set_department</code>, <code>decide</code>, <code>act</code> and <code>weather</code>. Claude Code or Claude Desktop can then run an airline against the world with no code. An agent has no action that a person lacks, and a seat can pass between a person and an agent during the day, because the seat token is the seat.</p>
         <p>A <code>note</code> tool puts the agent's reasoning on the carrier's tape. The core records the run from take to release, and <code>/replay/&lt;id&gt;</code> plays it back against the scorecard, live while the agent holds the seat.</p>
 <pre>{ "mcpServers": { "wholesky": {
-    "command": "go", "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest", "-world", "https://wholesky-demo.fly.dev"] } } }</pre>
+    "command": "go", "args": ["run", "github.com/adamf/wholesky/cmd/skyagent@latest", "-world", "http://127.0.0.1:8080"] } } }</pre>
         <p class="small">Then give the agent this instruction: <em>take the seat for BA, switch ops and crew to manual, and answer the inbox as the day goes; beat the autopilot's score.</em></p>
       </div>
       <figure><img src="the-lobby.jpg" alt="The lobby, a leaderboard of 518 carriers with flights, flown, cancellations, on-time rate, load factor, revenue, profit, score and seat holder"><figcaption>The lobby leaderboard. People and agents share it. Carriers with no seat holder run on autopilot and form the baseline.</figcaption></figure>
@@ -487,10 +486,10 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <div>
         <h3>Bring your own jetway</h3>
         <p>A carrier is a jetway node with the world's schedule and addresses, and the switch accepts that node from any location. Take a seat, then claim the carrier, and the world disconnects its own tenant and sends you the start pack. The pack holds a jetway configuration with the switch address and a link token, and the carrier's schedule as an SSIM file. Run <code>jetwayd</code> with the pack, and your node is the airline on the world's wire. The distribution systems sell into your inventory, and your departure control opens flights from your own name lists. Your desk files the MVTs that the globe draws.</p>
-<pre>curl -s -X POST -H "X-Seat-Token: $TOKEN" https://wholesky-demo.fly.dev/carrier/BA/claim &gt; pack.json
+<pre>curl -s -X POST -H "X-Seat-Token: $TOKEN" http://your-world:8080/carrier/BA/claim &gt; pack.json
 jq -r .config_yaml pack.json &gt; ba.yaml; jq -r .ssim pack.json &gt; ba.ssim
 go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml</pre>
-        <p class="small">Register the URL of your node and the world runs the timed ground events of your flights: the name list 3 hours before departure, and check-in, boarding and the load 45 minutes before. On the demo the switch ports sit behind Fly's shared IPv4 address, which carries HTTP only, so a node that dials <code>wholesky-demo.fly.dev:7000</code> needs IPv6. The design, and the parts still missing, are in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
+        <p class="small">Register the URL of your node and the world runs the timed ground events of your flights: the name list 3 hours before departure, and check-in, boarding and the load 45 minutes before. The design, and the parts still missing, are in <a href="https://github.com/adamf/wholesky/blob/main/docs/run-a-carrier.md">docs/run-a-carrier.md</a>.</p>
       </div>
       <figure><img src="the-tenant-console.jpg" alt="Ryanair's jetway console, one of 522 node consoles"><figcaption>What your node looks like from inside: a jetway console with its own tape, records and queues.</figcaption></figure>
     </div>
@@ -500,7 +499,7 @@ go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml</pre>
   <section class="row" id="play" aria-labelledby="play-h">
     <h2 id="play-h">Multiplayer <span>people, agents, your own nodes and other worlds, on the same three commands and one API</span></h2>
     <div class="tabs n6" role="tablist">
-      <button class="cat" id="mp1" aria-expanded="false" aria-controls="p-mp1"><span class="n">1</span><span class="t">A group on the demo</span><span class="s">No install. One seat per carrier.</span></button>
+      <button class="cat" id="mp1" aria-expanded="false" aria-controls="p-mp1"><span class="n">1</span><span class="t">A group on one world</span><span class="s">One seat per carrier, one shared leaderboard.</span></button>
       <button class="cat" id="mp2" aria-expanded="false" aria-controls="p-mp2"><span class="n">2</span><span class="t">Your own world for a group</span><span class="s">One machine runs the day.</span></button>
       <button class="cat" id="mp3" aria-expanded="false" aria-controls="p-mp3"><span class="n">3</span><span class="t">Agents in the seats</span><span class="s">Same API, one config block.</span></button>
       <button class="cat" id="mp4" aria-expanded="false" aria-controls="p-mp4"><span class="n">4</span><span class="t">Bring your own jetway</span><span class="s">Your node on the world's wire.</span></button>
@@ -510,8 +509,8 @@ go run github.com/adamf/jetway/cmd/jetwayd@latest -config ba.yaml</pre>
 
     <div class="panel one" id="p-mp1" role="region" aria-labelledby="mp1">
       <div>
-        <h3>1 · A group on the demo without an install</h3>
-        <p>Everyone opens <a href="https://wholesky-demo.fly.dev/ops/">wholesky-demo.fly.dev/ops/</a>, types a name and takes a carrier. Each seat holder switches their own departments to manual and answers the decisions the simulator sends. The leaderboard is shared, and the 500 carriers that nobody holds run on autopilot alongside you. Each seat covers one carrier, so 100 people can run 100 airlines on one world at the same time.</p>
+        <h3>1 · A group on one world</h3>
+        <p>Everyone opens the world's <code>/ops/</code> page, types a name and takes a carrier. Each seat holder switches their own departments to manual and answers the decisions the simulator sends. The leaderboard is shared, and the 500 carriers that nobody holds run on autopilot alongside you. Each seat covers one carrier, so 100 people can run 100 airlines on one world at the same time.</p>
       </div>
     </div>
 
@@ -549,7 +548,7 @@ skyd -world europe.json  -world-name europe  -console :8080 -public-url http://a
 <span class="c"># machine B</span>
 skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
      -console :8080 -public-url http://b.example:8080 -link-port 7000 -peer-world http://a.example:8080</pre>
-        <p>Carrier designators, switch codes and distribution-system cities must differ between worlds, because the network uses them as addresses. Joined worlds' carriers appear on each other's leaderboards. <a href="https://wholesky-mirror.fly.dev/ops/">wholesky-mirror.fly.dev</a> is a second world with every carrier renamed, trunked to the demo. Its carriers appear in the demo's lobby under <em>mirror</em>.</p>
+        <p>Carrier designators, switch codes and distribution-system cities must differ between worlds, because the network uses them as addresses. Joined worlds' carriers appear on each other's leaderboards. On the public demo, a second world with every carrier renamed was trunked to the first, and its carriers appeared in the first world's lobby under <em>mirror</em>.</p>
       </div>
     </div>
 
@@ -558,7 +557,7 @@ skyd -world americas.json -world-name americas -world-code 1Z -world-city MIA \
         <h3>Known limits</h3>
         <ul class="muted">
           <li>There are no accounts. A seat is a token, and whoever holds the token holds the seat.</li>
-          <li>On the demo the switch ports sit behind Fly's shared IPv4 address, which carries HTTP only. A node that dials <code>wholesky-demo.fly.dev:7000</code> needs IPv6, and the mirror world's trunk does not stay up there. A dedicated address or the Kubernetes layout removes that limit.</li>
+          <li>The public demo on Fly is switched off. Its outbound bandwidth and machines cost more than the project can carry. The recorded run at <a href="replay/day.html">replay/day.html</a> stays up, and the Kubernetes layout under <a href="#deploy/k8s">deploy</a> is how a world that stays up would be run.</li>
           <li>The scorecard's cost model is a chosen shape. The lobby ranks the score against the world, and the ops centre shows the raw score.</li>
           <li>The simulator sends five kinds of decision.</li>
           <li>The fares are synthetic and labelled as synthetic.</li>
@@ -670,7 +669,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
           <div><b>24 h</b><span>the run, at warp 1</span></div>
         </div>
         <p>The MVTs carry the record's delay codes. Departure control opens each flight 3 hours out and closes it at the door. The manifest, load and loadsheet come from the simulated day. Every flight in the schedule comes from the record. The synthetic parts, the passengers, fares and aircraft types where BTS gives none, are labelled in the manifest. When the sim day ends, the books are purged by daily partition and refilled deterministically from the seed.</p>
-        <a class="go" href="https://wholesky-thanksgiving.fly.dev/eye">Watch the recorded day</a>
+        <p class="small">Pass <code>-bts</code> and <code>-date 2025-11-26</code> to <code>worldc</code> to compile it yourself. The BTS file for the day is in the repository.</p>
       </div>
       <figure><img src="the-recorded-day.jpg" alt="The United States at 17:00Z on Thanksgiving eve 2025, every aircraft on its recorded tail"><figcaption>17:00Z on the recorded day. Every aircraft is on its recorded tail.</figcaption></figure>
     </div>
@@ -748,9 +747,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
     <span>wholesky and jetway are MIT-licensed, by <a href="https://github.com/adamf">Adam Fletcher</a>.</span>
     <a href="https://github.com/adamf/wholesky">wholesky on GitHub</a>
     <a href="https://github.com/adamf/jetway">jetway on GitHub</a>
-    <a href="https://wholesky-demo.fly.dev/eye">live</a>
-    <a href="https://wholesky-thanksgiving.fly.dev/eye">recorded day</a>
-    <a href="https://wholesky-mirror.fly.dev/ops/">mirror world</a>
+    <a href="replay/day.html">a recorded run</a>
     <span class="spacer"></span>
     <span class="fine">Data sources: OpenFlights (ODbL), BTS on-time performance (public domain), Natural Earth coastlines.</span>
   </footer>
