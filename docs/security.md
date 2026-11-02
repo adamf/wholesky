@@ -19,7 +19,8 @@ lists the decisions still open.
 | `POST /federation/world` (another world joining) | anyone | The world vets the hello. It accepts only a public URL and switch address, and applies size caps. It allows 1 attempt per address per 10 s. It limits joins to 16 worlds and 4000 foreign carriers, and refuses address collisions. See the decisions below. |
 | `/federation/register`, `/federation/token`, `/federation/state/{peer}`, `/federation/recording/{id}`, `POST /shard/*` | the machines of this world | `X-Skyd-Secret` = `SKYD_LINK_SECRET`, compared in constant time. Any other request gets 403. |
 | `POST /eye/time`, `POST /fleet/node/XX/link` | the operator | the same secret. The operator enters it once on the page, and the browser keeps it. |
-| `POST /eye/chaos` | anyone | 1 act per address per 30 s. See the decisions below. |
+| `POST /eye/chaos`, `POST /noc/inject` | anyone | 1 act per address per 30 s, shared between the two. The operator, with the secret, has no limit. See the decisions below. |
+| `POST /carrier/XX/noc/project` | anyone | none beyond the work bound: 2 projections run at once per machine, each at most 2,000 plays and 40 events. A projection from real forecasts names at most 20 stations. |
 | `/node/XX/...` (the jetway console of a carrier) | anyone reads. The seat holder books, cancels and boards. | `X-Seat-Token` for every method except GET. The console page reads the token from the browser storage of the operations centre. `/api/admin/` is never reachable. |
 | TCP 7000/7001 (switch links) | anyone | A hello must carry a token that is configured on the switch. The switch refuses a name without a token (jetway `require_token`). |
 | pprof | nobody | bound to loopback only. It refuses any other address. |
@@ -125,6 +126,8 @@ The author must make these decisions. They are not patches.
    should set `http.admin_token`. The start pack could carry one.
 4. **Anonymous weather.** Closing an airport cancels every flight that
    touches it, for every player. The act is rate-limited. It is not removed.
+   Events added at `/noc/inject` are the same kind of act: a sick-out at a
+   carrier that someone else holds is allowed.
 5. **Unsigned Type B origin.** A joined world can send a movement or a
    cancellation for any carrier. Members of the industry Type B network can
    do the same. On a public federation, binding the origin of a message to

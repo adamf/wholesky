@@ -166,6 +166,36 @@ type actArgs struct {
 	Status     string  `json:"status,omitempty" jsonschema:"class: C to close, empty to return it to the ladder"`
 	Multiplier float64 `json:"multiplier,omitempty" jsonschema:"fares: factor over the filing; 0 restores it"`
 	Reason     string  `json:"reason,omitempty"`
+	Count      int     `json:"count,omitempty" jsonschema:"standby: how many crews"`
+	Unit       string  `json:"unit,omitempty" jsonschema:"respond: pilots, flight attendants or ground"`
+	Choice     string  `json:"choice,omitempty" jsonschema:"respond: accept, counter or refuse"`
+	Policy     string  `json:"policy,omitempty" jsonschema:"noc: absorb, thin 15%, thin 30% or standby crews"`
+}
+
+type memberArgs struct {
+	Carrier string `json:"carrier,omitempty"`
+	ID      string `json:"id" jsonschema:"the employee number, e.g. UA-CA-00042"`
+}
+
+type projectArgs struct {
+	Carrier     string           `json:"carrier,omitempty"`
+	Trials      int              `json:"trials,omitempty" jsonschema:"plays of the day per policy; 0 is the world's default"`
+	Method      string           `json:"method,omitempty" jsonschema:"lhs (Latin hypercube, the default) or mc (Monte Carlo)"`
+	Policies    []string         `json:"policies,omitempty" jsonschema:"policies to compare, the first the reference: absorb, thin 15%, thin 30%, standby crews"`
+	Sensitivity bool             `json:"sensitivity,omitempty" jsonschema:"also swing each uncertainty alone and play the stress cases"`
+	TAF         []string         `json:"taf,omitempty" jsonschema:"ICAO codes whose real terminal forecasts make the scenario, e.g. KORD"`
+	Events      []map[string]any `json:"events,omitempty" jsonschema:"events added to the forecast, each {kind: weather|groundstop|closure|sickout|aog, airport, onset, duration, factor or rate as distributions {kind: fixed|uniform|triangular|normal, a, b, c}, probability}"`
+}
+
+type injectArgs struct {
+	Kind     string  `json:"kind" jsonschema:"weather, groundstop, closure, sickout or aog"`
+	Airport  string  `json:"airport,omitempty" jsonschema:"IATA code: weather, groundstop, closure"`
+	Carrier  string  `json:"carrier,omitempty" jsonschema:"sickout: the carrier"`
+	Flight   string  `json:"flight,omitempty" jsonschema:"aog: the flight"`
+	In       int     `json:"in,omitempty" jsonschema:"minutes from now until it starts"`
+	Duration int     `json:"duration,omitempty" jsonschema:"minutes it lasts"`
+	Factor   float64 `json:"factor,omitempty" jsonschema:"weather: the share of the arrival rate kept, e.g. 0.5"`
+	Rate     float64 `json:"rate,omitempty" jsonschema:"sickout: the share of crews calling in sick, e.g. 0.1"`
 }
 
 // newServer builds the MCP server over one world.
@@ -238,7 +268,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "set_department", Description: "Set a department to manual or back to autopilot. A manual department sends its decisions to your inbox: ops (delays, substitutions), crew (timed-out crews), slots (Network Manager slots), pricing, ground (bags left behind)."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "set_department", Description: "Set a department to manual or back to autopilot. A manual department sends its decisions to your inbox: ops (delays, substitutions), crew (crews that cannot fly), slots (Network Manager slots), pricing, ground (bags left behind), noc (forecast weather: absorb, thin or bring in standby crews, each with its projected cost), labour (union proposals)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a deptArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -262,13 +292,14 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board). Each lever sends the corresponding messages."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board), bring in standby crews at a crew base (board, count), act on the operations centre's forecast now (policy), answer a union (unit, choice). Each lever sends the corresponding messages."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a actArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
 				return nil, nil, err
 			}
-			body := map[string]any{"kind": a.Kind, "flight": a.Flight, "board": a.Board, "minutes": a.Minutes, "class": a.Class, "status": a.Status, "multiplier": a.Multiplier, "reason": a.Reason}
+			body := map[string]any{"kind": a.Kind, "flight": a.Flight, "board": a.Board, "minutes": a.Minutes, "class": a.Class, "status": a.Status, "multiplier": a.Multiplier, "reason": a.Reason,
+				"count": a.Count, "unit": a.Unit, "choice": a.Choice, "policy": a.Policy}
 			out, err := s.call(ctx, "POST", "/carrier/"+code+"/act", body)
 			if err != nil {
 				return nil, nil, err
@@ -359,7 +390,107 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "crew", Description: "The carrier's people: crew members by base, fleet and position, who is flying, on reserve, called out or sick, the pilots closest to a cumulative limit (14 CFR 117.23) after today's duty, the labour agreements with their standing and any open union proposal, and what crews have cost so far."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/crew", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "crew_member", Description: "One crew member's record: the last 28 days of duty, and the time left under each cumulative limit."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a memberArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/crew/"+a.ID, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "noc", Description: "The operations centre's picture: weather forecast and in force over your stations with your arrivals in each, the regulations on your flights, the day so far (late, cancelled, reserves), the events added to the day, and the last projection."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/noc", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(compactNOC(out)), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "project", Description: "Project what a disruption will cost: the forecast (or real forecasts, or events you describe) played through the day many times under each policy, with the expected cost, the median, the 95th percentile, and each policy's difference from the first with its 95% interval. With sensitivity, the uncertainties that move the cost most and the expected, bad and severe cases. Takes seconds."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a projectArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			body := map[string]any{"trials": a.Trials, "method": a.Method, "policies": a.Policies, "sensitivity": a.Sensitivity, "taf": a.TAF, "events": a.Events}
+			out, err := s.call(ctx, "POST", "/carrier/"+code+"/noc/project", body)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(compactProjection(out)), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "inject", Description: "Add an event to the world's day: weather at an airport, a ground stop, a closure, a sick-out at a carrier, an aircraft gone technical. Every operations centre it touches sees it."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a injectArgs) (*mcp.CallToolResult, any, error) {
+			out, err := s.call(ctx, "POST", "/noc/inject", a)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
 	return srv
+}
+
+// compactNOC keeps the desk's picture to what a decision needs: the crew
+// overview without the per-base table, the projection without its plays.
+func compactNOC(v map[string]any) map[string]any {
+	if c, ok := v["crew"].(map[string]any); ok {
+		delete(c, "headcount")
+		if w, ok := c["watch"].([]any); ok && len(w) > 5 {
+			c["watch"] = w[:5]
+		}
+	}
+	if p, ok := v["projection"].(map[string]any); ok {
+		v["projection"] = compactProjection(p)
+	}
+	return v
+}
+
+// compactProjection keeps each policy's cost and its key figures.
+func compactProjection(p map[string]any) map[string]any {
+	rs, _ := p["results"].([]any)
+	var out []map[string]any
+	for _, r := range rs {
+		m, _ := r.(map[string]any)
+		if m == nil {
+			continue
+		}
+		row := map[string]any{"policy": m["policy"], "cancels_ahead": m["cancels"], "cost": m["cost"], "delta": m["delta"], "trials": m["trials"]}
+		if met, ok := m["metrics"].(map[string]any); ok {
+			for _, k := range []string{"cancelled", "delay_min", "pax_misconnected", "revenue_lost", "compensation", "crew", "crew_premium"} {
+				if st, ok := met[k].(map[string]any); ok {
+					row[k] = st["mean"]
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	keep := map[string]any{"as_of": p["clock"], "scenario": p["describe"], "best": p["best"], "results": out}
+	for _, k := range []string{"swings", "stress", "note"} {
+		if v, ok := p[k]; ok {
+			keep[k] = v
+		}
+	}
+	return keep
 }
 
 func main() {

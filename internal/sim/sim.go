@@ -57,6 +57,7 @@ import (
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/tariff"
+	"github.com/adamf/wholesky/internal/workforce"
 	"github.com/adamf/wholesky/internal/world"
 	"gopkg.in/yaml.v3"
 )
@@ -270,6 +271,24 @@ type Options struct {
 	// LinkWait bounds how long Boot waits for the fabric.
 	LinkWait time.Duration
 	Log      *slog.Logger
+	// NoCrew flies the day with any crew and reserves at every hub, as
+	// before rosters: no named crews, no agreements, no labour. Rosters
+	// for the whole sky take some hundreds of megabytes.
+	NoCrew bool
+	// NOCAutopilot lets every carrier's operations centre on autopilot
+	// project a forecast disruption and act on the cheapest policy; off,
+	// only seats that run the operations centre by hand are asked.
+	NOCAutopilot bool
+	// NOCTrials is how many plays a live projection takes.
+	NOCTrials int
+	// LiveWeather reads the real terminal forecasts of the world's busiest
+	// airports from aviationweather.gov and adds their weather to the day
+	// as it comes. It means something at warp 1, when the world's clock is
+	// the real one.
+	LiveWeather bool
+	// crewFor says which carriers this machine staffs; nil staffs every
+	// carrier it has.
+	crewFor func(string) bool
 }
 
 // Sim is a running world.
@@ -299,6 +318,11 @@ type Sim struct {
 	// slots, late aircraft, crews -- decided once from the schedule so every
 	// machine agrees; see internal/dayplan.
 	fate *dayplan.Plan
+	// Workforce is the carriers' crews and agreements; nil without rosters.
+	Workforce *workforce.Workforce
+	// noc is the operations centres' state: projections, the decisions
+	// asked, the injected events.
+	noc *nocDesk
 	// Airline is the seats: who runs which carrier, their decisions and
 	// their tape; announced remembers which cancellations went out.
 	Airline     *airline.Registry
@@ -324,8 +348,10 @@ type Sim struct {
 	foreign       map[string]*foreignWorld
 	// onWorldJoined, on a core, relays a joined world to its peers.
 	onWorldJoined func(worldHello)
-	state         *stateKeeper
-	externalMu    sync.RWMutex
+	// onInject, on a core, relays an event added to the day to its peers.
+	onInject   func(nocEvent)
+	state      *stateKeeper
+	externalMu sync.RWMutex
 	// On a machine without switches: where each carrier's switch is, the
 	// core's URL, and the addresses the internet dials, from the welcome.
 	switchOf map[string]string
@@ -526,7 +552,13 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		return 0
 	}
 	s.Eye.WarpNow = s.clock.Warp
-	s.fate = dayplan.Build(m, sellingDate(m), delayFor)
+	var staff dayplan.Staff
+	if !opts.NoCrew {
+		s.Workforce = workforce.New(m, sellingDate(m), opts.crewFor)
+		staff = s.Workforce
+	}
+	s.fate = dayplan.BuildWith(m, sellingDate(m), delayFor, dayplan.Options{Staff: staff})
+	s.noc = newNOCDesk(opts)
 	s.Airline = airline.New(opts.DecisionWindow)
 	s.lobby = &lobbyCache{inner: seatWorld{s}}
 	s.airlineSrv = &airline.Server{Reg: s.Airline, World: s.lobby, Local: s.runsCarrier, Proxy: s.proxyCarrier}
@@ -571,9 +603,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	if s.linkSecret == "" {
 		s.linkSecret = linkSecretOf(opts)
 	}
-	s.Eye.Weather = func() ([]dayplan.Cell, []dayplan.Regulation, dayplan.Summary) {
-		return s.fate.Weather, s.fate.Regulations, s.fate.Summary
-	}
+	s.Eye.Weather = s.fate.Picture
 	s.Eye.SimPos = func() float64 { return s.clock.Pos(time.Now()) }
 	s.Eye.SetWarp = s.SetWarp
 	for _, g := range gdses {
@@ -612,6 +642,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("POST /carrier/{carrier}/node", s.serveNode)
 		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
+		mux.HandleFunc("POST /noc/inject", s.serveInject)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -830,6 +861,9 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 		return out
 	}
 	go s.Stats.Run(ctx.Done())
+	if opts.LiveWeather {
+		go s.liveWeather(ctx)
+	}
 	s.StartSettling(opts.SettleEvery)
 	s.restoreState(ctx)
 	return s, nil
@@ -1474,6 +1508,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			before := s.dayStarted
 			s.dayStarted = time.Now()
 			s.dayMu.Unlock()
+			s.newDay()
 			go func() {
 				s.purgeTenants(ctx, before)
 				s.fillDay(ctx)
@@ -1487,6 +1522,8 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			prev = cur - maxCatchUp
 		}
 		s.weatherIncidents(prev, cur)
+		s.nocTick(ctx, cur)
+		s.labourTick(ctx, prev, cur)
 		// Once an hour of the day, the pricing desks that are run by hand
 		// hear from the competition.
 		if int(prev)/60 != int(cur)/60 {
@@ -1633,8 +1670,7 @@ const slotBefore = 120
 // the record or the model alone.
 func (s *Sim) flightDelays(f world.Flight, day time.Time) (dep, arr int) {
 	if s.fate != nil {
-		if _, ok := s.fate.Flights[dayplan.Key(f)]; ok {
-			pf := s.fate.Of(f)
+		if pf, ok := s.fate.Lookup(f); ok {
 			return pf.DepDelay, pf.ArrDelay
 		}
 	}
@@ -2072,9 +2108,10 @@ func (s *Sim) serveDayPlan(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("{}")) //nolint:errcheck
 		return
 	}
+	cells, regs, sum := s.fate.Picture()
 	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-		"day": s.fate.Day, "replay": s.fate.Replay, "summary": s.fate.Summary,
-		"weather": s.fate.Weather, "regulations": s.fate.Regulations,
+		"day": s.fate.Day, "replay": s.fate.Replay, "summary": sum,
+		"weather": cells, "regulations": regs,
 	})
 }
 

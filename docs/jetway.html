@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.88</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.96</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -318,6 +318,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <div class="card">
         <h3>pkg/crew <span class="tag spec">14 CFR 117 specified</span></h3>
         <p>The package checks flight crew legality against the flight time and flight duty period limits by report time and number of segments. It also holds the 2 hour extension for unforeseen circumstances and the 10 hour rest. The values are transcribed from the public rule and tested value by value. A duty is a report and its legs at their current times. The check returns legal, legal only on the extension, or timed out. It also gives the latest departure time before the crew times out.</p>
+        <p>Since v0.1.96 a duty is also checked against a crew member's history: the cumulative limits of §117.23 (100 hours of flight time in any 672, 1,000 in 365 calendar days, 60 and 190 flight duty period hours in any 168 and 672) and the rest of §117.25. A tracking store implements the <code>History</code> interface, and <code>Record</code> is the exact form. Flight attendant duty and rest follow §121.467(b), and the minimum number §121.391(a). <code>PayRules</code> prices a duty under a labour agreement: the greater of scheduled or flown block, a minimum day, a duty rig and a trip rig, with premiums and per diem. The shape is section 11.D of APFA's public contract guide, and a test uses its numbers.</p>
       </div>
       <div class="card">
         <h3>pkg/bsp <span class="tag spec">DISH 23 specified</span></h3>

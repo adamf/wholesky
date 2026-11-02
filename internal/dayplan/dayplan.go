@@ -103,6 +103,10 @@ type Plan struct {
 	Weather     []Cell
 	Regulations []Regulation
 	Summary     Summary
+	// Staff, when set, is the carriers' crew rosters: who flies each duty
+	// and whether a reserve answers. Unset, any crew flies and reserves
+	// wait at every carrier's hub.
+	Staff Staff
 	// mu guards Flights once the plan is in use: whoever runs a carrier may
 	// change a flight's fate (call reserves, take a slot improvement) while
 	// the simulation reads it.
@@ -141,6 +145,20 @@ func (p *Plan) Of(f world.Flight) Flight {
 	return Flight{}
 }
 
+// Lookup is a flight's fate and whether the plan knows the flight.
+func (p *Plan) Lookup(f world.Flight) (Flight, bool) {
+	if p == nil {
+		return Flight{}, false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	pf, ok := p.Flights[Key(f)]
+	if !ok {
+		return Flight{}, false
+	}
+	return *pf, true
+}
+
 // Own is the flight's own delay model: what the carrier does to itself.
 type Own func(f world.Flight, day time.Time) (dep, arr int)
 
@@ -161,7 +179,13 @@ const (
 
 // Build computes the day.
 func Build(m *world.Manifest, day time.Time, own Own) *Plan {
-	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}}
+	return BuildWith(m, day, own, Options{})
+}
+
+// BuildWith computes the day with a scenario's weather, ground stops and
+// cancellations in place of the drawn ones, and a crew roster.
+func BuildWith(m *world.Manifest, day time.Time, own Own, opts Options) *Plan {
+	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}, Staff: opts.Staff}
 	for _, f := range m.Flights {
 		pf := &Flight{}
 		if f.Actual != nil {
@@ -174,14 +198,24 @@ func Build(m *world.Manifest, day time.Time, own Own) *Plan {
 			pf.Own, pf.ArrDelay = own(f, day)
 			pf.DepDelay = pf.Own
 		}
+		if reason, ok := opts.Cancel[Key(f)]; ok && !pf.Cancelled {
+			pf.Cancelled, pf.Code, pf.Reason = true, "A", reason
+		}
 		p.Flights[Key(f)] = pf
 	}
 	p.Summary.Flights = len(m.Flights)
 	if p.Replay {
 		p.recordedSlots(m)
 	} else {
-		p.weather(m)
-		p.regulate(m)
+		switch {
+		case opts.Weather != nil:
+			p.Weather = placeCells(m, opts.Weather)
+			p.Summary.Cells = len(p.Weather)
+		case !opts.Calm:
+			p.weather(m)
+		}
+		p.regulate(m, p.Weather, -1)
+		p.groundStops(m, opts.GroundStops, -1)
 		p.rotate(m)
 	}
 	p.crews(m)
@@ -271,11 +305,15 @@ func distKM(lat1, lon1, lat2, lon2 float64) float64 {
 	return 2 * r * math.Asin(math.Min(1, math.Sqrt(a)))
 }
 
-// regulate runs the flow management over every airport under weather: its
-// arrivals in the window are held to the reduced rate, first come first
-// served by scheduled arrival, and each one held gets a slot -- a CTOT that
-// is its off-block plus the wait plus the taxi -- with the weather cause.
-func (p *Plan) regulate(m *world.Manifest) {
+// regulate runs the flow management over every airport under the cells:
+// its arrivals in the window are held to the reduced rate, first come
+// first served by scheduled arrival, and each one held gets a slot -- a
+// CTOT that is its off-block plus the wait plus the taxi -- with the
+// weather cause. A cancelled flight takes no slot. A flight that has left
+// by the time `now` (minutes into the day; -1 before the day) keeps its
+// fate and still holds its place in the queue: a cell that develops in
+// the afternoon slots the arrivals still on the ground.
+func (p *Plan) regulate(m *world.Manifest, cells []Cell, now int) {
 	icao := map[string]string{}
 	for _, a := range m.Airports {
 		icao[a.IATA] = a.ICAO
@@ -286,7 +324,7 @@ func (p *Plan) regulate(m *world.Manifest) {
 		byFlight[Key(f)] = f
 		arrivalsAt[f.To] = append(arrivalsAt[f.To], f)
 	}
-	for _, c := range p.Weather {
+	for _, c := range cells {
 		for _, ap := range c.Airports {
 			arr := arrivalsAt[ap]
 			if len(arr) == 0 {
@@ -452,7 +490,10 @@ func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
 			// Back to the leg's own fate: what the carrier, the slot and a
 			// reserve callout did to it, without the chain.
 			base := max(pf.Own, pf.ATFM)
-			if pf.Reserve {
+			if p.Staff != nil {
+				// The roster calls the reserves again as it works the tail.
+				pf.Reserve = false
+			} else if pf.Reserve {
 				base += ReserveCall
 			}
 			pf.LateAircraft = 0
@@ -465,6 +506,9 @@ func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
 		}
 	}
 	sub := &world.Manifest{Carriers: m.Carriers, Flights: legs}
+	if p.Staff != nil {
+		p.Staff.Release(carrier, tail)
+	}
 	p.rotate(sub)
 	p.crews(sub)
 	var changed []world.Flight
@@ -474,7 +518,7 @@ func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
 			continue
 		}
 		b := before[Key(f)]
-		if b.DepDelay != pf.DepDelay || b.Cancelled != pf.Cancelled || b.Reserve != pf.Reserve {
+		if b.DepDelay != pf.DepDelay || b.Cancelled != pf.Cancelled || b.Reserve != pf.Reserve || b.Reason != pf.Reason {
 			changed = append(changed, f)
 		}
 	}
@@ -522,79 +566,174 @@ func (p *Plan) rotate(m *world.Manifest) {
 	}
 }
 
-// crews gives each tail its crews: a duty runs as many legs as Part 117
-// allows as scheduled, then a fresh crew takes the aircraft. With the day's
-// delays each duty is checked again; one that only fits on the two-hour
+// crews gives each tail its crews. The tail's day is cut into duties as
+// scheduled: a duty runs as many legs as Part 117 allows, then a fresh
+// crew takes the aircraft. A long-haul leg is a duty of its own, flown
+// augmented. When the plan has a roster, each duty is staffed by name, and
+// a duty no legal crew can be found for is cancelled for crew. Then each
+// duty is checked again with the day's delays (and, with a roster, against
+// the named crew's own history): one that only fits on the two-hour
 // extension is noted, and one that does not fit at all is either rescued
-// by a reserve crew, when the leg leaves the carrier's base, or cancelled
-// for crew -- a carrier-caused cancellation, code A. On a recorded day the
+// by a reserve crew where one answers -- at the carrier's hub without a
+// roster, at a crew base with reserves left with one -- or cancelled for
+// crew, a carrier-caused cancellation, code A. On a recorded day the
 // duties are reported and nothing is cancelled: the record already says
-// what did not fly.
+// what did not fly. Tails are worked in a fixed order so every machine
+// staffs the same crews.
 func (p *Plan) crews(m *world.Manifest) {
 	hubs := map[string]string{}
 	for _, c := range m.Carriers {
 		hubs[c.Designator] = c.Hub
 	}
-	at := func(min int) time.Time { return p.Day.Add(time.Duration(min) * time.Minute) }
-	for _, legs := range rotations(m) {
-		var duty crew.Duty
-		dutyN := 0
-		planned := 0
-		start := func(f world.Flight) {
-			dutyN++
-			planned = 0
-			duty = crew.Duty{Rules: crew.Part117, Report: at(f.DepMin).Add(-ReportLead), Release: Release}
-			p.Summary.Duties++
+	rot := rotations(m)
+	keys := make([]string, 0, len(rot))
+	for k := range rot {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := rot[keys[i]][0], rot[keys[j]][0]
+		if a.DepMin != b.DepMin {
+			return a.DepMin < b.DepMin
 		}
-		for i, f := range legs {
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		p.crewTail(rot[k], hubs)
+	}
+}
+
+// cutDuty is one duty of a tail's day as scheduled: the legs, by index.
+type cutDuty struct {
+	idx  []int
+	long bool
+}
+
+// cut divides a tail's legs into duties as scheduled.
+func (p *Plan) cut(legs []world.Flight) []cutDuty {
+	var out []cutDuty
+	var cur crew.Duty
+	var idx []int
+	flush := func() {
+		if len(idx) > 0 {
+			out = append(out, cutDuty{idx: idx})
+			idx = nil
+		}
+	}
+	for i, f := range legs {
+		leg := crew.Leg{Flight: f.Carrier + f.Number, Depart: p.at(f.DepMin), Arrive: p.at(f.ArrMin)}
+		// A long-haul leg flies with an augmented crew: relief pilots and
+		// rest on board, its own duty, outside Table B (Part 117 Table C
+		// allows up to seventeen hours with four pilots). The unaugmented
+		// tables would cancel every eleven-hour flight.
+		if f.ArrMin-f.DepMin >= LongHaulMin {
+			flush()
+			out = append(out, cutDuty{idx: []int{i}, long: true})
+			continue
+		}
+		if len(idx) > 0 {
+			trial := cur
+			trial.Legs = append(append([]crew.Leg(nil), cur.Legs...), leg)
+			if v := trial.Check(); !v.Legal || v.Extended {
+				flush()
+			}
+		}
+		if len(idx) == 0 {
+			cur = crew.Duty{Rules: crew.Part117, Report: p.at(f.DepMin).Add(-ReportLead), Release: Release}
+		}
+		cur.Legs = append(cur.Legs, leg)
+		idx = append(idx, i)
+	}
+	flush()
+	return out
+}
+
+func (p *Plan) at(min int) time.Time { return p.Day.Add(time.Duration(min) * time.Minute) }
+
+// ref describes a duty to the roster: the legs given, at scheduled times
+// or as the day has them.
+func (p *Plan) ref(legs []world.Flight, idx []int, n, relief int, long, actual bool, report time.Time) DutyRef {
+	f := legs[idx[0]]
+	r := DutyRef{Carrier: f.Carrier, Tail: f.Tail, N: n, Relief: relief, LongHaul: long, Equipment: f.Equipment, Seats: f.Seats, From: f.From, To: legs[idx[len(idx)-1]].To}
+	r.Duty = crew.Duty{Rules: crew.Part117, Report: report, Release: Release}
+	for _, i := range idx {
+		g := legs[i]
+		pf := p.Flights[Key(g)]
+		r.Keys = append(r.Keys, Key(g))
+		if actual && pf.Cancelled {
+			continue
+		}
+		dep, arr := g.DepMin, g.ArrMin
+		if actual {
+			dep, arr = dep+pf.DepDelay, arr+pf.ArrDelay
+		}
+		r.Duty.Legs = append(r.Duty.Legs, crew.Leg{Flight: g.Carrier + g.Number, Depart: p.at(dep), Arrive: p.at(arr)})
+		r.Seats = max(r.Seats, g.Seats)
+	}
+	return r
+}
+
+func (p *Plan) crewTail(legs []world.Flight, hubs map[string]string) {
+	duties := p.cut(legs)
+	staff := p.Staff
+	// Staffed as scheduled.
+	for n, d := range duties {
+		for _, i := range d.idx {
+			p.Flights[Key(legs[i])].Duty = n + 1
+		}
+		p.Summary.Duties++
+		if staff == nil {
+			continue
+		}
+		ok, reason := staff.Assign(p.ref(legs, d.idx, n+1, 0, d.long, false, p.at(legs[d.idx[0]].DepMin).Add(-ReportLead)))
+		if ok || p.Replay {
+			continue
+		}
+		for _, i := range d.idx {
+			if pf := p.Flights[Key(legs[i])]; !pf.Cancelled {
+				pf.Cancelled, pf.Code, pf.Reason = true, "A", "crew: "+reason
+				p.Summary.TimedOut++
+			}
+		}
+	}
+	// As the day runs.
+	for n, d := range duties {
+		report := p.at(legs[d.idx[0]].DepMin).Add(-ReportLead)
+		start, relief := 0, 0
+		for k, i := range d.idx {
+			f := legs[i]
 			pf := p.Flights[Key(f)]
-			// A long-haul leg flies with an augmented crew: relief pilots
-			// and rest on board, its own duty, outside Table B (Part 117
-			// Table C allows up to seventeen hours with four pilots). The
-			// unaugmented tables would cancel every eleven-hour flight.
-			if f.ArrMin-f.DepMin >= LongHaulMin {
-				start(f)
-				duty.Legs = append(duty.Legs, crew.Leg{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)})
-				pf.Duty = dutyN
-				dutyN++ // the next leg gets a fresh crew after the layover
-				p.Summary.Duties++
-				continue
-			}
-			// As scheduled: does this leg fit the current duty?
-			trial := duty
-			trial.Legs = append(append([]crew.Leg(nil), duty.Legs...), crew.Leg{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)})
-			if i == 0 || dutyN == 0 || !trial.Check().Legal || trial.Check().Extended {
-				start(f)
-			}
-			duty.Legs = append(duty.Legs, crew.Leg{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)})
-			planned++
-			pf.Duty = dutyN
 			if pf.Cancelled {
 				continue
 			}
-			// As the day runs: the duty with every leg at its real times.
-			actual := duty
-			actual.Legs = make([]crew.Leg, len(duty.Legs))
-			for j := range duty.Legs {
-				g := legs[i-len(duty.Legs)+1+j]
-				gf := p.Flights[Key(g)]
-				actual.Legs[j] = crew.Leg{Flight: g.Carrier + g.Number, Depart: at(g.DepMin + gf.DepDelay), Arrive: at(g.ArrMin + gf.ArrDelay)}
+			var v crew.Verdict
+			if staff != nil {
+				v = staff.Check(p.ref(legs, d.idx[start:k+1], n+1, relief, d.long, true, report))
+			} else if !d.long {
+				v = p.ref(legs, d.idx[start:k+1], n+1, relief, false, true, report).Duty.Check()
+			} else {
+				v.Legal = true
 			}
-			v := actual.Check()
 			switch {
 			case v.Legal && v.Extended:
 				pf.Extended = true
 				p.Summary.Extended++
 			case !v.Legal && !p.Replay:
-				if hubs[f.Carrier] == f.From {
-					// A reserve crew reports at the base; the flight waits for them.
+				// A reserve crew reports for the rest of the duty; the
+				// flight waits for them.
+				rreport := p.at(f.DepMin + pf.DepDelay + ReserveCall).Add(-ReportLead)
+				answered := false
+				if staff != nil {
+					answered = staff.Reserve(p.ref(legs, d.idx[k:], n+1, relief+1, d.long, true, rreport), f.From)
+				} else {
+					answered = hubs[f.Carrier] == f.From
+				}
+				if answered {
 					pf.Reserve = true
 					pf.DepDelay += ReserveCall
 					pf.ArrDelay += ReserveCall
 					p.Summary.Reserves++
-					start(f)
-					duty.Legs = []crew.Leg{{Flight: f.Carrier + f.Number, Depart: at(f.DepMin), Arrive: at(f.ArrMin)}}
-					pf.Duty = dutyN
+					p.Summary.Duties++
+					start, relief, report = k, relief+1, rreport
 				} else {
 					pf.Cancelled, pf.Code = true, "A"
 					pf.Reason = "crew duty limit: " + v.Reason

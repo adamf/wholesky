@@ -172,6 +172,8 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 		opts.LinkBind = "::"
 	}
 	opts.NoGDS = true // the distribution systems live on machines of their own
+	// The core runs no carrier and staffs no crew; the regions do.
+	opts.crewFor = func(string) bool { return false }
 	s, err := bootBase(ctx, m, opts, true)
 	if err != nil {
 		return nil, err
@@ -270,6 +272,21 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 				s.log.Warn("peer did not take the joined world", "peer", p.Name, "err", err)
 			}
 		}
+	}
+	// An event added to the day at the core reaches every machine's plan.
+	s.onInject = func(ev nocEvent) {
+		body, _ := json.Marshal(ev)
+		client := &http.Client{Timeout: 20 * time.Second}
+		for _, p := range c.livePeers() {
+			if resp, err := s.fedPost(client, p.URL+"/shard/noc/inject", body); err == nil {
+				resp.Body.Close()
+			} else {
+				s.log.Warn("peer did not take the event", "peer", p.Name, "err", err)
+			}
+		}
+	}
+	if opts.LiveWeather {
+		go s.liveWeather(ctx)
 	}
 	go c.pollSettlement(ctx)
 	s.restoreState(ctx)
@@ -905,6 +922,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 		json.NewEncoder(w).Encode(s.flightDCS(strings.ToUpper(r.PathValue("flight")), strings.ToUpper(r.URL.Query().Get("from")))) //nolint:errcheck
 	})
 	mux.HandleFunc("GET /shard/invariants.json", s.serveInvariants)
+	mux.HandleFunc("POST /shard/noc/inject", s.requireSecret(s.serveShardInject))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok")) //nolint:errcheck
 	})
@@ -958,6 +976,7 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 	coreURL, selfURL, designator string) (*GDSMachine, error) {
 
 	opts.NoGDS = true // bootBase builds none; this machine builds its own one
+	opts.crewFor = func(string) bool { return false }
 	s, err := bootBase(ctx, m, opts, false)
 	if err != nil {
 		return nil, err
@@ -1024,6 +1043,8 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 	coreURL, selfURL string, shard, shards int) (*RegionMachine, error) {
 
 	opts.NoGDS = true
+	// A region staffs the carriers it flies.
+	opts.crewFor = func(code string) bool { return ShardOf(code, shards) == shard }
 	s, err := bootBase(ctx, m, opts, false)
 	if err != nil {
 		return nil, err

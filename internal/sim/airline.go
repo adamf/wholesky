@@ -13,7 +13,10 @@ import (
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/noc"
 	"github.com/adamf/wholesky/internal/revenue"
+	"github.com/adamf/wholesky/internal/rights"
+	"github.com/adamf/wholesky/internal/workforce"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -23,18 +26,26 @@ import (
 // the wire, a fate changed in the plan -- and not a display.
 
 // The cost shape. An airline's cost base per block minute grows with the
-// aircraft; a delay past fifteen minutes costs compensation and crew; a
-// cancellation costs every booked passenger's reprotection; a reserve
-// crew is a callout; a mishandled bag is a claim. These are the world's
-// numbers, labelled as such; the comparison between seats is the point.
+// aircraft: fuel, maintenance, ownership, overheads. Crews are priced by
+// their agreements (internal/workforce) and the ground staff's overtime
+// with them; where the world keeps no rosters, a crew's share of the block
+// minute stands in. A delay past fifteen minutes costs fuel, aircraft
+// time and goodwill; passengers let down are owed what the law covering
+// their flight says (internal/rights), and some take their money back. A
+// mishandled bag is a claim. These are the world's numbers, labelled as
+// such; the comparison between seats is the point.
 const (
-	costPerBlockMinBase  = 2500  // cents per block minute, any aircraft
+	costPerBlockMinBase  = 1000  // cents per block minute, any aircraft
+	costPerBlockMinCrew  = 1500  // cents per block minute, crews, when no roster prices them
 	costPerBlockMinSeat  = 45    // cents per block minute per seat
-	costPerDelayMin      = 7500  // cents per departure minute past fifteen
-	costPerCancelledPax  = 30000 // cents per booked passenger on a cancelled flight
+	costPerDelayMin      = 5000  // cents per departure minute past fifteen
+	costPerCancelledPax  = 30000 // cents per booked passenger, the reprotection estimate a decision quotes
 	costPerReserveCall   = 800000
 	costPerMishandledBag = 15000
 	slotImprovementMin   = 10
+	// refundShare is how many of a cancelled flight's passengers take the
+	// fare back rather than the next flight.
+	refundShare = 0.25
 )
 
 type seatWorld struct{ s *Sim }
@@ -187,6 +198,14 @@ func (w seatWorld) Flights(carrier string) []airline.FlightState {
 			DelayMin: fate.DepDelay, Status: w.flightStatus(f, fate, pos), Tail: f.Tail, Type: f.Equipment, Seats: seats, Booked: booked,
 			Revenue: w.s.legRevenue(f)}
 		st.Delay, st.Crew = fateLines(fate)
+		if w.s.Workforce != nil && fate.Duty > 0 {
+			if names := w.s.Workforce.CrewOf(code, f.Tail, fate.Duty); len(names) > 0 {
+				st.Crew += " · " + strings.Join(names[:min(2, len(names))], ", ")
+				if len(names) > 2 {
+					st.Crew += fmt.Sprintf(" and %d cabin", len(names)-2)
+				}
+			}
+		}
 		if fate.Cancelled {
 			st.Cancelled = fate.Reason
 		}
@@ -210,6 +229,16 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 	pos, _ := w.Clock()
 	sc := airline.Scorecard{Carrier: code, Costs: map[string]int64{}}
 	t := w.s.Tenants[code]
+	var roster bool
+	if w.s.Workforce != nil {
+		if wc, ok := w.s.Workforce.Costs(code, pos); ok {
+			roster = true
+			sc.Costs["crew"] = wc.Pay + wc.PerDiem + wc.Hotels
+			sc.Costs["crew premiums"] = wc.Premium
+			sc.Costs["reserves"] = wc.Reserves
+			sc.Costs["labour"] = wc.Grievances
+		}
+	}
 	for _, f := range w.s.Flights[code] {
 		fate := w.s.fate.Of(f)
 		sc.Flights++
@@ -221,12 +250,21 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		}
 		if fate.Reserve && (status == "departed" || status == "landed") {
 			sc.Reserves++
-			sc.Costs["reserves"] += costPerReserveCall
+			if !roster {
+				sc.Costs["reserves"] += costPerReserveCall
+			}
 		}
 		switch status {
 		case "cancelled":
 			sc.Cancelled++
-			sc.Costs["cancellations"] += int64(booked) * costPerCancelledPax
+			owed := w.s.owed(f, fate, true)
+			sc.Costs["passenger rights"] += int64(booked) * (owed.Compensation + owed.Care)
+			if booked > 0 {
+				sc.Costs["refunds"] += int64(float64(w.s.legRevenue(f)) * refundShare)
+			}
+			if roster {
+				sc.Costs["ground staff"] += w.s.Workforce.GroundCost(code, seats, 0, true, booked)
+			}
 		case "departed", "landed":
 			sc.Flown++
 			sc.Passengers += booked
@@ -235,12 +273,23 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			if block <= 0 {
 				block = f.ArrMin - f.DepMin
 			}
-			sc.Costs["block hours"] += int64(block) * (costPerBlockMinBase + costPerBlockMinSeat*int64(seats))
+			perMin := costPerBlockMinBase + costPerBlockMinSeat*int64(seats)
+			if !roster {
+				perMin += costPerBlockMinCrew
+			}
+			sc.Costs["block hours"] += int64(block) * perMin
 			if fate.DepDelay <= 15 {
 				sc.OnTime++
 			} else {
 				sc.DelayMin += fate.DepDelay
 				sc.Costs["delays"] += int64(fate.DepDelay-15) * costPerDelayMin
+				if roster {
+					sc.Costs["ground staff"] += w.s.Workforce.GroundCost(code, seats, fate.DepDelay, false, booked)
+				}
+				if fate.ArrDelay >= 120 {
+					owed := w.s.owed(f, fate, false)
+					sc.Costs["passenger rights"] += int64(booked) * (owed.Compensation + owed.Care)
+				}
 			}
 		default:
 			sc.Remaining++
@@ -251,7 +300,11 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
 	}
-	for _, v := range sc.Costs {
+	for k, v := range sc.Costs {
+		if v == 0 {
+			delete(sc.Costs, k)
+			continue
+		}
 		sc.Cost += v
 	}
 	if seat, ok := w.s.Airline.Seat(code); ok {
@@ -259,6 +312,43 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 	}
 	sc.Rank()
 	return sc
+}
+
+// owed is what each passenger of a disrupted flight is owed under the
+// law covering it, as the scorecard counts it: a cancelled passenger
+// rebooked onto a later flight the same day, about three hours late.
+func (s *Sim) owed(f world.Flight, fate dayplan.Flight, cancelled bool) rights.Owed {
+	from, to := s.airports[f.From], s.airports[f.To]
+	reg := rights.Of(from.Country, to.Country, s.carriers[f.Carrier].Country)
+	intra := rights.Intra(reg, from.Country, to.Country)
+	d := rights.Disruption{Regime: reg, KM: f.KM, Intra: intra, Domestic: intra, Cause: causeOf(fate), Cancelled: cancelled,
+		ArrDelay: fate.ArrDelay, DepDelay: fate.DepDelay, Overnight: f.DepMin+fate.DepDelay >= 24*60}
+	if cancelled {
+		d.Rerouted, d.ArrDelay, d.DepDelay = true, 180, 180
+	}
+	return rights.For(d)
+}
+
+// causeOf is why a flight was disrupted, as the law weighs it.
+func causeOf(fate dayplan.Flight) rights.Cause {
+	switch {
+	case fate.Cancelled && strings.HasPrefix(fate.Reason, "crew"):
+		return rights.Crew
+	case fate.Cancelled && (fate.Code == "B" || strings.HasPrefix(fate.Reason, "noc")):
+		return rights.Weather
+	case fate.Cancelled && fate.Code == "C":
+		return rights.ATC
+	case fate.Cancelled:
+		return rights.Carrier
+	case fate.ATFM > 0 && fate.ATFM >= fate.Own:
+		if fate.Cause != nil && strings.HasPrefix(fate.Cause.String(), "W") {
+			return rights.Weather
+		}
+		return rights.ATC
+	case fate.Reserve:
+		return rights.Crew
+	}
+	return rights.Carrier
 }
 
 // findFlight is the carrier's departure by number and boarding point.
@@ -289,6 +379,40 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		return "", fmt.Errorf("this machine does not run %s", code)
 	}
 	day := s.BookingDate
+	switch a.Kind {
+	case "standby":
+		if s.Workforce == nil || s.Workforce.Roster(code) == nil {
+			return "", fmt.Errorf("this world keeps no rosters")
+		}
+		n := min(max(a.Count, 1), 10)
+		base := strings.ToUpper(a.Board)
+		if base == "" {
+			base = s.carriers[code].Hub
+		}
+		got := s.Workforce.AddStandby(code, base, n)
+		if got == 0 {
+			return "", fmt.Errorf("%s is not one of %s's crew bases", base, code)
+		}
+		pos, _ := w.Clock()
+		s.restaffPending(code, pos)
+		return fmt.Sprintf("%d standby crews at %s for the rest of the day", got, base), nil
+	case "respond":
+		if s.Workforce == nil {
+			return "", fmt.Errorf("this world keeps no agreements")
+		}
+		return s.Workforce.Respond(code, workforce.Unit(strings.ToLower(a.Unit)), strings.ToLower(a.Choice))
+	case "noc":
+		pol, ok := noc.PolicyByName(strings.ToLower(a.Policy))
+		if !ok {
+			return "", fmt.Errorf("no such policy %q: absorb, thin 15%%, thin 30%%, standby crews", a.Policy)
+		}
+		md, err := s.nocModel(code)
+		if err != nil {
+			return "", err
+		}
+		pos, _ := w.Clock()
+		return s.applyPolicy(ctx, code, md, s.forecast(code, pos, md), pol), nil
+	}
 	if a.Kind == "fares" {
 		if a.From != "" && a.To != "" {
 			s.tariff.SetMarketMultiplier(code, a.From, a.To, a.Multiplier)
@@ -363,6 +487,9 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		if pos >= float64(f.DepMin-cancelledBefore) {
 			return "", fmt.Errorf("too late: the cancellation has been announced")
 		}
+		if s.Workforce != nil && s.Workforce.Roster(code) != nil {
+			return s.callStandbyReserve(f)
+		}
 		s.fate.Update(f, func(pf *dayplan.Flight) {
 			pf.Cancelled, pf.Reason, pf.Code = false, "", ""
 			pf.Reserve = true
@@ -396,6 +523,37 @@ func (s *Sim) replan(f world.Flight) {
 			s.Airline.Emit(g.Carrier, "incident", text, map[string]any{"flight": g.Carrier + g.Number, "board": g.From, "delay": fate.DepDelay, "cancelled": fate.Cancelled})
 		}
 	}
+}
+
+// callStandbyReserve rescues a crew cancellation with the roster: a
+// standby crew comes in at the flight's station, which must be a crew
+// base, and the tail is staffed again; the roster's reserve takes the
+// duty and the flight waits the callout.
+func (s *Sim) callStandbyReserve(f world.Flight) (string, error) {
+	r := s.Workforce.Roster(f.Carrier)
+	if r == nil || !r.IsBase(f.From) {
+		return "", fmt.Errorf("%s is not a crew base: no reserve can reach the aircraft", f.From)
+	}
+	s.Workforce.AddStandby(f.Carrier, f.From, 1)
+	s.fate.Update(f, func(pf *dayplan.Flight) { pf.Cancelled, pf.Reason, pf.Code = false, "", "" })
+	s.replan(f)
+	fate := s.fate.Of(f)
+	if fate.Cancelled {
+		return "", fmt.Errorf("the standby crew cannot fly it either: %s", fate.Reason)
+	}
+	return fmt.Sprintf("standby crew called: %s%s departs %s", f.Carrier, strings.TrimLeft(f.Number, "0"), hhmm(f.DepMin+fate.DepDelay)), nil
+}
+
+// standbyCost is what a standby crew costs the day, for a decision's quote.
+func (s *Sim) standbyCost(f world.Flight) int64 {
+	c, ok := s.Workforce.Contract(f.Carrier, workforce.Pilots)
+	k, ok2 := s.Workforce.Contract(f.Carrier, workforce.FlightAttendants)
+	if !ok || !ok2 {
+		return costPerReserveCall
+	}
+	fl := workforce.FleetOf(f.Seats, false)
+	day := c.Rules(fl, true, 8).ReserveDay() + c.Rules(fl, false, 8).ReserveDay() + 2*k.Rules(fl, false, 8).ReserveDay()
+	return day * 3 / 2
 }
 
 // readyForImprovement is the carrier's REA: the Network Manager improves
@@ -487,6 +645,27 @@ func (s *Sim) askCrew(ctx context.Context, f world.Flight, fate dayplan.Flight) 
 		return
 	}
 	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s: crew timed out (%s)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, fate.Reason), nil)
+	if s.Workforce != nil && s.Workforce.Roster(f.Carrier) != nil {
+		r := s.Workforce.Roster(f.Carrier)
+		opts := []airline.Option{{Key: "cancel", Label: "cancel the flight"}}
+		detail := fate.Reason + ". No reserve on call at " + f.From + " can take the duty."
+		if r.IsBase(f.From) {
+			opts = append(opts, airline.Option{Key: "reserves", Label: "bring in a standby crew (+90 min)", Cost: s.standbyCost(f)})
+			detail += " Bring in a standby crew: volunteers on a day off, paid half again; the flight leaves 90 minutes later."
+		} else {
+			detail += " " + f.From + " is no crew base: nobody can reach the aircraft in time."
+		}
+		choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "crew", Flight: f.Carrier + f.Number, Board: f.From,
+			Title:   fmt.Sprintf("%s%s %s-%s: the crew cannot fly it", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
+			Detail:  detail,
+			Options: opts, Default: "cancel"})
+		if choice == "reserves" {
+			if res, err := s.callStandbyReserve(f); err == nil {
+				s.Airline.Emit(f.Carrier, "action", res, nil)
+			}
+		}
+		return
+	}
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "crew", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s: the crew has timed out", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To),
 		Detail:  fate.Reason + ". Cancel: the default away from the base. Call reserves: the flight leaves 90 minutes later than planned, and the callout is charged to the scorecard.",
@@ -663,7 +842,8 @@ func (s *Sim) weatherIncidents(prev, cur int) {
 	if s.Airline == nil || s.fate == nil {
 		return
 	}
-	for _, c := range s.fate.Weather {
+	cells, _, _ := s.fate.Picture()
+	for _, c := range cells {
 		if !(c.Start > prev && c.Start <= cur) {
 			continue
 		}
@@ -700,6 +880,35 @@ func (c *lobbyCache) Flights(code string) []airline.FlightState { return c.inner
 func (c *lobbyCache) Score(code string) airline.Scorecard       { return c.inner.Score(code) }
 func (c *lobbyCache) Act(ctx context.Context, code string, a airline.Action) (string, error) {
 	return c.inner.Act(ctx, code, a)
+}
+
+// Crew, CrewMember, NOC and Project pass the operations centre through.
+func (c *lobbyCache) Crew(code string) (any, bool) {
+	if o, ok := c.inner.(airline.Operations); ok {
+		return o.Crew(code)
+	}
+	return nil, false
+}
+
+func (c *lobbyCache) CrewMember(code, id string) (any, bool) {
+	if o, ok := c.inner.(airline.Operations); ok {
+		return o.CrewMember(code, id)
+	}
+	return nil, false
+}
+
+func (c *lobbyCache) NOC(code string) (any, bool) {
+	if o, ok := c.inner.(airline.Operations); ok {
+		return o.NOC(code)
+	}
+	return nil, false
+}
+
+func (c *lobbyCache) Project(ctx context.Context, code string, req json.RawMessage) (any, error) {
+	if o, ok := c.inner.(airline.Operations); ok {
+		return o.Project(ctx, code, req)
+	}
+	return nil, fmt.Errorf("this world has no operations centres")
 }
 
 // Has answers cheaply from the inner world.

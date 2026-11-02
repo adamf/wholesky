@@ -49,7 +49,7 @@ func TestRegulationSlotsArrivalsFirstComeFirstServed(t *testing.T) {
 		p.Flights[Key(f)] = &Flight{}
 	}
 	p.Weather = []Cell{{Name: "JFKA", Lat: 40.64, Lon: -73.78, RadiusKM: 100, Start: 14 * 60, End: 18 * 60, Factor: 0.5, Airports: []string{"JFK"}}}
-	p.regulate(m)
+	p.regulate(m, p.Weather, -1)
 	if len(p.Regulations) != 1 {
 		t.Fatalf("regulations %+v", p.Regulations)
 	}

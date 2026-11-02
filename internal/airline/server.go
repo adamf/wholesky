@@ -166,6 +166,13 @@ type Action struct {
 	From   string `json:"from,omitempty"`
 	To     string `json:"to,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Count is how many standby crews; Unit and Choice answer a union
+	// (pilots, flight attendants, ground; accept, counter, refuse); Policy
+	// names the operations centre's plan for the forecast.
+	Count  int    `json:"count,omitempty"`
+	Unit   string `json:"unit,omitempty"`
+	Choice string `json:"choice,omitempty"`
+	Policy string `json:"policy,omitempty"`
 }
 
 // Actions a seat can take, with what each needs.
@@ -178,7 +185,10 @@ var Actions = []struct {
 	{"class", "flight, board, class, status", "close a booking class on the departure (status C) or return it to the ladder (empty status)"},
 	{"fares", "multiplier, optionally from and to", "multiply the carrier's fares, in every market or in the one that from and to name. 0.9 is a sale, 1.2 a premium, 0 restores the filing. Fares above the filing lose price-sensitive passengers"},
 	{"ready", "flight, board", "send REA (ready) to the Network Manager and request a slot improvement"},
-	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling the flight"},
+	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling the flight. The flight must leave a crew base"},
+	{"standby", "board, count", "bring standby crews in at a crew base for the rest of the day: volunteers on a day off, paid half again to sit reserve"},
+	{"noc", "policy", "act on the operations centre's forecast now: absorb, thin 15%, thin 30% or standby crews"},
+	{"respond", "unit, choice", "answer a union's open proposal: accept, counter or refuse"},
 }
 
 // World is what the simulation gives the seats to act on.
@@ -269,6 +279,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /recordings.json", s.recordings)
 	mux.HandleFunc("GET /recording/{id}", s.recording)
 	mux.HandleFunc("GET /replay/{id}", s.replayPage)
+	s.operationsRoutes(mux)
 }
 
 // RecordScores samples every held seat's scorecard into its recording,

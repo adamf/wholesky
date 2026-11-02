@@ -51,10 +51,12 @@ system must handle.
 | Department | Autopilot rule | Decision sent to the seat |
 | --- | --- | --- |
 | **ops** (operations control) | When a flight runs 46 minutes late or more, the autopilot announces the delay 2 hours before departure. The announcement is an ad hoc schedule message (ASM) of type TIM. When an aircraft goes technical after check-in, the autopilot substitutes a smaller type. | *Announce the delay, or hold it.* An announced delay moves the sold segments to TK. With a held delay, the passengers learn of it at the airport. *Substitute a smaller aircraft, or cancel.* |
-| **crew** | Under 14 CFR 117, a crew that has timed out cancels the flight (code A). If the flight leaves the base of the carrier, reserves fly it instead. | *Cancel, or call reserves.* Reserves add 90 minutes and a paid callout. The simulator sends this decision at T-150, before the cancellation would be announced. |
+| **crew** | The roster staffs every duty by name (see [noc.md](noc.md)). A crew that times out under 14 CFR 117, a pilot pushed over a cumulative limit, or a pilot who calls in sick at report needs a reserve on call at a crew base. Without one, the flight is cancelled (code A). | *Cancel, or bring in a standby crew.* A standby crew adds 90 minutes and is paid half again. The simulator sends this decision at T-150, before the cancellation would be announced. Away from a crew base, the only option is to cancel. |
 | **slots** (flow management) | The autopilot accepts the slot allocation message (SAM) from the Network Manager. | *Take the slot, or send a ready message (REA)* to ask for an improvement. The Network Manager answers with a slot revision message (SRM) about half the time. |
 | **pricing** | The autopilot sells the tariff as filed, with EMSR-b ladders and network bid prices. It does not change its fares. | About once an hour of the day: *a rival has cut fares on one of your markets. Match, or hold.* Matching lowers the multiplier of that market. Travellers compare fares. Fares above the filing lose buyers. The elasticity is 1.5, a parameter of the world. Fares below the filing sell every seat that they can. |
 | **ground** (baggage) | The autopilot rushes short-shipped bags on the next flight over the sector. | *Rush the bags, or hold them for tomorrow.* If the bags are held, the carrier pays the claims. |
+| **noc** (network operations centre) | The autopilot flies the schedule into forecast weather. With `skyd -noc-autopilot`, it projects the weather and takes the cheapest policy. | Three hours before a weather system reaches the carrier's stations: *absorb, thin 15%, thin 30%, or bring in standby crews*, each with its projected expected cost and 95th percentile. The default is the cheapest. |
+| **labour** (labour relations) | At 06:00 the autopilot counters a union's open proposal at half the ask. | *Accept, counter or refuse.* Accepting raises the scale. Refusing breaks off the talks, stops day-off assignments and more than doubles sick calls. |
 
 ## Levers
 
@@ -66,7 +68,10 @@ system must handle.
 | `class` closed or reopened on a flight | The carrier overrides the inventory. It sends availability status (AVS) messages as the availability changes. |
 | `fares` multiplier, optionally a market (`from`, `to`) | From now on, the multiplier scales every fare that the carrier files, in the pricing of every distribution system. With a market, it scales only the fares of that market. Above the filing, fewer travellers buy. |
 | `ready` | The carrier sends REA to the Network Manager. When the regulation has room, the Network Manager answers with an SRM that has a better calculated take-off time (CTOT). |
-| `reserves` | If the cancellation has not been announced, a cancellation for a timed-out crew becomes a 90-minute delay with a callout cost. |
+| `reserves` | If the cancellation has not been announced and the flight leaves a crew base, a standby crew comes in. The cancellation for crew becomes a 90-minute delay. |
+| `standby` at a base (`board`, `count`) | Standby crews come in at a crew base for the rest of the day. The roster staffs every pending crew cancellation again. |
+| `noc` (`policy`) | The operations centre acts on its forecast now: thins the schedule ahead of the weather, or brings in standby crews. |
+| `respond` (`unit`, `choice`) | The carrier answers a union's open proposal: accept, counter or refuse. |
 
 ## The scorecard
 
@@ -75,10 +80,13 @@ demand:
 
 - **Revenue**: the sale value of the bookings of the day on the legs of the
   carrier. The source is the revenue ledger, per leg, from the priced records.
-- **Costs**: block hours by aircraft size, delay minutes past 15, cancellations
-  per booked passenger, reserve callouts, and mishandled bags. The cost rates
-  are a cost base chosen for the world, and `internal/sim/airline.go` labels
-  them as such. They are the same for every carrier.
+- **Costs**: block hours by aircraft size, delay minutes past 15, the crews
+  under their agreements (pay, premiums, per diem, hotels, reserves,
+  grievances), ground staff overtime, what passengers are owed under the law
+  that covers their flight, refunds, and mishandled bags. The cost rates are
+  a cost base chosen for the world, and `internal/sim/airline.go` labels them
+  as such. They are the same for every carrier. [noc.md](noc.md) describes
+  the crew and passenger costs.
 - **Punctuality**: departures within 15 minutes (D15) as a fraction of flights
   flown, completion, and delay minutes.
 - **Score** = 100 × margin + 50 × on-time fraction − 2 × cancellations. The
@@ -109,11 +117,17 @@ POST /carrier/{XX}/act                   {"kind", ...}             X-Seat-Token
 GET  /carrier/{XX}/events                server-sent events: decisions, actions, incidents
 GET  /carrier/{XX}/tape                  the recent events
 GET  /dayplan.json                       the weather and the regulations
+GET  /carrier/{XX}/crew                  the roster, the agreements, the pilots nearest a limit
+GET  /carrier/{XX}/crew/{id}             one crew member's record
+GET  /carrier/{XX}/noc                   the operations centre's signals and last projection
+POST /carrier/{XX}/noc/project           {"trials", "method", "policies", "sensitivity", "scenario" | "taf" | "events"}
+POST /noc/inject                         {"kind", "airport", "in", "duration", "factor", "carrier", "rate", "flight"}
 ```
 
 **MCP**: `cmd/skyagent` wraps that API as MCP tools over stdio. The tools are
 `lobby`, `take_seat`, `carrier_state`, `inbox`, `set_department`, `decide`,
-`act`, `tape`, `weather` and `release_seat`. Claude Code or Claude Desktop can
+`act`, `tape`, `weather`, `crew`, `crew_member`, `noc`, `project`, `inject`
+and `release_seat`. Claude Code or Claude Desktop can
 then run a carrier with no code:
 
 ```json

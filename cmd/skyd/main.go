@@ -72,6 +72,10 @@ func run() error {
 		linkPort   = flag.Int("link-port", 0, "port the first switch's subscriber listener binds (the second's is one higher); 0 picks a free port")
 		linkSecret = flag.String("link-secret", os.Getenv("SKYD_LINK_SECRET"), "keys external carriers' link tokens; random per boot when empty")
 		decision   = flag.Duration("decision-window", 0, "how long a seat running a carrier has to answer a decision before the autopilot's default; 0 is 45s")
+		noCrew     = flag.Bool("no-crew", false, "fly with any crew and reserves at every hub: no rosters, agreements or labour (saves memory on the whole sky)")
+		nocAuto    = flag.Bool("noc-autopilot", false, "every carrier's operations centre projects forecast weather and acts on the cheapest policy, not only those run by a seat")
+		nocTrials  = flag.Int("noc-trials", 120, "plays of the day in each live projection")
+		liveWx     = flag.Bool("live-weather", false, "add the real terminal forecasts of the busiest airports (aviationweather.gov) to the day; meaningful at -warp 1")
 		gdsCount   = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
 		statsSnap  = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
 		pprofAddr  = flag.String("pprof", "", "serve net/http/pprof here (e.g. 127.0.0.1:6060); empty disables")
@@ -129,6 +133,13 @@ func run() error {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return fmt.Errorf("manifest %s: %w", *worldPath, err)
 	}
+	if *liveWx {
+		// Live weather asks for stations by ICAO code; a world compiled
+		// before airports carried them gets them from the data.
+		if n, err := world.FillICAO(&m, "data"); err == nil && n > 0 {
+			log.Info("ICAO codes filled from data/airports.dat", "airports", n)
+		}
+	}
 	if *ssimPath != "" {
 		// The schedule as the industry files it, in place of the compiler's:
 		// airports and carriers still come from the manifest, the flights
@@ -158,7 +169,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, NoCrew: *noCrew, NOCAutopilot: *nocAuto, NOCTrials: *nocTrials, LiveWeather: *liveWx, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,

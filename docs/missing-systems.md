@@ -170,20 +170,41 @@ are not done.
 
 ## Operations systems mostly off the wire
 
-**Crew.** Crew is done as far as legality goes (jetway v0.1.85 `pkg/crew`,
-wholesky `internal/dayplan`). 14 CFR Part 117's Tables A and B, the
-2-hour extension and the 10-hour rest are transcribed and tested value by
-value. Every tail's rotation is cut into duties as scheduled. A crew
-flies as many legs as the table allows, then a fresh crew takes the
-aircraft. Each duty is checked again with the day's delays. A duty that
-fits only on the extension is noted on the panel. A duty that does not
-fit is rescued by a reserve crew when the leg leaves the carrier's base,
-with 90 minutes more delay. When the leg does not leave the base, the
-flight is cancelled for crew, code A. On the recorded day the duties are
-reported, and no new flight is cancelled. These parts are not done:
-pairings across days, deadheads, rest at outstations, and cabin crew as
-distinct from flight crew. Any regime other than Part 117 is also not
-done. The rules are a value, and EASA ORO.FTL would be another table.
+**Crew.** Crew is done as far as legality, rosters, pay and labour go
+(jetway v0.1.85 and v0.1.96 `pkg/crew`, wholesky `internal/dayplan` and
+`internal/workforce`). 14 CFR Part 117's Tables A and B, the 2-hour
+extension, the cumulative limits of §117.23 and the rest of §117.25 are
+transcribed and tested value by value. So are the flight attendant rules
+of §121.467 and §121.391. Every tail's rotation is cut into duties as
+scheduled. Every carrier has a roster of named captains, first officers
+and flight attendants by crew base and fleet. The roster staffs each
+duty with members who are legal for it against their own records of the
+last 28 days. Each duty is checked again with the day's delays. A pilot
+who times out, goes over a cumulative limit or calls in sick at report
+is replaced by a reserve on call at a crew base, with 90 minutes more
+delay. Away from a crew base, or with no reserve left, the flight is
+cancelled for crew, code A. Each day's flying goes into the records for
+the next day. Labour agreements price every duty, and their standing
+moves sick calls and grievances. On the recorded day the duties are
+reported, and no new flight is cancelled. [noc.md](noc.md) describes all
+of it. These parts are not done: pairings across days, deadheads,
+monthly guarantees, Part 117's Table C for augmented crews, and any regime
+other than Parts 117 and 121. The rules are a value, and EASA ORO.FTL
+would be another table.
+
+**Network operations.** Done as a desk and a set of tools (wholesky
+`internal/noc`, `cmd/skynoc`). Every carrier's operations centre sees the
+weather forecast over its stations, its regulations, its crews and the
+day so far. Three hours before weather arrives, it projects the cost of
+each recovery policy by Monte Carlo or Latin hypercube sampling, with
+common random numbers between policies, and sends the seat a decision.
+The policies are absorb, thin the schedule ahead of the weather, and bring
+in standby crews. Projections also run a tornado of sensitivities, stress
+cases, and a bootstrap of own delays from a recorded day. A projection can
+read the real terminal forecasts from aviationweather.gov. Anyone can add
+weather, ground stops, closures, sick-outs and aircraft gone technical to
+the running day. The recovery that swaps aircraft between tails is not
+done.
 
 **Maintenance and aircraft rotation.** Tails are rotated through the
 schedule. One flight in 150 goes technical after check-in opens. A smaller
@@ -296,9 +317,11 @@ order they should be done:
 4. **More decisions.** Partly done. The pricing desk now receives the
    competition's fare changes, with a match-or-hold decision and
    travellers who shop. The tape carries weather, slots, crew timeouts and
-   aircraft going technical as incidents. There are still no incidents
-   that escalate or compound, no schedule-planning decisions and no
-   seasons.
+   aircraft going technical as incidents. The operations centre decides
+   how to meet forecast weather, with the projected cost of each choice.
+   Labour relations answer the unions. Events that anyone adds to the day
+   compound with the plan's own. There are still no schedule-planning
+   decisions and no seasons.
 5. **Identity.** Anyone can take any free carrier. The token is the only
    protection. There are no accounts, no history across days and no
    season.
@@ -352,7 +375,8 @@ order, are:
    in February.
 3. Filling a recorded day to its measured passenger load, which needs the
    books on a database (`-tenant-dsn`) and a faster fill.
-4. Crew regimes other than 14 CFR Part 117, starting with EASA ORO.FTL.
+4. Crew regimes other than 14 CFR Parts 117 and 121, starting with EASA
+   ORO.FTL.
 5. Identity for seats: accounts, history across days, a season.
 
 Cargo is a second project with the same shape as the first.

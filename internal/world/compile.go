@@ -313,6 +313,27 @@ func readAirports(path string) (map[string]*Airport, error) {
 	return out, nil
 }
 
+// FillICAO gives every airport of a manifest compiled before airports
+// carried their ICAO location indicators the one the data knows. It
+// returns how many it filled.
+func FillICAO(m *Manifest, dataDir string) (int, error) {
+	known, err := readAirports(filepath.Join(dataDir, "airports.dat"))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range m.Airports {
+		if m.Airports[i].ICAO != "" {
+			continue
+		}
+		if a, ok := known[m.Airports[i].IATA]; ok && a.ICAO != "" {
+			m.Airports[i].ICAO = a.ICAO
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Designators is every carrier designator the data knows, for Mirror.
 func Designators(dataDir string) (map[string]bool, error) {
 	airlines, err := readAirlines(filepath.Join(dataDir, "airlines.dat"))

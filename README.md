@@ -7,7 +7,7 @@ bookings need, crossing TCP sockets.
 
 I built it to find out what breaks when the systems are separate and talk
 only by message. Every time the world got bigger, it found bugs in Jetway.
-Ninety-five Jetway releases came out of that.
+Ninety-six Jetway releases came out of that.
 
 **Live demo:** https://wholesky-demo.fly.dev/eye shows the Eye, the view
 of the whole sky. The demo world has 518 carriers, 2,883 airports and
@@ -447,12 +447,16 @@ sends you a decision for each event. If you do not answer before the
 deadline, the simulator applies the default. Examples of decisions are:
 
 - Announce this delay, or hold it.
-- Cancel this flight whose crew has timed out, or call reserves.
+- Cancel this flight whose crew cannot fly it, or bring in a standby crew.
 - Take this slot, or ask for a better one.
 - Rush these bags, or hold them.
+- Absorb the weather forecast for your hub, thin the schedule ahead of it,
+  or bring in standby crews. Each choice shows its projected cost.
+- Accept the union's proposal, counter it, or refuse it.
 
 The levers are cancel, retime, substitute, close a class, move the fares,
-REA and reserves. Each lever goes out on the wire as the message that the
+REA, reserves, standby crews, the operations centre's policy, and the
+answer to a union. Each lever goes out on the wire as the message that the
 airline industry uses. The scorecard uses the same formula for every
 carrier. It counts revenue, costs on the world's cost structure, on-time
 performance and cancellations. The autopilot's score is therefore the
@@ -464,6 +468,18 @@ the carriers that you star. The seat holder also controls
 its jetway console. `/node/BA/` is read-only for everyone else, and the
 seat holder can book, cancel and board from it. Every run is recorded from
 take to release and plays back at `/replay/<id>`. See below.
+
+Every carrier has a roster of named crew members and the labour
+agreements that they work under. The roster staffs every duty by name
+under 14 CFR 117 and 121.467, including the cumulative limits and the rest
+rules, and tracks each pilot's hours from day to day. Every carrier also
+has a network operations centre at `/noc/<code>`. It projects what forecast
+weather will cost under each recovery policy, by Monte Carlo and Latin
+hypercube sampling, and it can read the real terminal forecasts from
+aviationweather.gov. `cmd/skynoc` runs the same projections offline
+against a compiled world. [docs/noc.md](docs/noc.md) describes both.
+
+![United's operations centre at 10:59 with weather over four of its stations: the regulations on its flights, a projection of 300 plays under four policies with the cost histogram and the uncertainties that move it, and the crews nearest their limits](docs/the-noc.jpg)
 
 Agents have the same controls. The JSON API is under `/carrier/<code>/…`.
 `cmd/skyagent` is an MCP server over stdio, which Claude Code or Claude
@@ -689,9 +705,15 @@ Since then, the following changed:
 - The lobby answers in under 1 second from a cache.
 - The demo's shape runs on Kubernetes with an Envoy edge, for a world that
   stays up.
+- Every carrier has named crews, labour agreements and a network
+  operations centre. The roster staffs each duty under Part 117's
+  cumulative limits (jetway v0.1.96 `pkg/crew`). The scorecard prices
+  crews by their agreements and passengers by the law that covers their
+  flight. The operations centre projects the cost of forecast weather by
+  Monte Carlo. See [docs/noc.md](docs/noc.md).
 
 Each of those came from the world growing and Jetway breaking somewhere
-new. There have been 95 Jetway releases so far, and every fix carries a
+new. There have been 96 Jetway releases so far, and every fix carries a
 regression test that failed before it.
 
 The following are not yet done:
