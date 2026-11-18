@@ -506,7 +506,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <h3>Turnarounds and connections</h3>
         <p>An aircraft that lands at San Francisco and flies on to San Diego stands at the gate for the time of its slowest task. Passengers leave, the cabin is cleaned, and passengers board. Bags come off and go on. Fuel goes in. The task rates come from the terminal servicing charts in the manufacturers' airport planning documents.</p>
         <p>A late inbound aircraft delays the next departure only when the delay is longer than the slack in the turnaround. <code>/carrier/XX/turn</code> shows each task with its start and end.</p>
-        <p>A connection needs the station's minimum connecting time. jetway's <code>pkg/mct</code> reads the industry's 200-byte record format from IATA's public SSIM chapter 8, with the 31-element hierarchy that decides which record applies. A traveller in the simulator is offered only the connections that meet the time.</p>
+        <p>A connection needs the station's minimum connecting time. jetway's <code>pkg/mct</code> reads the industry's 200-byte record format from IATA's public SSIM chapter 8, with the 31-element hierarchy that decides which record applies. A traveller in the simulator is offered only the connections that meet the time. On the day, a late inbound flight uses up the time in hand, and the passenger's chance of a missed connection rises with it. The scorecard counts the passengers who missed.</p>
         <div class="tags"><span class="tag spec">MCT format · SSIM chapter 8</span><span class="tag spec">turnaround charts · Airbus, Boeing, Embraer</span><span class="tag inf">station times · public reproductions</span></div>
       </div>
       <div>
@@ -594,8 +594,9 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <h3>Alliances and codeshares: which carrier gets what</h3>
         <p>Star Alliance, oneworld and SkyTeam are in the world with their joint ventures. When one carrier flies a coupon on another carrier's ticket, the fare engine first divides each through fare between its segments by their miles. The carrier that flew the coupon then bills the ticketing carrier for the coupon's share, less a service charge.</p>
         <p>An example from the tests: United tickets Chicago to Athens on a through fare of $880 and flies 7,000 km of it. Lufthansa flies the other 1,800 km. The fare divides into $700 and $180. Lufthansa is in a joint venture with United and bills $180. A carrier with only an interline agreement bills $163.80.</p>
+        <p>A joint venture also pools what its routes earn. Each party puts the revenue of its flights on the venture's routes into the pool and takes out its share of the seats flown there. In the tests United earns $600,000 between Chicago and Frankfurt with 60% of the seats, and Lufthansa earns $200,000. United's share of the pool is $480,000, and it pays Lufthansa $120,000. The real formulas are not public, and the capacity share is an estimate.</p>
         <p>Partners also file through fares over each other's flights. A cancelled passenger moves first to the carrier's own flights, then to a joint venture partner, a codeshare partner, the alliance, and last to any carrier.</p>
-        <div class="tags"><span class="tag spec">proration · straight rate by mileage</span><span class="tag inf">alliance and codeshare charges · estimates</span></div>
+        <div class="tags"><span class="tag spec">proration · straight rate by mileage</span><span class="tag inf">alliance and codeshare charges · estimates</span><span class="tag inf">pool shares by capacity · estimate</span></div>
       </div>
       <div>
         <div class="table-wrap"><table>

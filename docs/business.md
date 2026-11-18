@@ -88,7 +88,11 @@ for each block hour flown.
 - **Minimum connecting time.** A station takes its published standard
   where the reference table has it. Other stations take a default by
   size. jetway's `pkg/mct` reads the industry's file format when an
-  operator supplies the licensed file.
+  operator supplies the licensed file. A connection is sold only when
+  it meets the time. On the day, a passenger whose inbound flight is
+  late misses the connection with a chance that rises as the delay
+  uses up the time in hand. The curve is an estimate, shaped to the
+  3 connecting passengers in 100 that a 2007 study found.
 
 ### Slots on the day
 
@@ -367,6 +371,33 @@ agreement bills $163.80 for the same coupon.
 `/billing.json` shows each invoice with its tie. The scorecard shows
 what a carrier kept from partners and what it paid them.
 
+A joint venture also pools what its routes earn. The world has 7
+ventures, and each has a scope. For example, United, Air Canada and the
+Lufthansa group cover the flights between North America and Europe.
+
+1. Each party puts the revenue of its own flights on those routes into
+   the pool.
+2. Each party takes out a share of the pool. The share is the party's
+   part of the seat-kilometres that the parties flew on the routes.
+3. A party that earned more than its share pays the difference. A party
+   that earned less receives it.
+
+A party therefore gains nothing when it takes a passenger from a
+partner. This is the purpose of a pool
+([Brueckner and Singer, 2019](research/alliances.md)).
+
+An example from the tests: United and Lufthansa both fly between Chicago
+and Frankfurt with the same aircraft. United earns $600,000 on 3 flights
+and Lufthansa earns $200,000 on 2 flights. United has 60 % of the seats
+and 75 % of the revenue. Its share of the $800,000 pool is $480,000, and
+it pays Lufthansa $120,000.
+
+The scorecard shows the amount as `joint_venture`, and `/ventures.json`
+shows each pool. The real formulas are not public, and the capacity
+share is an estimate. The European Commission describes SkyTeam's
+Atlantic venture as a share of profit. The model shares revenue in all
+7 ventures.
+
 An alliance changes 3 other things. Partners file through fares over
 each other's flights. A traveller values a partner of the traveller's
 own programme. A cancelled passenger moves first to the carrier's own
@@ -456,21 +487,19 @@ machines needs one world file for all of them. Write it with
   carrier.
 - **Premium economy and upgrades.** An aircraft has at most 2 cabins.
   Nobody is upgraded into the front cabin, and its fares are estimates.
-- **Joint venture pooling.** A joint venture has a service charge of
-  0 %. The model does not pool the revenue of the routes.
+- **Joint ventures as one seller.** The parties of a joint venture pool
+  revenue. Their pricing desks still compete with each other, and no
+  venture shares profit.
 - **A rolling calendar.** The world flies one date. A traveller's
   booking date is a property of the traveller, and a return flight is on
   a later date that the world never flies.
-- **Misconnections.** `internal/airport` has a curve for the chance that
-  a passenger misses a connection, by the slack over the minimum
-  connecting time. The day does not use it. A passenger on a late
-  inbound flight keeps the onward seat.
+- **After a missed connection.** A passenger whose inbound flight is
+  late misses the connection by the curve in `internal/airport`, and the
+  scorecard counts them. Nobody rebooks them, and they cost the carrier
+  nothing.
 - **Ancillary revenue.** A ticket has a fare and taxes. Bags, seats and
   other fees are not sold.
 - **Schedule change in a running world.** An order takes effect at a
   start of the world.
 - **Capacity response.** A pricing desk changes fares. It does not add
   or remove flights in response to a competitor.
-- **The ledger after a restart on Postgres.** The ledger rebuilds each
-  leg's total from one query, with taxes included and without carrier
-  accounts. The in-memory store rebuilds from each record.

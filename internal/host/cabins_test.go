@@ -1,7 +1,11 @@
 package host
 
 import (
+	"fmt"
 	"testing"
+	"time"
+
+	"github.com/adamf/jetway/pkg/dcs"
 
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/world"
@@ -57,5 +61,115 @@ func TestCabinsByKindOfCarrier(t *testing.T) {
 	}
 	if c, ok := capacity(network, "5200", "26NOV", "DCA"); !ok || c["C"] != 0 || c["Y"] != 180 {
 		t.Errorf("the leg it markets on a low-cost carrier's A320: %v", c)
+	}
+}
+
+// Who misses a connection. A passenger with an hour in hand over the
+// station's minimum makes it when the inbound is on time. One whose
+// inbound is 90 minutes late with 30 in hand does not. At the point where
+// the delay eats the slack and the ten minutes a passenger really has
+// beyond the minimum, half make it. A departure that is itself late
+// waits for them without meaning to.
+func TestWhoMissesAConnection(t *testing.T) {
+	rate := func(slack, inbound, outbound int) float64 {
+		missed := 0
+		for h := 0; h < 7000; h++ {
+			if missesConnection(h, slack, inbound, outbound) {
+				missed++
+			}
+		}
+		return float64(missed) / 7000
+	}
+	if r := rate(60, 0, 0); r != 0 {
+		t.Errorf("on time with an hour in hand: %.3f miss", r)
+	}
+	if r := rate(30, 90, 0); r < 0.999 {
+		t.Errorf("90 minutes late with 30 in hand: %.3f miss", r)
+	}
+	if r := rate(20, 30, 0); r < 0.47 || r > 0.53 {
+		t.Errorf("the delay equal to the slack and ten minutes: %.3f miss, want half", r)
+	}
+	if late, held := rate(20, 60, 0), rate(20, 60, 40); late < 0.99 || held > 0.2 {
+		t.Errorf("an hour late: %.3f miss; with the departure 40 minutes late too: %.3f", late, held)
+	}
+	// The same passenger gets the same answer every time.
+	if missesConnection(4321, 20, 30, 0) != missesConnection(4321, 20, 30, 0) {
+		t.Error("a passenger both made and missed a connection")
+	}
+	// The station's own time, where the carrier has been told it.
+	tn := &Tenant{connect: func(in, out world.Flight) int {
+		if in.To == "LHR" {
+			return 75
+		}
+		return 0
+	}}
+	if got := tn.connectTime(world.Flight{To: "LHR"}, world.Flight{}); got != 75 {
+		t.Errorf("Heathrow's time: %d", got)
+	}
+	if got := tn.connectTime(world.Flight{To: "XXX"}, world.Flight{}); got != minimumConnection {
+		t.Errorf("a station with no time of its own: %d", got)
+	}
+}
+
+// A late inbound flight on the day. A carrier's departure from Denver has
+// one inbound flight that lands 90 minutes before it, which is 45 minutes
+// more than the station needs. With the inbound on time the connecting
+// parties make the flight. With it 2 hours late they do not, and each is
+// counted once however often the day asks. At a station that needs 100
+// minutes the 90 were never a connection, and nobody is booked across
+// them.
+func TestALateInboundFlightOnTheDay(t *testing.T) {
+	out := world.Flight{Carrier: "ZZ", Number: "0200", From: "DEN", To: "SFO", DepMin: 600, ArrMin: 750}
+	in := world.Flight{Carrier: "ZZ", Number: "0100", From: "ORD", To: "DEN", DepMin: 350, ArrMin: 510}
+	day := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	late := 0
+	tn := &Tenant{flights: []world.Flight{in, out}, missed: map[string]int{},
+		inboundDelay: func(world.Flight, time.Time) int { return late }}
+	parties := make([]party, 2000)
+	for i := range parties {
+		parties[i] = party{key: fmt.Sprintf("P%04d", i), pax: make([]*dcs.Passenger, 1+i%3)}
+	}
+	run := func() (connected, absent int) {
+		for _, pt := range parties {
+			_, conn, ok := tn.arrival(pt, out, day)
+			if conn != nil {
+				connected++
+			}
+			if !ok {
+				absent++
+			}
+		}
+		return
+	}
+	connected, noShows := run()
+	if connected < 200 || connected > 360 {
+		t.Fatalf("%d of 2000 parties connect; about 14 in 100 should", connected)
+	}
+	if tn.Misconnected() != 0 {
+		t.Errorf("the inbound is on time and %d passengers missed", tn.Misconnected())
+	}
+	late = 120
+	after, absent := run()
+	if after != 0 || absent != noShows+connected {
+		t.Errorf("2 hours late with 45 minutes in hand: %d still connect, %d absent, want none and %d", after, absent, noShows+connected)
+	}
+	missed := tn.Misconnected()
+	if missed < connected || missed > 3*connected {
+		t.Errorf("%d parties missed and the count is %d passengers", connected, missed)
+	}
+	run()
+	if tn.Misconnected() != missed {
+		t.Errorf("asked twice, the count went from %d to %d", missed, tn.Misconnected())
+	}
+	// A late departure waits for them without meaning to.
+	tn.departureDelay = func(world.Flight, time.Time) int { return 120 }
+	if held, _ := run(); held != connected {
+		t.Errorf("the departure is as late as the inbound and %d of %d connect", held, connected)
+	}
+	// The station needs 100 minutes: 90 are no connection.
+	tn.departureDelay, late = nil, 0
+	tn.connect = func(in, out world.Flight) int { return 100 }
+	if strict, _ := run(); strict != 0 {
+		t.Errorf("%d parties were booked across 90 minutes at a station that needs 100", strict)
 	}
 }

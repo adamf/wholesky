@@ -47,6 +47,7 @@ type Ledger struct {
 	accounts map[string]*Account
 	agents   map[string]*Agent
 	entries  map[string]*entry // by record locator, for a cancellation
+	epoch    int64             // the times the ledger was emptied
 }
 
 // Agent is one agency's sales: what it sold and what it earned from the
@@ -166,6 +167,7 @@ func (l *Ledger) Reset() {
 	l.mu.Lock()
 	l.legs, l.seats, l.total = map[string]int64{}, map[string]int{}, 0
 	l.accounts, l.entries, l.agents = map[string]*Account{}, map[string]*entry{}, map[string]*Agent{}
+	l.epoch++
 	l.mu.Unlock()
 }
 
@@ -390,6 +392,82 @@ func (l *Ledger) apply(e *entry, sign int64) {
 		}
 		a.add(e.sold, sign)
 	}
+}
+
+// Epoch counts the times the ledger was emptied. A count of the books
+// that began before the last of them is a count of books the ledger no
+// longer speaks for.
+func (l *Ledger) Epoch() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.epoch
+}
+
+// Holds reports whether the ledger holds a record by its locator: a
+// sale recorded as it was made, which can be taken out again.
+func (l *Ledger) Holds(locator string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.entries[locator]
+	return ok
+}
+
+// Replace takes out what a store's aggregate put in and puts in what a
+// record-by-record count of the same books found. The aggregate is one
+// query and is there at once, with the taxes in and no accounts; the
+// count takes as long as the books are large. It does nothing, and says
+// so, if the ledger was emptied after epoch.
+//
+// A sale made while the count ran may be in both: the count read it
+// from the book, and the ledger recorded it as it was made. The count
+// keeps such a record by its locator. One the ledger already holds comes
+// back out of the count. The rest the ledger holds from now on, so that
+// the same sale recorded late is not counted again.
+func (l *Ledger) Replace(coarse []store.LegRevenue, exact *Ledger, epoch int64) bool {
+	exact.mu.Lock()
+	legs, seats, total := exact.legs, exact.seats, exact.total
+	accounts, agents, entries := exact.accounts, exact.agents, exact.entries
+	exact.mu.Unlock()
+	keys := make([]string, len(coarse))
+	for i, r := range coarse {
+		keys[i] = l.key(r.Carrier, r.FlightNum, r.Board)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.epoch != epoch {
+		return false
+	}
+	for i, r := range coarse {
+		l.legs[keys[i]] -= r.Cents
+		l.total -= r.Cents
+		if l.legs[keys[i]] == 0 {
+			delete(l.legs, keys[i])
+		}
+	}
+	for k, v := range legs {
+		l.legs[k] += v
+	}
+	l.total += total
+	for k, n := range seats {
+		l.seats[k] += n
+	}
+	for c, a := range accounts {
+		l.account(c).add(*a, 1)
+	}
+	for code, a := range agents {
+		if l.agents[code] == nil {
+			l.agents[code] = &Agent{}
+		}
+		l.agents[code].add(*a, 1)
+	}
+	for locator, e := range entries {
+		if _, held := l.entries[locator]; held {
+			l.apply(e, -1)
+			continue
+		}
+		l.entries[locator] = e
+	}
+	return true
 }
 
 // Agents is every agency's sales, by its number.

@@ -48,6 +48,13 @@ type commerce struct {
 	openMu   sync.Mutex
 	open     map[string]openClasses
 
+	// pool is what each carrier received from its joint ventures, and
+	// pools each venture's, as last worked out.
+	poolMu sync.Mutex
+	pool   map[string]int64
+	pools  []ventureView
+	poolAt time.Time
+
 	// desk is the carriers' pricing desks, and seats the seats each
 	// carrier flies in each market, by "A/B" with A before B.
 	desk   *pricing.Desk

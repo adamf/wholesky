@@ -31,6 +31,7 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/typeb"
 
+	"github.com/adamf/wholesky/internal/airport"
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -394,22 +395,65 @@ func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut in
 		if !found {
 			break
 		}
-		delay := 0
+		delay, held := 0, 0
 		if t.inboundDelay != nil {
 			delay = t.inboundDelay(inb, day)
 		}
-		arrives := f.DepMin - (inb.ArrMin%1440 + delay) // minutes before departure
-		if arrives < minimumConnection {
-			return 0, nil, false // misconnected: they are not on this flight
+		if t.departureDelay != nil {
+			held = t.departureDelay(f, day)
 		}
+		gap := f.DepMin - inb.ArrMin%1440
+		if missesConnection(h, gap-t.connectTime(inb, f), delay, held) {
+			// Misconnected: they are not on this flight.
+			t.missedMu.Lock()
+			t.missed[pt.key+f.Carrier+f.Number] = len(pt.pax)
+			t.missedMu.Unlock()
+			return 0, nil, false
+		}
+		arrives := gap - delay + held // minutes before the departure leaves
 		conn := &dcs.Connection{Flight: inb.Carrier + inb.Number, Date: strings.ToUpper(day.Format("02Jan")), Station: f.From, Dest: f.To}
-		return min(arrives-10, 170), conn, true
+		return max(min(arrives-10, 170), 0), conn, true
 	}
 	return 46 + (h/100)%125, nil, true // 46..170 minutes before departure
 }
 
-// minimumConnection is the minutes a connection needs at any station here.
+// minimumConnection is the minutes a connection needs at a station whose
+// own time is not known here.
 const minimumConnection = 45
+
+// connectTime is the least time a passenger needs between two flights:
+// the station's minimum connecting time, where the world has told the
+// carrier what it is.
+func (t *Tenant) connectTime(in, out world.Flight) int {
+	if t.connect != nil {
+		if m := t.connect(in, out); m > 0 {
+			return m
+		}
+	}
+	return minimumConnection
+}
+
+// missesConnection says whether a passenger misses a connection that was
+// scheduled with slack minutes over the minimum connecting time, when
+// the inbound flight is late by inbound minutes and the outbound leaves
+// late by outbound. The chance is the curve of internal/airport; the
+// passenger's own number decides which side of it they fall, so the
+// answer is the same every time it is asked.
+func missesConnection(h, slack, inbound, outbound int) bool {
+	return (float64((h/7)%1000)+0.5)/1000 < airport.Misconnect(slack, inbound, outbound)
+}
+
+// Misconnected is the passengers who missed a connection onto one of
+// this carrier's departures today because their inbound flight was late.
+func (t *Tenant) Misconnected() int {
+	t.missedMu.Lock()
+	defer t.missedMu.Unlock()
+	n := 0
+	for _, pax := range t.missed {
+		n += pax
+	}
+	return n
+}
 
 // inboundFor picks one of the carrier's arrivals into f.From that a
 // passenger could plausibly connect from: landing between five hours and
@@ -421,7 +465,7 @@ func (t *Tenant) inboundFor(f world.Flight, h int) (world.Flight, bool) {
 			continue
 		}
 		gap := f.DepMin - g.ArrMin%1440
-		if gap >= minimumConnection && gap <= 300 {
+		if gap >= t.connectTime(g, f) && gap <= 300 {
 			cands = append(cands, g)
 		}
 	}

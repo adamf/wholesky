@@ -9,8 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/pnr"
+	"github.com/adamf/jetway/pkg/store"
+
 	"github.com/adamf/wholesky/internal/distribution"
 	"github.com/adamf/wholesky/internal/market"
+	"github.com/adamf/wholesky/internal/revenue"
 )
 
 // marketSample runs n travellers through the shop without booking them
@@ -228,3 +232,98 @@ func TestScorecardCountsTheSelling(t *testing.T) {
 // morning holds the world's clock at four in the morning: the day's
 // flights are all still to come, whatever hour the test runs at.
 func morning(s *Sim) { s.clock.Sync(time.Now(), 4*60, 0) }
+
+// After a restart on a database the ledger has its accounts back. The
+// aggregate that answers at once has the taxes in and no accounts; the
+// count that follows record by record replaces it. A sale made while the
+// count runs is in the book the count reads and is also recorded as it
+// is made: it is counted once, whichever of the two comes first.
+func TestLedgerIsRecountedFromADatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	s, err := Boot(ctx, smallWorld(t), Options{GDSCount: 1, Fill: 0.8, FillSeed: 3, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	s.fillDay(ctx)
+	// What the books hold, counted record by record from memory.
+	s.rebuildLedger(ctx)
+	s.rebuildLedger(ctx)
+	want := map[string]revenue.Account{}
+	for code := range s.Tenants {
+		want[code] = s.Ledger.AccountOf(code)
+	}
+	total := s.Ledger.Total()
+	if total == 0 {
+		t.Fatal("the fill sold nothing")
+	}
+	var f worldFlight
+	for code := range s.Tenants {
+		if len(s.Flights[code]) > 0 {
+			f = s.Flights[code][0]
+			break
+		}
+	}
+	// Two sales as the world makes them now: in the carrier's book, and
+	// recorded in the ledger when the sale is heard. The first is heard
+	// while the count runs and the second after it is done.
+	sale := func(locator string) *pnr.PNR {
+		return &pnr.PNR{RecordLocator: locator, CreatedAt: time.Now(), Status: pnr.StatusTicketed,
+			Origin:     pnr.Origin{Party: f.Carrier, Channel: "direct"},
+			Passengers: []pnr.Passenger{{Ref: 1, Surname: "LIVE"}},
+			Segments:   []pnr.Segment{{Ref: 1, Type: pnr.SegmentAir, Carrier: f.Carrier, FlightNum: f.Number, Board: f.From, Off: f.To, WireDate: s.Ledger.Wire, Seats: 1}},
+			Pricing:    &pnr.Pricing{Currency: "USD", Base: 12300, Taxes: 2000, Total: 14300, Passengers: []pnr.PassengerPricing{{Ref: 1, Segments: []int64{12300}, Taxes: 2000, Total: 14300}}}}
+	}
+	first, second := sale("LIVE01"), sale("LIVE02")
+	// The same books in the store of a carrier on a database: a split
+	// store, with the records in one store and the messages in another.
+	// The ledger reads it in one aggregate and then record by record.
+	for code, tn := range s.Tenants {
+		mem, ok := tn.Store.(*store.Mem)
+		if !ok {
+			t.Skip("the tenants' books are not in memory")
+		}
+		if code == f.Carrier {
+			if err := mem.LoadPNRs(ctx, []*pnr.PNR{first, second}, "test"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		tn.Store = store.Split{Messages: store.NewMem(), Records: mem}
+	}
+	s.rebuildLedger(ctx)
+	s.Ledger.Record(first)
+	tickets := func() int { return s.Ledger.AccountOf(f.Carrier).Tickets }
+	for deadline := time.Now().Add(60 * time.Second); tickets() < want[f.Carrier].Tickets+2; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the accounts never came back: %+v, want %+v and 2 more tickets", s.Ledger.AccountOf(f.Carrier), want[f.Carrier])
+		}
+	}
+	s.Ledger.Record(second)
+	if got := s.Ledger.Total(); got != total+2*12300 {
+		t.Errorf("after the recount the ledger holds %d, want the fill's %d and 2 sales of 12300", got, total)
+	}
+	for code, w := range want {
+		got := s.Ledger.AccountOf(code)
+		if code == f.Carrier {
+			got.Flown, got.Taxes, got.Tickets, got.Passengers = got.Flown-2*12300, got.Taxes-2*2000, got.Tickets-2, got.Passengers-2
+			got.Channels["direct"] -= 2
+		}
+		if got.Flown != w.Flown || got.Taxes != w.Taxes || got.Tickets != w.Tickets || got.Passengers != w.Passengers || got.Kept != w.Kept || got.Paid != w.Paid ||
+			got.Channels["direct"] != w.Channels["direct"] || got.Channels["ota"] != w.Channels["ota"] {
+			t.Errorf("%s after the recount: %+v, want %+v", code, got, w)
+		}
+		// What the sales cost, for a carrier the two live sales are not
+		// in.
+		if code != f.Carrier && (got.System != w.System || got.Commission != w.Commission || got.Payment != w.Payment || got.Own != w.Own) {
+			t.Errorf("%s after the recount, the cost of its sales: %+v, want %+v", code, got, w)
+		}
+	}
+	// A count of books that have been counted again since is dropped.
+	stale := revenue.New()
+	stale.Wire = s.Ledger.Wire
+	stale.Load(sale("STALE1"))
+	if s.Ledger.Replace(nil, stale, s.Ledger.Epoch()-1) || s.Ledger.Total() != total+2*12300 {
+		t.Errorf("a count from before the last rebuild was taken in: the ledger holds %d", s.Ledger.Total())
+	}
+}

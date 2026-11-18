@@ -351,6 +351,12 @@ Before the first flight, the books hold 1,400,987 records and 3.1 million
 seats, or 3.5 GB in Postgres. The distribution systems' own books are
 beside them.
 
+A world that restarts on filled books keeps them. The ledger first reads
+each leg's revenue from one query, and the scorecards have totals
+immediately. It then counts the records in the background and puts back
+each carrier's account: the fares without the taxes, the channels and
+the cost of the sales.
+
 The filler knows the cabins of each aircraft, from the same computation
 that the inventory uses. It puts a party in a cabin that has room for it
 on every leg. It does this because 9 per cent of a widebody's seats is not
@@ -432,7 +438,9 @@ it and names the source of each number.
   sold and earned.
 - **Partners.** Star Alliance, oneworld and SkyTeam are in the world
   with their joint ventures. A coupon that a partner flies is billed by
-  its fare component, less a service charge of 0% to 9%.
+  its fare component, less a service charge of 0% to 9%. A joint venture
+  pools the revenue of its routes and shares it by the seats that each
+  party flew. `/ventures.json` shows each pool.
 - **Growth.** Each carrier has a book that keeps its cash across days.
   A carrier can ask what a new service would carry, earn and cost, and
   order it.

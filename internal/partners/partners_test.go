@@ -46,3 +46,49 @@ func TestTiesAndTerms(t *testing.T) {
 		t.Error("rebooking order: own flights, joint venture, codeshare, alliance, anyone")
 	}
 }
+
+// A joint venture pools what its routes earn and shares it by the seats
+// each partner flew. United flies 60 per cent of the seats across the
+// Atlantic and sells 70 per cent of the pool: it pays the difference to
+// Lufthansa, and the two answers add to nothing.
+func TestJointVenturePool(t *testing.T) {
+	got := Pool(map[string]int64{"UA": 700_000_00, "LH": 300_000_00}, map[string]float64{"UA": 6e6, "LH": 4e6})
+	if got["UA"] != -100_000_00 || got["LH"] != 100_000_00 {
+		t.Errorf("60 per cent of the seats and 70 of the sales: %v", got)
+	}
+	// Three partners, with a pool that does not divide: still nothing
+	// left over.
+	three := Pool(map[string]int64{"AA": 1_000_01, "BA": 500_00, "IB": 0}, map[string]float64{"AA": 1, "BA": 1, "IB": 1})
+	if three["AA"]+three["BA"]+three["IB"] != 0 || three["IB"] <= 0 || three["AA"] >= 0 {
+		t.Errorf("three partners: %v", three)
+	}
+	// A party that flew nothing there is not in the pool, and one party
+	// alone has nobody to share with.
+	if alone := Pool(map[string]int64{"UA": 100, "LH": 50}, map[string]float64{"UA": 5, "LH": 0}); len(alone) != 0 {
+		t.Errorf("one party flying: %v", alone)
+	}
+	// Which flights are a venture's.
+	b := New([]string{"UA", "LH", "NH", "AA", "FR"}, nil)
+	vs := b.Ventures()
+	if len(vs) != 2 || vs[0].Name != "Atlantic Plus-Plus" || vs[1].Name != "United and ANA" {
+		t.Fatalf("ventures with two parties here: %+v", vs)
+	}
+	atlantic, japan := vs[0], vs[1]
+	for _, c := range []struct {
+		v                      JointVenture
+		fromR, fromC, toR, toC string
+		want                   bool
+	}{
+		{atlantic, "North America", "United States", "Europe", "Germany", true},
+		{atlantic, "Europe", "Germany", "North America", "Canada", true},
+		{atlantic, "Europe", "Germany", "Europe", "France", false},
+		{atlantic, "North America", "United States", "Asia", "Japan", false},
+		{japan, "North America", "United States", "Asia", "Japan", true},
+		{japan, "Asia", "Japan", "North America", "United States", true},
+		{japan, "North America", "United States", "Asia", "China", false},
+	} {
+		if got := c.v.Covers(c.fromR, c.fromC, c.toR, c.toC); got != c.want {
+			t.Errorf("%s covers %s to %s: %v", c.v.Name, c.fromC, c.toC, got)
+		}
+	}
+}

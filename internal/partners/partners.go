@@ -48,22 +48,85 @@ func (t Tie) String() string {
 	return [...]string{"interline", "alliance", "codeshare", "joint venture"}[t]
 }
 
-// ventures are the immunised joint ventures: the carriers that price and
-// schedule a group of routes together and share its revenue. From the US
-// Department of Transportation's immunity orders and the European
-// Commission's decisions: Star's across the Atlantic (United, Air Canada
-// and the Lufthansa group) and Pacific (United and ANA); SkyTeam's
-// (Delta, Air France, KLM and Virgin Atlantic; Delta and Korean);
-// oneworld's (American, British Airways, Iberia and Finnair; American
-// and Japan Airlines; Qantas and American).
-var ventures = [][]string{
-	{"UA", "AC", "LH", "LX", "OS", "SN"},
-	{"UA", "NH"},
-	{"DL", "AF", "KL", "VS"},
-	{"DL", "KE"},
-	{"AA", "BA", "IB", "AY"},
-	{"AA", "JL"},
-	{"AA", "QF"},
+// JointVenture is an immunised joint venture: carriers that price and
+// schedule a group of routes together and share what the routes earn.
+type JointVenture struct {
+	Name    string   `json:"name"`
+	Parties []string `json:"parties"`
+	// A and B are the two ends of the routes it covers, each a part of
+	// the world or a country: a flight between the two, either way, is in
+	// the venture.
+	A, B string `json:"-"`
+	// Scope says the same in words.
+	Scope string `json:"scope"`
+}
+
+// ventures are the immunised joint ventures, from the US Department of
+// Transportation's immunity orders and the European Commission's
+// decisions: Star's across the Atlantic (United, Air Canada and the
+// Lufthansa group) and to Japan (United and ANA); SkyTeam's (Delta, Air
+// France, KLM and Virgin Atlantic; Delta and Korean); oneworld's
+// (American, British Airways, Iberia and Finnair; American and Japan
+// Airlines; American and Qantas).
+//
+// What the routes earn is pooled and shared, so that a partner does not
+// care which of them carries a passenger (Brueckner and Singer, 2019).
+// The Commission describes Star's and oneworld's Atlantic ventures as
+// sharing revenue and SkyTeam's as sharing profit; all are taken to
+// share revenue here. The formula is not public for any of them. Each
+// partner's share of the pool is taken to be its share of the seats
+// flown a kilometre on the routes, which is an estimate.
+var ventures = []JointVenture{
+	{Name: "Atlantic Plus-Plus", Parties: []string{"UA", "AC", "LH", "LX", "OS", "SN"}, A: refdata.NorthAmerica, B: refdata.Europe, Scope: "North America to Europe"},
+	{Name: "United and ANA", Parties: []string{"UA", "NH"}, A: refdata.NorthAmerica, B: "Japan", Scope: "North America to Japan"},
+	{Name: "SkyTeam transatlantic", Parties: []string{"DL", "AF", "KL", "VS"}, A: refdata.NorthAmerica, B: refdata.Europe, Scope: "North America to Europe"},
+	{Name: "Delta and Korean", Parties: []string{"DL", "KE"}, A: refdata.NorthAmerica, B: refdata.Asia, Scope: "North America to Asia"},
+	{Name: "oneworld transatlantic", Parties: []string{"AA", "BA", "IB", "AY"}, A: refdata.NorthAmerica, B: refdata.Europe, Scope: "North America to Europe"},
+	{Name: "American and Japan Airlines", Parties: []string{"AA", "JL"}, A: refdata.NorthAmerica, B: "Japan", Scope: "North America to Japan"},
+	{Name: "American and Qantas", Parties: []string{"AA", "QF"}, A: refdata.NorthAmerica, B: refdata.Oceania, Scope: "North America to Oceania"},
+}
+
+// Covers reports whether a flight between two airports is one of the
+// venture's routes. Each airport is given by its part of the world and
+// its country.
+func (v JointVenture) Covers(fromRegion, fromCountry, toRegion, toCountry string) bool {
+	at := func(place, region, country string) bool { return place == region || place == country }
+	return (at(v.A, fromRegion, fromCountry) && at(v.B, toRegion, toCountry)) ||
+		(at(v.B, fromRegion, fromCountry) && at(v.A, toRegion, toCountry))
+}
+
+// Pool shares what a venture's routes earned. revenue is what each party
+// earned on them and capacity the seats each flew a kilometre there.
+// Each party's due is its share of the capacity times the whole pool,
+// and what comes back is that less what it earned itself: more than
+// nothing for a party that flew the seats and sold fewer of them, less
+// for one that sold more than its share. The answers add to nothing.
+func Pool(revenue map[string]int64, capacity map[string]float64) map[string]int64 {
+	var pool int64
+	var seats float64
+	parties := make([]string, 0, len(capacity))
+	for c, k := range capacity {
+		if k > 0 {
+			parties = append(parties, c)
+			seats += k
+			pool += revenue[c]
+		}
+	}
+	out := map[string]int64{}
+	if len(parties) < 2 || seats == 0 {
+		return out
+	}
+	sort.Strings(parties)
+	var given int64
+	for i, c := range parties {
+		due := int64(float64(pool) * capacity[c] / seats)
+		if i == len(parties)-1 {
+			due = pool - given // the last takes the rounding
+		}
+		given += due
+		out[c] = due - revenue[c]
+	}
+	return out
 }
 
 // Book is the world's partnerships.
@@ -72,6 +135,7 @@ type Book struct {
 	alliance  map[string]string
 	members   map[string][]string
 	venture   map[string]bool // "a/b", both orders
+	ventures  []JointVenture
 }
 
 // New builds the book for the carriers a world has. codeshares are the
@@ -91,17 +155,31 @@ func New(carriers []string, codeshares [][2]string) *Book {
 	for _, p := range codeshares {
 		b.codeshare[strings.ToUpper(p[0])+"/"+strings.ToUpper(p[1])] = true
 	}
+	in := map[string]bool{}
+	for _, c := range carriers {
+		in[strings.ToUpper(c)] = true
+	}
 	for _, v := range ventures {
-		for _, x := range v {
-			for _, y := range v {
+		here := 0
+		for _, x := range v.Parties {
+			if in[x] {
+				here++
+			}
+			for _, y := range v.Parties {
 				if x != y {
 					b.venture[x+"/"+y] = true
 				}
 			}
 		}
+		if here >= 2 {
+			b.ventures = append(b.ventures, v)
+		}
 	}
 	return b
 }
+
+// Ventures is the joint ventures with two or more parties in this world.
+func (b *Book) Ventures() []JointVenture { return b.ventures }
 
 // Alliance is the alliance a carrier is in, or "".
 func (b *Book) Alliance(carrier string) string { return b.alliance[strings.ToUpper(carrier)] }

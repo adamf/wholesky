@@ -13,6 +13,8 @@ import (
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/partners"
 	"github.com/adamf/wholesky/internal/pricing"
+	"github.com/adamf/wholesky/internal/refdata"
+	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -238,5 +240,43 @@ func TestStrandedPassengersGoToPartnersFirst(t *testing.T) {
 	}
 	if strings.Join(order, " ") != "UA0944 LH0431 TP0220 AA0080" {
 		t.Errorf("rebooking order %v", order)
+	}
+}
+
+// A joint venture's parties share what its routes earn. United and
+// Lufthansa both fly Chicago to Frankfurt. United earns 600,000 dollars
+// there on 3 flights and Lufthansa 200,000 on 2 of the same aircraft:
+// United has three fifths of the seats and three quarters of the money,
+// and pays Lufthansa the difference. A flight inside one continent is
+// not the venture's, and a carrier in no venture gets nothing.
+func TestJointVenturePoolsItsRoutes(t *testing.T) {
+	fl := func(c, n, from, to string) world.Flight {
+		return world.Flight{Carrier: c, Number: n, From: from, To: to, Seats: 300, KM: 6970}
+	}
+	s := &Sim{Flights: map[string][]world.Flight{
+		"UA": {fl("UA", "0906", "ORD", "FRA"), fl("UA", "0907", "FRA", "ORD"), fl("UA", "0944", "ORD", "FRA"), fl("UA", "0100", "ORD", "DEN")},
+		"LH": {fl("LH", "0431", "ORD", "FRA"), fl("LH", "0430", "FRA", "ORD"), fl("LH", "0100", "FRA", "MUC")},
+		"AA": {fl("AA", "0080", "ORD", "FRA")},
+	}, Ledger: revenue.New()}
+	s.airports = map[string]world.Airport{"ORD": {Country: "United States"}, "DEN": {Country: "United States"}, "FRA": {Country: "Germany"}, "MUC": {Country: "Germany"}}
+	s.econ = &economy{region: map[string]string{"ORD": refdata.NorthAmerica, "DEN": refdata.NorthAmerica, "FRA": refdata.Europe, "MUC": refdata.Europe}}
+	s.commerce = &commerce{partners: partners.New([]string{"UA", "LH", "AA"}, nil)}
+	for key, cents := range map[string]int64{
+		revenue.Key("UA", "0906", "ORD"): 250_000_00, revenue.Key("UA", "0907", "FRA"): 200_000_00, revenue.Key("UA", "0944", "ORD"): 150_000_00,
+		revenue.Key("UA", "0100", "ORD"): 90_000_00, // Chicago to Denver: not the venture's
+		revenue.Key("LH", "0431", "ORD"): 120_000_00, revenue.Key("LH", "0430", "FRA"): 80_000_00,
+		revenue.Key("LH", "0100", "FRA"): 40_000_00, // Frankfurt to Munich: not the venture's
+		revenue.Key("AA", "0080", "ORD"): 300_000_00,
+	} {
+		s.Ledger.Add(key, cents)
+	}
+	pool, views := s.pooled()
+	// The pool is 800,000 dollars; United's due is three fifths, 480,000,
+	// and it earned 600,000.
+	if pool["UA"] != -120_000_00 || pool["LH"] != 120_000_00 || pool["AA"] != 0 {
+		t.Errorf("what each received: %v", pool)
+	}
+	if len(views) != 1 || views[0].Name != "Atlantic Plus-Plus" || views[0].Pool != 800_000_00 {
+		t.Errorf("the ventures: %+v", views)
 	}
 }

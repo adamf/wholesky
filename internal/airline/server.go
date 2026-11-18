@@ -88,10 +88,13 @@ type Scorecard struct {
 	Bags  struct {
 		Rushed, Mishandled int
 	} `json:"bags"`
-	Slots     int `json:"slots"`
-	Reserves  int `json:"reserves"`
-	Decisions int `json:"decisions"`
-	Defaulted int `json:"defaulted"`
+	Slots    int `json:"slots"`
+	Reserves int `json:"reserves"`
+	// Misconnected is the passengers who missed a connection onto one of
+	// the carrier's departures because their inbound flight was late.
+	Misconnected int `json:"misconnected"`
+	Decisions    int `json:"decisions"`
+	Defaulted    int `json:"defaulted"`
 	// Sales is where the carrier's tickets were sold and what the selling
 	// cost and collected.
 	Sales Sales `json:"sales"`
@@ -106,7 +109,10 @@ type Sales struct {
 	Channels map[string]int `json:"channels,omitempty"`
 	Kept     int64          `json:"kept_from_partners"`
 	Paid     int64          `json:"paid_to_partners"`
-	Taxes    int64          `json:"taxes_collected"`
+	// Pooled is what the carrier received from its joint ventures' pools,
+	// or below nothing what it paid into them.
+	Pooled int64 `json:"joint_venture"`
+	Taxes  int64 `json:"taxes_collected"`
 }
 
 // Rank fills the derived figures. The composite is set by

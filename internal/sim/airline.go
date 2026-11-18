@@ -309,6 +309,7 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		}
 	}
 	if t != nil {
+		sc.Misconnected = t.Misconnected()
 		tr := t.Tracing()
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
@@ -323,6 +324,12 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 	sc.Costs["card fees"] += acct.Payment
 	sc.Revenue += acct.Kept
 	sc.Sales = airline.Sales{Tickets: acct.Tickets, Channels: acct.Channels, Kept: acct.Kept, Paid: acct.Paid, Taxes: acct.Taxes}
+	// A joint venture shares what its routes earn: what the carrier
+	// received from the pool, or paid into it, is revenue too.
+	if pool, _ := w.s.pooled(); pool[code] != 0 {
+		sc.Revenue += pool[code]
+		sc.Sales.Pooled = pool[code]
+	}
 	if e := w.s.econ; e != nil {
 		// The fleet costs what it costs whether it flies or not: the share
 		// of a day's rent and ownership that has passed, and what the fuel
@@ -515,11 +522,19 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		if a.Class == "" {
 			return "", fmt.Errorf("a class action needs a class")
 		}
-		t.Inventory.SetOverride(f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, strings.ToUpper(a.Class), strings.ToUpper(a.Status))
-		if a.Status == "" {
+		// The lever's word for a closed class is C. The inventory's is the
+		// reply a closed class gives, UC: it took a C for a code it did not
+		// know and left the class open.
+		status := strings.ToUpper(a.Status)
+		if status == "C" || status == "CLOSED" {
+			status = "UC"
+		}
+		t.Inventory.SetOverride(f.Carrier, f.Number, strings.ToUpper(day.Format("02Jan")), f.From, strings.ToUpper(a.Class), status)
+		t.Touch(f.Number, f.From)
+		if status == "" {
 			return a.Class + " back on the ladder", nil
 		}
-		return a.Class + " forced " + a.Status + " on " + f.Carrier + f.Number, nil
+		return a.Class + " forced " + status + " on " + f.Carrier + f.Number, nil
 	case "ready":
 		if fate.CTOT <= 0 {
 			return "", fmt.Errorf("%s holds no slot", a.Flight)

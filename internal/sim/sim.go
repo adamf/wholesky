@@ -687,6 +687,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("GET /economy.json", s.serveEconomy)
 		mux.HandleFunc("GET /fares.json", s.serveFares)
 		mux.HandleFunc("GET /agencies.json", s.serveAgencies)
+		mux.HandleFunc("GET /ventures.json", s.serveVentures)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -842,6 +843,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          s.inboundDelay,
+			Connect:               s.connectTime,
+			DepartureDelay:        s.departureDelay,
 			RushDecision:          s.askRush,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
@@ -1122,11 +1125,14 @@ func (s *Sim) rebuildLedger(ctx context.Context) {
 	if !filled {
 		s.Ledger.Reset()
 	}
+	epoch := s.Ledger.Epoch()
 	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
 	books, legs, failed := 0, 0, 0
 	// sold is the channel locators the carriers' books hold priced, so a
 	// sale both the carrier and its distribution system hold counts once.
 	sold := map[string]bool{}
+	var slow []slowBook
+	var coarse []store.LegRevenue
 	count := func(code string, st store.Store, system bool) {
 		books++
 		// A store that can stream its records is counted record by
@@ -1143,6 +1149,12 @@ func (s *Sim) rebuildLedger(ctx context.Context) {
 			}
 			s.Ledger.Fill(rows)
 			legs += len(rows)
+			if ok {
+				// The books are a database's: the aggregate is the answer
+				// for now, and the count record by record follows behind.
+				slow = append(slow, slowBook{code: code, ex: ex, system: system})
+				coarse = append(coarse, rows...)
+			}
 			return
 		}
 		err := ex.ExportPNRs(ctx, func(r *pnr.PNR) error {
@@ -1175,6 +1187,98 @@ func (s *Sim) rebuildLedger(ctx context.Context) {
 		count(g.Designator, g.Store, true)
 	}
 	s.log.Info("ledger rebuilt", "books", books, "legs", legs, "total_cents", s.Ledger.Total(), "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
+	if len(slow) > 0 {
+		go s.recountLedger(ctx, slow, coarse, started, epoch)
+	}
+}
+
+// slowBook is a book kept in a database: read in one aggregate at boot,
+// and counted record by record afterwards.
+type slowBook struct {
+	code   string
+	ex     store.Exporter
+	system bool
+}
+
+// recountLedger counts the database books record by record, as the
+// in-memory books are counted at boot, and puts the result in the place
+// of the aggregates. It gives each carrier its account back after a
+// restart: the fares without the taxes, the channels, what the sales
+// cost.
+//
+// The world sells while the count runs, and the ledger records each of
+// those sales as it is made. The count must not add them again. A record
+// made since a minute before the rebuild began is young: the count keeps
+// it by its locator, and the ledger settles the two when it takes the
+// count in (revenue.Ledger.Replace). A sale a distribution system on
+// this machine made is recorded from that system's copy, so the
+// carrier's young copy of it is left out here.
+func (s *Sim) recountLedger(ctx context.Context, books []slowBook, coarse []store.LegRevenue, began time.Time, epoch int64) {
+	started := time.Now()
+	exact := revenue.New()
+	exact.Resolve, exact.Wire, exact.Charge, exact.Sale = s.Ledger.Resolve, s.Ledger.Wire, s.Ledger.Charge, s.Ledger.Sale
+	young := func(r *pnr.PNR) bool {
+		return r.CreatedAt.After(began.Add(-time.Minute)) && r.CreatedAt.Before(time.Now().Add(time.Minute))
+	}
+	here := map[string]bool{}
+	for _, g := range s.GDSes {
+		here[g.Designator] = true
+	}
+	// The carriers' books first: a sale a carrier holds priced is not
+	// counted again from its distribution system's copy.
+	sort.SliceStable(books, func(i, j int) bool { return !books[i].system && books[j].system })
+	sold := map[string]bool{}
+	records := 0
+	for _, b := range books {
+		err := b.ex.ExportPNRs(ctx, func(r *pnr.PNR) error {
+			if r.Status == pnr.StatusCancelled || r.Pricing == nil || r.Origin.Channel == "codeshare" {
+				return nil
+			}
+			if b.system {
+				if !sold[b.code+"/"+r.RecordLocator] {
+					exact.Record(r)
+					records++
+				}
+				return nil
+			}
+			system := false
+			for _, l := range r.Locators {
+				if here[l.Owner] {
+					system = true
+					if s.Ledger.Holds(l.Value) {
+						return nil // recorded from the system's copy
+					}
+				}
+			}
+			switch {
+			case young(r) && system:
+				return nil // the system's copy is the one that counts
+			case young(r):
+				exact.Record(r)
+			default:
+				exact.Load(r)
+			}
+			for _, l := range r.Locators {
+				sold[l.Owner+"/"+l.Value] = true
+			}
+			records++
+			return nil
+		})
+		if err != nil {
+			// A count that stopped part way would replace a whole answer
+			// with part of one: the aggregates stand.
+			s.log.Warn("ledger recount failed; the aggregates stand", "node", b.code, "err", err)
+			return
+		}
+	}
+	if !s.Ledger.Replace(coarse, exact, epoch) {
+		s.log.Info("ledger recount dropped: the books were counted again while it ran")
+		return
+	}
+	s.scoreMu.Lock()
+	s.scoreAt = time.Time{}
+	s.scoreMu.Unlock()
+	s.log.Info("ledger recounted record by record", "books", len(books), "records", records, "total_cents", s.Ledger.Total(), "took", time.Since(started).Round(time.Millisecond).String())
 }
 
 // rebuildInventories counts every tenant's book of record into its seat
@@ -3238,6 +3342,12 @@ func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Serv
 		Gateway: t.Gateway, Store: t.Store, Bus: bus, Log: log, Console: true,
 		Ground: t.DCS, OnAccept: t.OnAccept, OnOffload: t.OnOffload, OnClose: t.SendClosure,
 	}
+}
+
+// departureDelay is how late the flight day will send a flight off.
+func (s *Sim) departureDelay(f world.Flight, day time.Time) int {
+	dep, _ := s.flightDelays(f, day)
+	return dep
 }
 
 // inboundDelay is the arrival delay the flight day will give a flight, for

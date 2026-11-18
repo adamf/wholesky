@@ -94,10 +94,16 @@ type Tenant struct {
 	// flights beyond the four every broadcast carries.
 	channelCost func(carrier string) (int64, bool)
 	avsSent     map[avail.Key]avail.Status
-	Carrier     world.Carrier
-	Gateway     *gateway.Gateway
-	Store       store.Store
-	Inventory   *inventory.Inventory
+	// touched is the flights whose seats or classes have changed since
+	// the last broadcast looked at them, by number and boarding point;
+	// avsTurn counts the broadcasts.
+	touchedMu sync.Mutex
+	touched   map[string]bool
+	avsTurn   int
+	Carrier   world.Carrier
+	Gateway   *gateway.Gateway
+	Store     store.Store
+	Inventory *inventory.Inventory
 
 	flights      []world.Flight
 	client       link
@@ -126,6 +132,13 @@ type Tenant struct {
 	marketed     map[string]world.Flight
 	codeshares   atomic.Int64
 	inboundDelay func(world.Flight, time.Time) int
+	// connect and departureDelay are Options.Connect and
+	// Options.DepartureDelay; missed is the parties that missed a
+	// connection today, each counted once.
+	connect        func(in, out world.Flight) int
+	departureDelay func(world.Flight, time.Time) int
+	missedMu       sync.Mutex
+	missed         map[string]int
 	// The operations desk: which day is being flown, the ICAO indicators
 	// of the airports, and the air traffic services messages received.
 	day     time.Time
@@ -219,6 +232,14 @@ type Options struct {
 	// AVSInterval is how often availability is rebroadcast. Zero uses the
 	// default; a planet-sized deployment breathes slower than a demo.
 	AVSInterval time.Duration
+	// Connect is the least time a passenger needs between two flights at
+	// the station where the first lands, in minutes: the station's
+	// minimum connecting time. Nil is 45 minutes everywhere.
+	Connect func(in, out world.Flight) int
+	// DepartureDelay reports how late one of this carrier's departures
+	// leaves on a day, in minutes: a late departure waits for a late
+	// connection without meaning to.
+	DepartureDelay func(f world.Flight, day time.Time) int
 	// InboundDelay reports how late one of this carrier's arrivals runs on
 	// a day, so a connecting passenger can miss their onward flight for the
 	// reason people really do. Nil means every inbound is on time.
@@ -400,15 +421,18 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		flights: flights, marketed: map[string]world.Flight{}, client: client, watch: opts.WatchAddress,
 		distribution: opts.DistributionAddresses,
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
-		pnlSent:      map[string]map[string]nameItem{},
-		arrivals:     map[dcs.Kind]int{},
-		atsSeen:      map[ats.Type]int{},
-		atfmSeen:     map[atfm.Title]int{},
-		slots:        map[string]string{},
-		atsByFlight:  map[string]map[ats.Type]int{},
-		filed:        map[string]bool{},
-		inboundDelay: opts.InboundDelay,
-		icao:         opts.ICAO,
+		pnlSent:        map[string]map[string]nameItem{},
+		arrivals:       map[dcs.Kind]int{},
+		atsSeen:        map[ats.Type]int{},
+		atfmSeen:       map[atfm.Title]int{},
+		slots:          map[string]string{},
+		atsByFlight:    map[string]map[ats.Type]int{},
+		filed:          map[string]bool{},
+		inboundDelay:   opts.InboundDelay,
+		connect:        opts.Connect,
+		departureDelay: opts.DepartureDelay,
+		missed:         map[string]int{},
+		icao:           opts.ICAO,
 	}
 	for _, f := range opts.Marketed {
 		t.marketed[strings.TrimLeft(f.MarketingNumber, "0")+"/"+f.From] = f
@@ -440,7 +464,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.openAHL = map[string]*baggage.TracingFile{}
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
-	t.channelCost, t.avsSent = opts.ChannelCost, map[avail.Key]avail.Status{}
+	t.channelCost, t.avsSent, t.touched = opts.ChannelCost, map[avail.Key]avail.Status{}, map[string]bool{}
 	t.rushDecision = opts.RushDecision
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
@@ -646,17 +670,33 @@ var broadcastClasses = map[string]bool{"F": true, "J": true, "Y": true, "M": tru
 
 // ladderOfTheDay is the availability of every class the four-class
 // broadcast leaves out, on the day's flights that have not left, as the
-// distribution systems are to see it.
+// distribution systems are to see it. A ladder is revenue management's
+// arithmetic for a cabin, and a carrier has thousands of cabins, so each
+// broadcast looks at the flights something has happened to since the
+// last one and at a twentieth of the rest: a class that closes because a
+// seat sold is told at the next broadcast, and one that moves because
+// the day has moved on is told within twenty.
 func (t *Tenant) ladderOfTheDay(date time.Time) []avail.Entry {
 	pos := -1.0
 	if t.dayPos != nil {
 		pos = t.dayPos()
 	}
+	t.touchedMu.Lock()
+	touched := t.touched
+	t.touched = map[string]bool{}
+	turn := t.avsTurn
+	t.avsTurn++
+	t.touchedMu.Unlock()
 	now := time.Now().UTC()
 	var out []avail.Entry
+	n := 0
 	view := func(carrier, number string, f world.Flight) {
+		n++
 		if pos >= 0 && float64(f.DepMin) < pos {
 			return // gone: nothing left to sell
+		}
+		if !touched[strings.TrimLeft(number, "0")+"/"+f.From] && n%20 != turn%20 {
+			return
 		}
 		var keys []avail.Key
 		for _, cls := range tariff.Ladder() {
@@ -1069,6 +1109,11 @@ func (r *codeshareResponder) Decide(ctx context.Context, p *pnr.PNR, peer *gatew
 		return out, err
 	}
 	for _, s := range p.Segments {
+		if _, decided := out[s.Key()]; decided {
+			r.t.Touch(s.FlightNum, s.Board)
+		}
+	}
+	for _, s := range p.Segments {
 		if out[s.Key()] != "KK" || s.Carrier != r.t.Carrier.Designator {
 			continue
 		}
@@ -1083,6 +1128,16 @@ func (r *codeshareResponder) Decide(ctx context.Context, p *pnr.PNR, peer *gatew
 
 func (r *codeshareResponder) Release(ctx context.Context, s pnr.Segment, was string) {
 	r.inv.Release(ctx, s, was)
+	r.t.Touch(s.FlightNum, s.Board)
+}
+
+// Touch says a flight's seats or classes have changed: a sale, a
+// cancellation, a class closed by hand. The next availability broadcast
+// looks at the whole of its class ladder again.
+func (t *Tenant) Touch(flightNum, board string) {
+	t.touchedMu.Lock()
+	t.touched[strings.TrimLeft(flightNum, "0")+"/"+board] = true
+	t.touchedMu.Unlock()
 }
 
 // forwardCodeshare puts the operating leg on the record and requests it from

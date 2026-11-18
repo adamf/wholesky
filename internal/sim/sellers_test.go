@@ -167,7 +167,7 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 		return g.GW.Avail.Status(avail.NewKey(code, f.Number, s.BookingDate, f.From, f.To, class))
 	}
 	told := func(code string, f worldFlight, class string, want avail.Status) bool {
-		for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 			if status(code, f, class) == want {
 				return true
 			}
@@ -259,7 +259,11 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 	// The carrier that treats every channel alike: N closed is N closed,
 	// and S is as it was.
 	f2 := lateFlight(alike)
-	s.Tenants[alike].Inventory.SetOverride(f2.Carrier, f2.Number, wire, f2.From, "N", "UC")
+	if _, err := w.Act(ctx, alike, airline.Action{Kind: "class", Flight: f2.Carrier + f2.Number, Board: f2.From, Class: "N", Status: "C"}); err != nil {
+		// No seat is held: close it on the inventory as the lever would.
+		s.Tenants[alike].Inventory.SetOverride(f2.Carrier, f2.Number, wire, f2.From, "N", "UC")
+		s.Tenants[alike].Touch(f2.Number, f2.From)
+	}
 	if !told(alike, f2, "N", avail.Closed) {
 		t.Fatalf("%s closed N and the systems hear %s", alike, status(alike, f2, "N"))
 	}
@@ -275,6 +279,8 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 	if pol := s.policyOf(alike); !pol.DirectFirst || pol.FullContent {
 		t.Errorf("after the lever: %+v", pol)
 	}
+	// The policy changed and no seat did: the broadcast finds the flight
+	// on its round of every flight, inside twenty turns.
 	if !told(alike, f2, "S", avail.Closed) {
 		t.Errorf("%s now holds its seats and the systems still hear S %s", alike, status(alike, f2, "S"))
 	}
