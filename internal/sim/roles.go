@@ -49,6 +49,7 @@ import (
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/interline"
+	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -99,6 +100,9 @@ type welcome struct {
 	// Day is the core's calendar: the world's day number. One world, one
 	// date, so every machine prices fuel the same.
 	Day int64 `json:"day"`
+	// Fares is every fare filed so far, so a machine that joins late
+	// quotes what the rest of the world quotes.
+	Fares *savedFares `json:"fares,omitempty"`
 }
 
 // shardSummary is the compact state a peer serves at /shard/summary.json for
@@ -449,6 +453,7 @@ func (c *Core) register(w http.ResponseWriter, r *http.Request) {
 	if c.Sim.econ != nil {
 		wl.Day = c.Sim.econ.day.Load()
 	}
+	wl.Fares = c.Sim.faresNow()
 	if len(c.Sim.Switches) > 1 {
 		wl.SwitchAddrs = map[string]string{}
 	}
@@ -525,7 +530,7 @@ func (c *Core) pollRevenue(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		total := LegFeed{Revenue: map[string]int64{}, Seats: map[string]int{}}
+		total := LegFeed{Revenue: map[string]int64{}, Seats: map[string]int{}, Accounts: map[string]revenue.Account{}}
 		var regions []registration
 		for _, p := range c.livePeers() {
 			switch p.Role {
@@ -542,6 +547,11 @@ func (c *Core) pollRevenue(ctx context.Context) {
 				}
 				for k, v := range f.Seats {
 					total.Seats[k] += v
+				}
+				for c, a := range f.Accounts {
+					sum := total.Accounts[c]
+					sum.Merge(a)
+					total.Accounts[c] = sum
 				}
 			case "region":
 				regions = append(regions, p)
@@ -802,6 +812,7 @@ func federate(ctx context.Context, s *Sim, coreURL string, reg registration,
 		if s.econ != nil && wl.Day > s.econ.day.Load() {
 			s.econ.day.Store(wl.Day)
 		}
+		s.loadFares(wl.Fares)
 		nowClosed := map[string]bool{}
 		for _, a := range wl.Closed {
 			nowClosed[a] = true

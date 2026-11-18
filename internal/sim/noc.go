@@ -138,7 +138,7 @@ func (s *Sim) nocModel(code string) (*noc.Model, error) {
 	md.Revenue = func(f world.Flight) int64 { return revenue[dayplan.Key(f)] }
 	// Where a leg has sold nothing yet, the average fare is taken as six
 	// tenths of the full one: most seats sell below Y.
-	md.Fare = func(f world.Flight) int64 { return tariff.FullFare(s.tariff, f.Carrier, f.From, f.To) * 6 / 10 }
+	md.Fare = func(f world.Flight) int64 { return tariff.AverageFare(s.tariff, f.Carrier, f.From, f.To) }
 	return md, md.Prepare()
 }
 

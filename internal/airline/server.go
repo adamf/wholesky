@@ -92,6 +92,21 @@ type Scorecard struct {
 	Reserves  int `json:"reserves"`
 	Decisions int `json:"decisions"`
 	Defaulted int `json:"defaulted"`
+	// Sales is where the carrier's tickets were sold and what the selling
+	// cost and collected.
+	Sales Sales `json:"sales"`
+}
+
+// Sales is a carrier's selling: its tickets by channel, what it kept on
+// coupons its partners flew, what it paid partners on coupons it flew
+// for them, and the taxes it collected for governments and airports,
+// which are not its revenue.
+type Sales struct {
+	Tickets  int            `json:"tickets"`
+	Channels map[string]int `json:"channels,omitempty"`
+	Kept     int64          `json:"kept_from_partners"`
+	Paid     int64          `json:"paid_to_partners"`
+	Taxes    int64          `json:"taxes_collected"`
 }
 
 // Rank fills the derived figures. The composite is set by

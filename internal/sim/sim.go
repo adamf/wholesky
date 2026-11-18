@@ -53,6 +53,7 @@ import (
 	"github.com/adamf/wholesky/internal/fleet"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/interline"
+	"github.com/adamf/wholesky/internal/partners"
 	"github.com/adamf/wholesky/internal/revenue"
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/stats"
@@ -327,6 +328,9 @@ type Sim struct {
 	// econ is the world's money side: the calendar, the fuel market, the
 	// fleets and what they cost. See economy.go.
 	econ *economy
+	// commerce is the world's selling side: partnerships, how each
+	// carrier sells, and the markets travellers shop. See commerce.go.
+	commerce *commerce
 	// Workforce is the carriers' crews and agreements; nil without rosters.
 	Workforce *workforce.Workforce
 	// noc is the operations centres' state: projections, the decisions
@@ -342,6 +346,7 @@ type Sim struct {
 	scoreAt     time.Time
 	revenueMu   sync.RWMutex
 	revenueFeed map[string]int64
+	accountFeed map[string]revenue.Account
 	seatsFeed   map[string]int
 	// The world's own name and codes, and the worlds it has joined.
 	worldName     string
@@ -373,6 +378,9 @@ type Sim struct {
 	publicSwitch string
 	announced    sync.Map
 	ledgerSeen   sync.Map
+	// ledgerFilled says the fill has just counted the carriers' books
+	// into the ledger, so the rebuild that follows need not read them.
+	ledgerFilled atomic.Bool
 	Switch       *node.Node
 	// Switches is every switch in the fabric, Switch being the first: the
 	// one with the console, the instruments and the distribution systems.
@@ -436,7 +444,15 @@ type Sim struct {
 	DemCancelledLocs []string
 
 	// Demand's ledger, for the log line and the tests.
-	DemBooked, DemFailed, DemInterline                       atomic.Int64
+	DemBooked, DemFailed, DemInterline atomic.Int64
+	// What the market did: travellers who found no way to make the trip,
+	// travellers every fare was too dear for, bookings that connect and
+	// that come back, business travellers, the directions flown and the
+	// fare paid for them.
+	DemNoOffer, DemPricedOut, DemConnecting, DemRoundTrip atomic.Int64
+	DemBusiness, DemDirections, DemFarePaid               atomic.Int64
+	// FareMoves counts the fares the pricing desks have filed.
+	FareMoves                                                atomic.Int64
 	DemTicketed, DemCancelled, DemRefunded, DemSplit, DemNDC atomic.Int64
 	// SlotsImproved counts the flights of this machine's carriers that
 	// took an earlier slot when one was given back.
@@ -576,6 +592,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		staff = s.Workforce
 	}
 	s.initEconomy(m, opts)
+	s.initCommerce(m)
 	s.fate = dayplan.BuildWith(m, sellingDate(m), delayFor, dayplan.Options{Staff: staff, MinTurn: minTurn})
 	s.noc = newNOCDesk(opts)
 	s.Airline = airline.New(opts.DecisionWindow)
@@ -663,6 +680,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
 		mux.HandleFunc("POST /noc/inject", s.serveInject)
 		mux.HandleFunc("GET /economy.json", s.serveEconomy)
+		mux.HandleFunc("GET /fares.json", s.serveFares)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -1081,27 +1099,65 @@ func (s *Sim) rebuildLedger(ctx context.Context) {
 	// A rebuilt ledger starts the tenant-side count over.
 	s.ledgerSeen.Range(func(k, _ any) bool { s.ledgerSeen.Delete(k); return true })
 	started := time.Now()
-	s.Ledger.Reset()
+	// A fill that has just run counted the carriers' books as it wrote
+	// them; only the distribution systems' are left to read.
+	filled := s.ledgerFilled.Swap(false)
+	if !filled {
+		s.Ledger.Reset()
+	}
 	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
-	stores := map[string]store.Store{}
-	for code, t := range s.Tenants {
-		stores[code] = t.Store
-	}
-	for _, g := range s.GDSes {
-		stores[g.Designator] = g.Store
-	}
-	legs, failed := 0, 0
-	for code, st := range stores {
-		rows, err := st.RevenueByLeg(ctx, wire)
+	books, legs, failed := 0, 0, 0
+	// sold is the channel locators the carriers' books hold priced, so a
+	// sale both the carrier and its distribution system hold counts once.
+	sold := map[string]bool{}
+	count := func(code string, st store.Store, system bool) {
+		books++
+		// A store that can stream its records is counted record by
+		// record, which is what gives each carrier its account: the fare
+		// without the taxes, the channel, what the sale cost. One that
+		// cannot gives each leg's total, taxes in, and no accounts.
+		ex, ok := st.(store.Exporter)
+		if _, mem := st.(*store.Mem); !ok || !mem {
+			rows, err := st.RevenueByLeg(ctx, wire)
+			if err != nil {
+				failed++
+				s.log.Warn("ledger rebuild failed", "node", code, "err", err)
+				return
+			}
+			s.Ledger.Fill(rows)
+			legs += len(rows)
+			return
+		}
+		err := ex.ExportPNRs(ctx, func(r *pnr.PNR) error {
+			if r.Status == pnr.StatusCancelled || r.Pricing == nil || r.Origin.Channel == "codeshare" {
+				return nil
+			}
+			if system {
+				if !sold[code+"/"+r.RecordLocator] {
+					s.Ledger.Record(r)
+				}
+				return nil
+			}
+			for _, l := range r.Locators {
+				sold[l.Owner+"/"+l.Value] = true
+			}
+			s.Ledger.Load(r)
+			return nil
+		})
 		if err != nil {
 			failed++
 			s.log.Warn("ledger rebuild failed", "node", code, "err", err)
-			continue
 		}
-		s.Ledger.Fill(rows)
-		legs += len(rows)
 	}
-	s.log.Info("ledger rebuilt", "books", len(stores), "legs", legs, "total_cents", s.Ledger.Total(), "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
+	if !filled {
+		for code, t := range s.Tenants {
+			count(code, t.Store, false)
+		}
+	}
+	for _, g := range s.GDSes {
+		count(g.Designator, g.Store, true)
+	}
+	s.log.Info("ledger rebuilt", "books", books, "legs", legs, "total_cents", s.Ledger.Total(), "failed", failed, "took", time.Since(started).Round(time.Millisecond).String())
 }
 
 // rebuildInventories counts every tenant's book of record into its seat
@@ -1176,23 +1232,33 @@ func (s *Sim) fillDay(ctx context.Context) {
 		if err := t.Store.LoadPNRs(ctx, recs, "fill"); err != nil {
 			return err
 		}
-		// The pre-sold day's money, by leg. A codeshare is two records of
-		// one sale; the operator's copy carries the marketing carrier's
-		// locator and is not counted again.
+		// The pre-sold day's money, by leg and by carrier. A codeshare is
+		// two records of one sale; the operator's copy carries the
+		// marketing carrier's locator and is not counted again.
 		for _, r := range recs {
 			if r.Origin.Channel == "codeshare" {
 				continue
 			}
-			s.Ledger.Record(r)
+			s.Ledger.Load(r)
 		}
 		return nil
 	}
+	s.Ledger.Reset()
 	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff,
-		Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, s.capacity) }}, sink)
+		Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, s.capacity) },
+		// The seats sold before the day are sold to the same travellers
+		// the day's own are: the market's, at the carrier's fares, in the
+		// channels it sells in.
+		Base:    s.baseFare,
+		Mix:     s.mixFor,
+		Offered: func(carrier, channel string) bool { return s.policyOf(carrier).Offered(channel) },
+		Share:   s.shareOf,
+	}, sink)
 	if err != nil {
 		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
 		return
 	}
+	s.ledgerFilled.Store(true)
 	s.log.Info("day filled", "load_factor", s.fill, "carriers", plan.Carriers, "flights", plan.Flights,
 		"records", plan.Records, "passengers", plan.Passengers, "seats", plan.Seats,
 		"connecting", plan.Connecting, "took", time.Since(started).Round(time.Millisecond).String())
@@ -1544,14 +1610,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		s.weatherIncidents(prev, cur)
 		s.nocTick(ctx, cur)
 		s.labourTick(ctx, prev, cur)
-		// Once an hour of the day, the pricing desks that are run by hand
-		// hear from the competition.
-		if int(prev)/60 != int(cur)/60 {
-			for code := range s.Tenants {
-				h := int(aogHash(code + fmt.Sprint(int(cur)/60)))
-				go s.competitorMove(ctx, code, func(n int) int { h = h*1103515245 + 12345; return (h >> 8 & 0x7fffffff) % n })
-			}
-		}
+		// Four times a day the fares are filed: the desks see what moved
+		// since the last filing and answer it.
+		s.pricingTicks(ctx, prev, cur)
 		for code, t := range s.Tenants {
 			// A carrier someone's own node flies: the world still runs the
 			// network side of its day -- the Network Manager's slot, the
@@ -2110,6 +2171,10 @@ func (s *Sim) tapTenantRevenue(ctx context.Context, bus *gateway.Bus) {
 			// may be a version or two after the sell; count each record the
 			// first time it is seen priced.
 			if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Origin.Channel != "codeshare" {
+				if rec.Status == pnr.StatusCancelled {
+					s.Ledger.Reverse(rec.RecordLocator)
+					return
+				}
 				if _, seen := s.ledgerSeen.LoadOrStore(rec.RecordLocator, true); !seen {
 					s.Ledger.Record(rec)
 				}
@@ -2412,7 +2477,13 @@ func (s *Sim) Bill(ctx context.Context) {
 	for code, t := range s.Tenants {
 		books = append(books, interline.Book{Name: code, Store: t.Store})
 	}
-	p := &interline.Plan{ServiceCharge: 900, Accounting: s.accountingCode}
+	p := &interline.Plan{ServiceCharge: partners.InterlineCharge, Accounting: s.accountingCode}
+	if s.commerce != nil {
+		// Each pair settles on the terms of what they are to each other.
+		p.Charge = func(ticketed, flown string) (int, string) {
+			return s.commerce.charge(ticketed, flown), s.commerce.partners.Between(ticketed, flown).String()
+		}
+	}
 	sum, err := p.Run(ctx, s.BookingDate, s.Manifest, books)
 	if err != nil {
 		s.log.Warn("interline billing failed", "err", err)
@@ -2764,6 +2835,10 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 	}, st, bus, log, []byte("wholesky-"+g.Designator))
 	gw.Avail = avail.NewCache()
 	gw.Tariff = s.tariff
+	// The world's travellers shop before they book, and what they were
+	// quoted is what they pay.
+	gw.AcceptQuotes = true
+	gw.Miles = s.tariff.Miles
 	// The world keeps every clock on UTC: a flight's times are UTC minutes
 	// and the segments sold from them are written the same way, so a UTC
 	// schedule message applies to a held segment with no offset at all.
@@ -2822,7 +2897,15 @@ func (s *Sim) buildGDSNode(ctx context.Context, m *world.Manifest, g *GDSNode,
 			// The price rides the record; count it once, when the record
 			// is first written.
 			if p, ok := ev.Data.(map[string]any); ok {
-				if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Version <= 1 {
+				rec, ok := p["record"].(*pnr.PNR)
+				if !ok || rec == nil || rec.Pricing == nil {
+					return
+				}
+				switch {
+				case rec.Status == pnr.StatusCancelled:
+					// The traveller cancelled: the fare goes back.
+					s.Ledger.Reverse(rec.RecordLocator)
+				case rec.Version <= 1:
 					s.Stats.OnRevenue(rec.Pricing.Total)
 					s.Ledger.Record(rec)
 				}

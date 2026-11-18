@@ -109,8 +109,11 @@ func TestTwoWorldsJoinAndSellEachOthersFlights(t *testing.T) {
 	}
 
 	// Each lobby lists the other world's carriers, labelled, and a seat's
-	// request for one of them is answered by that world.
-	deadline = time.Now().Add(30 * time.Second)
+	// request for one of them is answered by that world. Two worlds that
+	// have both just started must not wait on each other for it: each
+	// asked the other for its rows before answering, and the answer took
+	// the twenty seconds of the request's timeout.
+	deadline = time.Now().Add(8 * time.Second)
 	for {
 		found := false
 		for _, c := range (seatWorld{a}).Carriers() {

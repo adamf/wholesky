@@ -3,9 +3,7 @@ package sim
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"math"
 	"math/rand"
 	"net/http/httptest"
 	"strings"
@@ -14,23 +12,26 @@ import (
 	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/gateway"
 
+	"github.com/adamf/wholesky/internal/market"
 	"github.com/adamf/wholesky/internal/world"
 )
 
 // Demand generates travellers continuously at roughly perMinute.
 //
-// This is the second demand model. The first booked one random segment and
-// walked away, which left Jetway's richest machinery idle: nobody ticketed,
-// so deadlines never armed; nobody cancelled; nobody split; no record ever
-// spanned two carriers. This one books itineraries -- connections included,
-// across carriers when the schedule offers them -- with parties of one to
-// three, then lives with the booking: most get ticketed, some are cancelled,
-// parties sometimes divide, and a slice of demand arrives as NDC orders over
-// the GDS's own HTTP endpoint rather than through the booking API.
+// This is the third demand model. The first booked one random segment
+// and walked away. The second booked itineraries and lived with them --
+// ticketed, cancelled, divided -- but chose a flight at random, so a
+// carrier's fares decided nothing. This one is a market: a traveller
+// wants to go from one place to another, has a most they will pay and a
+// price on every inconvenience (internal/market), is shown what every
+// carrier offers in the channel they shop in, and takes the offer that
+// costs them least. A carrier that cuts a fare takes travellers from the
+// ones that did not. A carrier that closes a class sends its travellers
+// to another carrier, or home.
 //
-// Randomness is seeded; the mix is fixed. The point is not statistical
-// fidelity to any airline's curve -- it is that every lifecycle path Jetway
-// implements gets walked continuously, by load, in public.
+// The day the world flies is the day every traveller departs, and the
+// booking window is folded into it: each traveller buys as of their own
+// lead time, weeks or days before, and the fare rules count from there.
 func (s *Sim) Demand(ctx context.Context, perMinute int, seed int64) {
 	if perMinute <= 0 {
 		return
@@ -91,52 +92,162 @@ func (s *Sim) sellOffset(rng *rand.Rand) int {
 	return rng.Intn(days) - 1
 }
 
-// placeDemand runs one traveller end to end: choose, book, settle, and live
-// with the consequences.
-func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carriers []string, n int) {
-	itin := s.chooseItinerary(rng, carriers)
-	if len(itin) == 0 {
-		return
+// pickMarket draws the trip a traveller wants: the origin and
+// destination of a flight in the schedule, or two times in five of a
+// flight and one that leaves where it lands. Markets are drawn by their
+// flights, so demand stands in proportion to what the schedule offers.
+func (s *Sim) pickMarket(rng *rand.Rand, carriers []string) (o, d string, km int) {
+	total := 0
+	for _, c := range carriers {
+		total += len(s.scheduleOf(c))
 	}
-	party := 1 + rng.Intn(3)
-	day := s.sellOffset(rng)
-	// Booked on the day: the cheap fares' advance-purchase rules have
-	// closed, so most of this demand is full fare, some business, a little
-	// first. A class the tariff will not sell for the trip falls back to Y.
-	class := []string{"Y", "Y", "Y", "Y", "Y", "M", "B", "J", "F"}[rng.Intn(9)]
-	surname := fmt.Sprintf("DEMAND%06d", n)
-
-	interline := len(itin) == 2 && itin[0].Carrier != itin[1].Carrier
-
-	// A slice of single-segment demand arrives as an NDC order on the GDS's
-	// HTTP endpoint -- the distribution channel, not just the message.
-	if len(itin) == 1 && rng.Intn(100) < 18 {
-		if err := s.bookNDC(g, itin[0].Carrier, itin[0].Number, itin[0].From, itin[0].To,
-			itin[0].DepMin, class, day, surname); err != nil {
-			s.noteDemandFailure(err)
-			return
+	if total == 0 {
+		return "", "", 0
+	}
+	r := rng.Intn(total)
+	var f1 world.Flight
+	for _, c := range carriers {
+		fs := s.scheduleOf(c)
+		if r < len(fs) {
+			f1 = fs[r]
+			break
 		}
-		s.DemNDC.Add(1)
-		s.DemBooked.Add(1)
+		r -= len(fs)
+	}
+	if s.isClosed(f1.From, f1.To) {
+		return "", "", 0
+	}
+	if rng.Intn(100) < 60 || f1.ArrMin >= 23*60 {
+		return f1.From, f1.To, f1.KM
+	}
+	onward := s.onwardFrom(f1.To)
+	start := rng.Intn(maxInt(1, len(onward)))
+	for i := 0; i < len(onward) && i < 80; i++ {
+		f2 := onward[(start+i)%len(onward)]
+		if f2.DepMin < f1.ArrMin+30 || f2.To == f1.From || s.isClosed(f2.From, f2.To) {
+			continue
+		}
+		km := s.tariff.Distance(f1.From, f2.To)
+		if km == 0 {
+			km = f1.KM + f2.KM
+		}
+		// Nobody flies out and half way back: a connection more than one
+		// and a half times the direct distance is not a trip.
+		if (f1.KM+f2.KM)*2 > km*3+400 {
+			continue
+		}
+		return f1.From, f2.To, km
+	}
+	return f1.From, f1.To, f1.KM
+}
+
+// baseFare is a market's lowest regular fare, from which a traveller's
+// willingness to pay is measured: the tariff's, over the great circle
+// between the two ends when the tariff knows them.
+func (s *Sim) baseFare(o, d string, km int) int64 {
+	if direct := s.tariff.Distance(o, d); direct > 0 {
+		km = direct
+	}
+	return s.tariff.BaseFare(o, d, km)
+}
+
+// mixFor is a market's travellers: who is on business and where each
+// kind books, by the part of the world the trip starts in.
+func (s *Sim) mixFor(o, d string, km int) market.Mix {
+	region := ""
+	long := km > 4000
+	if s.econ != nil {
+		region = s.econ.region[o]
+		long = long || region != s.econ.region[d]
+	}
+	return market.MixFor(region, long)
+}
+
+// travellerFor draws the traveller for a market.
+func (s *Sim) travellerFor(rng *rand.Rand, o, d string, km int) (market.Traveller, int64) {
+	base := s.baseFare(o, d, km)
+	t := market.Draw(rng, base, s.mixFor(o, d, km))
+	t.Join(rng, s.commerce.home[o], base)
+	return t, base
+}
+
+// placeDemand runs one traveller end to end: want a trip, shop, choose,
+// book, and live with the consequences.
+func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carriers []string, n int) {
+	if s.tariff == nil || s.commerce == nil {
 		return
 	}
+	o, d, km := s.pickMarket(rng, carriers)
+	if o == "" {
+		return
+	}
+	t, _ := s.travellerFor(rng, o, d, km)
+	found := s.shop(rng, g, t, s.pathsFor(rng, o, d))
+	if len(found) == 0 {
+		s.DemNoOffer.Add(1)
+		return
+	}
+	offers := make([]market.Offer, len(found))
+	for i := range found {
+		offers[i] = found[i].offer
+	}
+	pick := t.Choose(offers)
+	if pick < 0 {
+		// Every fare on offer was more than this traveller would pay.
+		s.DemPricedOut.Add(1)
+		return
+	}
+	s.bookOffer(ctx, g, rng, t, found[pick], n)
+}
 
-	segs := make([]gateway.BookingSegment, 0, len(itin))
-	date := strings.ToUpper(s.BookingDate.AddDate(0, 0, day).Format("02Jan"))
-	for _, f := range itin {
-		carrier, number := f.Carrier, f.Number
-		// A codeshare sells under the marketing carrier's code nine times in
-		// ten; the operator's own code is the exception.
-		if f.Marketing != "" && f.Marketing != f.Carrier && f.MarketingNumber != "" && rng.Intn(10) < 9 {
-			carrier, number = f.Marketing, f.MarketingNumber
+// bookOffer books what a traveller chose, at the fare they were quoted.
+func (s *Sim) bookOffer(ctx context.Context, g *GDSNode, rng *rand.Rand, t market.Traveller, sh shopped, n int) {
+	surname := fmt.Sprintf("DEMAND%06d", n)
+	q := sh.quote
+	if fee := s.policyOf(sh.codes[0][0]).Surcharge[sh.channel]; fee > 0 {
+		q = withFee(q, fee)
+	}
+	legs := append(append(path{}, sh.out...), sh.back...)
+	classes := q.Passengers[0].Segments
+	interline := false
+	for _, f := range legs[1:] {
+		if f.Carrier != legs[0].Carrier {
+			interline = true
+		}
+	}
+
+	// A sale to one person of one flight one way, on a carrier's own site
+	// or an online agency, reaches the node as an NDC order one time in
+	// two: the HTTP surface a direct connection calls. The node prices an
+	// order itself, as of now, so only a fare whose advance purchase is
+	// met today goes this way, and an order the node refuses is booked
+	// the ordinary way.
+	if len(legs) == 1 && t.Party == 1 && (sh.channel == market.Direct || sh.channel == market.OTA) && rng.Intn(2) == 0 {
+		f := legs[0]
+		daysOut := int(time.Until(s.BookingDate.Add(time.Duration(f.DepMin)*time.Minute)).Hours() / 24)
+		if rule := q.Components[0].Fare.Rule; rule.AdvancePurchaseDays <= daysOut && len(rule.Sale.Channels) == 0 && q == sh.quote {
+			if err := s.bookNDC(g, sh.codes[0][0], sh.codes[0][1], f.From, f.To, f.DepMin, classes[0].Class, 0, surname); err == nil {
+				s.DemNDC.Add(1)
+				s.DemBooked.Add(1)
+				s.noteSale(t, sh, q)
+				return
+			}
+		}
+	}
+
+	segs := make([]gateway.BookingSegment, 0, len(legs))
+	for i, f := range legs {
+		day := s.BookingDate
+		if i >= len(sh.out) {
+			day = day.AddDate(0, 0, sh.stay)
 		}
 		segs = append(segs, gateway.BookingSegment{
-			Carrier: carrier, FlightNum: number, Class: class,
-			Date: date, Board: f.From, Off: f.To, Seats: party,
+			Carrier: sh.codes[i][0], FlightNum: sh.codes[i][1], Class: classes[i].Class,
+			Date: strings.ToUpper(day.Format("02Jan")), Board: f.From, Off: f.To, Seats: t.Party,
 		})
 	}
-	pax := make([]gateway.BookingPassenger, 0, party)
-	for p := 0; p < party; p++ {
+	pax := make([]gateway.BookingPassenger, 0, t.Party)
+	for p := 0; p < t.Party; p++ {
 		pax = append(pax, gateway.BookingPassenger{
 			Surname: surname, Given: fmt.Sprintf("PAX%d", p+1), Title: "MR",
 		})
@@ -148,22 +259,12 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	var ssrs []gateway.BookingSSR
 	if r := rng.Intn(100); r < 3 {
 		codes := []string{"WCHR", "WCHR", "UMNR", "MEDA", "BLND", "DEAF", "MAAS"}
-		ssrs = append(ssrs, gateway.BookingSSR{Code: codes[rng.Intn(len(codes))], Carrier: itin[0].Carrier})
+		ssrs = append(ssrs, gateway.BookingSSR{Code: codes[rng.Intn(len(codes))], Carrier: sh.codes[0][0]})
 	}
 	res, err := g.GW.Book(ctx, &gateway.BookingRequest{
-		Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky", Channel: "sim",
+		Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky " + sh.channel, Channel: sh.channel,
+		Country: s.airports[legs[0].From].Country, Account: t.Account, Quote: q,
 	})
-	var nf *fare.ErrNoFare
-	if errors.As(err, &nf) {
-		// The class cannot be sold for this trip under its rules; the
-		// passenger pays the fare that can.
-		for k := range segs {
-			segs[k].Class = "Y"
-		}
-		res, err = g.GW.Book(ctx, &gateway.BookingRequest{
-			Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky", Channel: "sim",
-		})
-	}
 	if err != nil {
 		s.noteDemandFailure(err)
 		return
@@ -172,7 +273,48 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	if interline {
 		s.DemInterline.Add(1)
 	}
-	s.liveWith(ctx, g, rng, res.PNR.RecordLocator, party)
+	if len(sh.out) > 1 {
+		s.DemConnecting.Add(1)
+	}
+	if len(sh.back) > 0 {
+		s.DemRoundTrip.Add(1)
+	}
+	s.noteSale(t, sh, q)
+	s.liveWith(ctx, g, rng, res.PNR.RecordLocator, t.Party)
+}
+
+// noteSale counts what the travellers paid, for the instruments that say
+// how the market is doing: the fare by kind of traveller.
+func (s *Sim) noteSale(t market.Traveller, sh shopped, q *fare.Quote) {
+	dirs := int64(1)
+	if len(sh.back) > 0 {
+		dirs = 2
+	}
+	s.DemDirections.Add(dirs * int64(t.Party))
+	s.DemFarePaid.Add(q.Base.Amount + q.CarrierFees.Amount)
+	if t.Kind == market.Business {
+		s.DemBusiness.Add(1)
+	}
+}
+
+// withFee is a quote with a carrier's own charge added to every
+// passenger: the distribution cost charge a carrier puts on a ticket
+// sold through a channel it would rather not pay for.
+func withFee(q *fare.Quote, cents int64) *fare.Quote {
+	out := *q
+	out.Passengers = append([]fare.PassengerQuote(nil), q.Passengers...)
+	for i := range out.Passengers {
+		p := &out.Passengers[i]
+		p.Taxes = append(append([]fare.TaxLine(nil), p.Taxes...), fare.TaxLine{Code: "OB", Amount: fare.Money{Amount: cents, Currency: q.Currency}, CarrierImposed: true})
+		p.CarrierFees.Amount += cents
+		p.CarrierFees.Currency = q.Currency
+		p.Total.Amount += cents
+		out.Taxes.Amount += cents
+		out.CarrierFees.Amount += cents
+		out.CarrierFees.Currency = q.Currency
+		out.Total.Amount += cents
+	}
+	return &out
 }
 
 // liveWith is the rest of a booking's life: settle, then usually ticket,
@@ -236,49 +378,6 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 			s.DemSplit.Add(1)
 		}
 	}
-}
-
-// chooseItinerary picks one or two legs from the schedule: mostly single
-// segments, a real share of connections, and among connections a real share
-// that changes carrier -- the case interline messaging exists for.
-func (s *Sim) chooseItinerary(rng *rand.Rand, carriers []string) []worldFlight {
-	code := carriers[rng.Intn(len(carriers))]
-	fs := s.scheduleOf(code)
-	if len(fs) == 0 {
-		return nil
-	}
-	f1 := fs[rng.Intn(len(fs))]
-	if s.isClosed(f1.From, f1.To) {
-		return nil
-	}
-	// The traveller shops: a carrier that has priced itself above the
-	// filing on this market loses a share of the people who would have
-	// bought, the shape of a demand curve without a real one.
-	if s.tariff != nil && rng.Float64() > sellProbability(s.tariff.EffectiveMultiplier(f1.Carrier, f1.From, f1.To)) {
-		return nil
-	}
-	roll := rng.Intn(100)
-	if roll < 60 || f1.ArrMin >= 23*60 {
-		return []worldFlight{f1}
-	}
-	wantInterline := roll < 90 // of the connecting share, most change carrier
-	onward := s.onwardFrom(f1.To)
-	// A bounded scan for a legal connection: departing after arrival plus
-	// minimum connect time, same day, airport open.
-	start := rng.Intn(maxInt(1, len(onward)))
-	for i := 0; i < len(onward) && i < 80; i++ {
-		f2 := onward[(start+i)%len(onward)]
-		if f2.DepMin < f1.ArrMin+40 || f2.To == f1.From {
-			continue
-		}
-		if s.isClosed(f2.From, f2.To) {
-			continue
-		}
-		if wantInterline == (f2.Carrier != f1.Carrier) {
-			return []worldFlight{f1, f2}
-		}
-	}
-	return []worldFlight{f1}
 }
 
 // accountingCode synthesises the three-digit numeric stock code a ticket is
@@ -356,14 +455,4 @@ func (s *Sim) noteDemandFailure(err error) {
 	if n := s.DemFailed.Add(1); n%100 == 1 {
 		s.log.Warn("demand booking failed", "err", err, "failed", n)
 	}
-}
-
-// sellProbability is the share of would-be buyers who still buy at a fare
-// multiplied by mult over the filing: everyone at or below it, fewer as it
-// rises (elasticity 1.5, the world's shape, labelled as such).
-func sellProbability(mult float64) float64 {
-	if mult <= 1 {
-		return 1
-	}
-	return math.Pow(mult, -1.5)
 }

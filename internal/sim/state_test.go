@@ -36,10 +36,13 @@ func TestStateSurvivesARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.SetNodeURL(code, "http://node.example:8080")
+	// A fare filed is a fare after the restart.
+	f := s.Flights[code][0]
+	s.fileFare(code, f.From, f.To, 0.85)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if b, err := os.ReadFile(path); err == nil && len(b) > 0 && time.Since(time.Now()) < time.Second {
-			if string(b) != "" && containsAll(string(b), code, "Adam", "node.example") {
+			if string(b) != "" && containsAll(string(b), code, "Adam", "node.example", "0.85") {
 				break
 			}
 		}
@@ -65,6 +68,9 @@ func TestStateSurvivesARestart(t *testing.T) {
 	}
 	if s2.NodeURL(code) != "http://node.example:8080" {
 		t.Errorf("node url %q", s2.NodeURL(code))
+	}
+	if out, back := s2.tariff.EffectiveMultiplier(code, f.From, f.To), s2.tariff.EffectiveMultiplier(code, f.To, f.From); out != 0.85 || back != 0.85 {
+		t.Errorf("the filed fare after restart: ×%.2f out, ×%.2f back", out, back)
 	}
 	if pack, err := s2.Pack(code); err != nil || pack.Token != linkToken("keep", code) {
 		t.Errorf("pack after restart: %+v %v", pack, err)

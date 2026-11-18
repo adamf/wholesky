@@ -67,3 +67,88 @@ func TestCodeshareCouponIsProratedAndBilledOnce(t *testing.T) {
 		t.Errorf("merged: %+v", merged)
 	}
 }
+
+// Who gets what on a ticket three carriers fly. United tickets a journey
+// with a through fare over its own flight and Lufthansa's, and a separate
+// fare on a carrier it has nothing but an interline agreement with. Each
+// coupon is worth its part of its own fare component. Lufthansa, in a
+// joint venture with United, bills its coupon whole; the stranger bills
+// its coupon less nine per cent; a codeshare partner would bill less
+// seven.
+func TestEachCouponIsBilledByItsComponentAndItsTie(t *testing.T) {
+	ctx := context.Background()
+	m := &world.Manifest{
+		Carriers: []world.Carrier{{Designator: "UA"}, {Designator: "LH"}, {Designator: "A3"}, {Designator: "OO"}},
+		Flights: []world.Flight{
+			{Carrier: "UA", Number: "0900", From: "ORD", To: "FRA", KM: 7000},
+			{Carrier: "LH", Number: "1280", From: "FRA", To: "ATH", KM: 1800},
+			{Carrier: "A3", Number: "0350", From: "ATH", To: "JTR", KM: 220},
+			{Carrier: "OO", Number: "5500", From: "JTR", To: "HER", KM: 150, Marketing: "UA", MarketingNumber: "5500"},
+		},
+	}
+	dep := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	seg := func(ref int, carrier, num, from, to string) pnr.Segment {
+		return pnr.Segment{Ref: ref, Type: pnr.SegmentAir, Carrier: carrier, FlightNum: num, Board: from, Off: to, Depart: dep, WireDate: "26NOV", Status: "HK", Seats: 1}
+	}
+	rec := &pnr.PNR{RecordLocator: "THREEC", Origin: pnr.Origin{Party: "1G"},
+		Passengers: []pnr.Passenger{{Ref: 1, Surname: "JONES", Given: "ANN"}},
+		Segments:   []pnr.Segment{seg(1, "UA", "0900", "ORD", "FRA"), seg(2, "LH", "1280", "FRA", "ATH"), seg(3, "A3", "0350", "ATH", "JTR"), seg(4, "UA", "5500", "JTR", "HER")},
+		Tickets: []pnr.Ticket{{Number: pnr.TicketNumber{AirlineCode: "016", Serial: "2400000009"}, PaxRef: 1, IssuedAt: dep.AddDate(0, 0, -10),
+			Coupons: []pnr.Coupon{{Number: 1, SegmentRef: 1}, {Number: 2, SegmentRef: 2}, {Number: 3, SegmentRef: 3}, {Number: 4, SegmentRef: 4}}}},
+		// A through fare of 880.00 ORD-ATH divided by miles, 700.00 and
+		// 180.00; 90.00 for the island hop; 50.00 for the codeshare.
+		Pricing: &pnr.Pricing{Currency: "USD", Base: 102000, Taxes: 9000, Total: 111000,
+			Passengers: []pnr.PassengerPricing{{Ref: 1, Segments: []int64{70000, 18000, 9000, 5000}, Base: 102000, Total: 111000}}},
+	}
+	book := store.NewMem()
+	book.CreatePNR(ctx, rec, nil)
+	acct := func(d string) string { return map[string]string{"UA": "016", "LH": "220", "A3": "390", "OO": "412"}[d] }
+	ties := map[string]struct {
+		rate int
+		tie  string
+	}{"LH": {0, "joint venture"}, "A3": {900, "interline"}, "OO": {700, "codeshare"}}
+	p := &Plan{ServiceCharge: 900, Accounting: acct, Charge: func(ticketed, flown string) (int, string) {
+		if ticketed != "UA" {
+			t.Errorf("the ticketing carrier is %s", ticketed)
+		}
+		return ties[flown].rate, ties[flown].tie
+	}}
+	sum, err := p.Run(ctx, dep, m, []Book{{Name: "1G", Store: book}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Invoices != 3 || sum.Coupons != 3 {
+		t.Fatalf("three carriers bill United one coupon each: %+v", sum)
+	}
+	for flown, want := range map[string]Line{
+		"LH": {Coupon: 2, Flight: "LH1280", Sold: "LH1280", Tie: "joint venture", Prorate: 18000, ServiceCharge: 0, Net: 18000},
+		"A3": {Coupon: 3, Flight: "A30350", Sold: "A30350", Tie: "interline", Prorate: 9000, ServiceCharge: 810, Net: 8190},
+		"OO": {Coupon: 4, Flight: "OO5500", Sold: "UA5500", Tie: "codeshare", Prorate: 5000, ServiceCharge: 350, Net: 4650},
+	} {
+		inv := sum.ByPair[PairKey(flown, "UA")]
+		if inv == nil || len(inv.Lines) != 1 {
+			t.Fatalf("%s bills United: %+v", flown, sum.ByPair)
+		}
+		l := inv.Lines[0]
+		l.Document, l.Sector = "", ""
+		if l != want {
+			t.Errorf("%s: %+v, want %+v", flown, l, want)
+		}
+	}
+	// A record priced without the detail is prorated whole by miles: the
+	// same ticket then gives Lufthansa 1800 of 9170 kilometres.
+	rec2 := *rec
+	rec2.RecordLocator = "NODETL"
+	rec2.Tickets = []pnr.Ticket{rec.Tickets[0]}
+	rec2.Tickets[0].Number.Serial = "2400000010"
+	rec2.Pricing = &pnr.Pricing{Currency: "USD", Base: 102000, Taxes: 9000, Total: 111000}
+	plain := store.NewMem()
+	plain.CreatePNR(ctx, &rec2, nil)
+	sum2, err := p.Run(ctx, dep, m, []Book{{Name: "1G", Store: plain}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := sum2.ByPair[PairKey("LH", "UA")].Lines[0]; l.Prorate != 102000*1800/9170 {
+		t.Errorf("by miles Lufthansa's coupon is %d, want %d", l.Prorate, 102000*1800/9170)
+	}
+}

@@ -37,6 +37,42 @@ type worldState struct {
 	// Economy is the calendar and what was done to the market: the day the
 	// world has reached, the shocks added, and the hedges carriers hold.
 	Economy *savedEconomy `json:"economy,omitempty"`
+	// Fares is every fare multiplier filed: by carrier, and by carrier,
+	// origin and destination.
+	Fares *savedFares `json:"fares,omitempty"`
+}
+
+type savedFares struct {
+	Carriers map[string]float64 `json:"carriers,omitempty"`
+	Markets  map[string]float64 `json:"markets,omitempty"`
+}
+
+// faresNow is the fares filed, for the state file and for a machine that
+// joins late.
+func (s *Sim) faresNow() *savedFares {
+	if s.tariff == nil {
+		return nil
+	}
+	c, m := s.tariff.Multipliers()
+	if len(c) == 0 && len(m) == 0 {
+		return nil
+	}
+	return &savedFares{Carriers: c, Markets: m}
+}
+
+// loadFares puts saved or received fares on this machine's tariff.
+func (s *Sim) loadFares(f *savedFares) {
+	if f == nil || s.tariff == nil {
+		return
+	}
+	for code, m := range f.Carriers {
+		s.tariff.SetMultiplier(code, m)
+	}
+	for k, m := range f.Markets {
+		if p := strings.Split(k, "/"); len(p) == 3 {
+			s.tariff.SetMarketMultiplier(p[0], p[1], p[2], m)
+		}
+	}
 }
 
 type savedEconomy struct {
@@ -176,6 +212,7 @@ func (s *Sim) snapshot() worldState {
 		e.mu.Unlock()
 		st.Economy = se
 	}
+	st.Fares = s.faresNow()
 	return st
 }
 
@@ -295,6 +332,7 @@ func (s *Sim) restoreState(ctx context.Context) {
 	for code, u := range st.Nodes {
 		s.SetNodeURL(code, u)
 	}
+	s.loadFares(st.Fares)
 	if e := s.econ; e != nil && st.Economy != nil {
 		e.day.Store(st.Economy.Day)
 		for _, sh := range st.Economy.Shocks {

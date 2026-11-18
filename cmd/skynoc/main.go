@@ -79,7 +79,7 @@ func main() {
 	}
 	md := &noc.Model{World: m, Carrier: code, Day: day, Own: synthOwn}
 	t := tariff.FromManifest(m)
-	md.Fare = func(f world.Flight) int64 { return tariff.FullFare(t, f.Carrier, f.From, f.To) * 6 / 10 }
+	md.Fare = func(f world.Flight) int64 { return tariff.AverageFare(t, f.Carrier, f.From, f.To) }
 	if !*noCrew {
 		md.Roster = workforce.New(m, day, func(c string) bool { return c == code })
 	}

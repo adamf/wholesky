@@ -313,6 +313,16 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
 	}
+	// What the selling cost: the distribution systems' booking fees, the
+	// commissions and overrides paid to sellers, and the carrier's own
+	// cost of a sale under one line; the cost of taking the money under
+	// another. What the carrier kept on coupons its partners flew is
+	// revenue no leg of its own carries.
+	acct := w.s.accountOf(code)
+	sc.Costs["distribution"] += acct.System + acct.Commission + acct.Own
+	sc.Costs["card fees"] += acct.Payment
+	sc.Revenue += acct.Kept
+	sc.Sales = airline.Sales{Tickets: acct.Tickets, Channels: acct.Channels, Kept: acct.Kept, Paid: acct.Paid, Taxes: acct.Taxes}
 	if e := w.s.econ; e != nil {
 		// The fleet costs what it costs whether it flies or not: the share
 		// of a day's rent and ownership that has passed, and what the fuel
@@ -441,11 +451,13 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		return s.hedge(code, fuel.Kind(strings.ToLower(a.Policy)), a.Count, a.Minutes)
 	}
 	if a.Kind == "fares" {
+		// A fare filed here is the fare every machine quotes, and the
+		// other carriers' desks see it at the next filing.
 		if a.From != "" && a.To != "" {
-			s.tariff.SetMarketMultiplier(code, a.From, a.To, a.Multiplier)
-			return fmt.Sprintf("%s-%s fares now ×%.2f over the filing", strings.ToUpper(a.From), strings.ToUpper(a.To), s.tariff.EffectiveMultiplier(code, a.From, a.To)), nil
+			s.fileFare(code, a.From, a.To, a.Multiplier*s.tariff.Multiplier(code))
+			return fmt.Sprintf("%s-%s fares now ×%.2f over the filing, both ways", strings.ToUpper(a.From), strings.ToUpper(a.To), s.tariff.EffectiveMultiplier(code, a.From, a.To)), nil
 		}
-		s.tariff.SetMultiplier(code, a.Multiplier)
+		s.fileFare(code, "", "", a.Multiplier)
 		return fmt.Sprintf("fares now ×%.2f over the filing", s.tariff.Multiplier(code)), nil
 	}
 	f, ok := w.findFlight(code, a.Flight, a.Board)
@@ -766,6 +778,18 @@ func (s *Sim) legSeats(f world.Flight) int {
 	return s.Ledger.Seats([]string{key})
 }
 
+// accountOf is a carrier's sales account, from the core's feed where it
+// has one, else this machine's ledger.
+func (s *Sim) accountOf(carrier string) revenue.Account {
+	s.revenueMu.RLock()
+	a, ok := s.accountFeed[carrier]
+	s.revenueMu.RUnlock()
+	if ok {
+		return a
+	}
+	return s.Ledger.AccountOf(carrier)
+}
+
 // LegFeed is what the distribution systems sold on every leg: money and
 // passengers. On a distribution system's machine it is that system's word
 // for every leg of the world; the core sums the systems' and hands the
@@ -773,11 +797,14 @@ func (s *Sim) legSeats(f world.Flight) int {
 type LegFeed struct {
 	Revenue map[string]int64 `json:"revenue"`
 	Seats   map[string]int   `json:"seats"`
+	// Accounts is each carrier's sales: what its tickets earned, cost to
+	// sell and collected in taxes.
+	Accounts map[string]revenue.Account `json:"accounts,omitempty"`
 }
 
 // RevenueByLeg is this machine's ledger as a feed.
 func (s *Sim) RevenueByLeg() LegFeed {
-	out := LegFeed{Revenue: map[string]int64{}, Seats: s.Ledger.SeatsByLeg()}
+	out := LegFeed{Revenue: map[string]int64{}, Seats: s.Ledger.SeatsByLeg(), Accounts: s.Ledger.Accounts()}
 	for _, fs := range s.Flights {
 		for _, f := range fs {
 			key := revenue.Key(f.Carrier, f.Number, f.From)
@@ -793,7 +820,7 @@ func (s *Sim) RevenueByLeg() LegFeed {
 // sold for, which the scorecards then read instead of the local ledger.
 func (s *Sim) SetRevenueFeed(f LegFeed) {
 	s.revenueMu.Lock()
-	s.revenueFeed, s.seatsFeed = f.Revenue, f.Seats
+	s.revenueFeed, s.seatsFeed, s.accountFeed = f.Revenue, f.Seats, f.Accounts
 	s.revenueMu.Unlock()
 	s.scoreMu.Lock()
 	s.scoreAt = time.Time{}
@@ -818,53 +845,6 @@ func (s *Sim) serveRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.RevenueByLeg()) //nolint:errcheck
-}
-
-// competitorMove is the pricing department's decision: a rival on one of
-// the carrier's markets has cut fares. Match and the market's multiplier
-// drops (travellers shop, so the seats sell); hold and the rival takes the
-// price-sensitive share. Asked of seats that run pricing by hand, about
-// once an hour of the day; the autopilot holds.
-func (s *Sim) competitorMove(ctx context.Context, code string, rng func(n int) int) {
-	if s.Airline == nil || !s.Airline.Manual(code, "pricing") {
-		return
-	}
-	fs := s.Flights[code]
-	if len(fs) == 0 {
-		return
-	}
-	// A market where someone else also flies.
-	var f world.Flight
-	found := false
-	for i := 0; i < 20 && !found; i++ {
-		f = fs[rng(len(fs))]
-		for _, g := range s.onwardFrom(f.From) {
-			if g.To == f.To && g.Carrier != f.Carrier {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		return
-	}
-	rival := ""
-	for _, g := range s.onwardFrom(f.From) {
-		if g.To == f.To && g.Carrier != f.Carrier {
-			rival = g.Carrier
-			break
-		}
-	}
-	cut := 10 + rng(16) // 10-25 per cent
-	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: code, Department: "pricing",
-		Title:   fmt.Sprintf("%s has cut %s-%s fares by %d%%", rival, f.From, f.To, cut),
-		Detail:  fmt.Sprintf("Your %s-%s fares are at ×%.2f of the filing. Match: the market multiplier drops to ×%.2f and the seats sell at the lower fare. Hold: the price-sensitive passengers fly %s today.", f.From, f.To, s.tariff.EffectiveMultiplier(code, f.From, f.To), s.tariff.EffectiveMultiplier(code, f.From, f.To)*(1-float64(cut)/100), rival),
-		Options: []airline.Option{{Key: "hold", Label: "hold your fares"}, {Key: "match", Label: fmt.Sprintf("match: %s-%s down %d%%", f.From, f.To, cut)}}, Default: "hold"})
-	if choice == "match" {
-		cur := s.tariff.EffectiveMultiplier(code, f.From, f.To) / s.tariff.Multiplier(code)
-		s.tariff.SetMarketMultiplier(code, f.From, f.To, cur*(1-float64(cut)/100))
-		s.Airline.Emit(code, "action", fmt.Sprintf("%s-%s fares matched down %d%% (×%.2f)", f.From, f.To, cut, s.tariff.EffectiveMultiplier(code, f.From, f.To)), nil)
-	}
 }
 
 // weatherIncidents tells each carrier when a weather system that touches
@@ -985,8 +965,18 @@ func (c *lobbyCache) Carriers() []airline.CarrierInfo {
 	return c.refresh()
 }
 
-// OwnCarriers is this world's rows from the same build.
+// OwnCarriers is this world's rows from the same build. Before the
+// first build it asks the world for its own rows and nothing else: a
+// build asks every joined world for its rows, a joined world asks for
+// these to make its own, and two worlds that both started cold would
+// each wait on the other until the request timed out.
 func (c *lobbyCache) OwnCarriers() []airline.CarrierInfo {
+	c.mu.RLock()
+	cold := c.rows == nil
+	c.mu.RUnlock()
+	if own, ok := c.inner.(airline.OwnCarriers); ok && cold {
+		return own.OwnCarriers()
+	}
 	var out []airline.CarrierInfo
 	for _, r := range c.Carriers() {
 		if r.World == "" {

@@ -1357,12 +1357,18 @@ func TestBookingsArePricedAndClassesNest(t *testing.T) {
 	}
 	// And the ledger holds it against the leg, for the money in the air;
 	// it is posted off the record's bus event, so give it a moment.
+	// The leg earned the fare and the carrier's own fees. The taxes on the
+	// ticket are the governments' and the airports'.
+	earned := rec.Pricing.Base + rec.Pricing.CarrierFees
 	ledgerDeadline := time.Now().Add(5 * time.Second)
-	for s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}) != rec.Pricing.Total && time.Now().Before(ledgerDeadline) {
+	for s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}) != earned && time.Now().Before(ledgerDeadline) {
 		time.Sleep(25 * time.Millisecond)
 	}
-	if got := s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}); got != rec.Pricing.Total {
-		t.Errorf("the leg's ledger holds %d, want the booking's %d", got, rec.Pricing.Total)
+	if got := s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, f.From)}); got != earned {
+		t.Errorf("the leg's ledger holds %d, want the booking's fare %d", got, earned)
+	}
+	if acct := s.Ledger.AccountOf(f.Carrier); acct.Taxes != rec.Pricing.Taxes-rec.Pricing.CarrierFees || acct.Tickets != 1 {
+		t.Errorf("the carrier's account: %+v, for a ticket with %d in taxes", acct, rec.Pricing.Taxes-rec.Pricing.CarrierFees)
 	}
 	if s.Ledger.Sum([]string{revenue.Key(f.Carrier, f.Number, "ZZZ")}) != 0 {
 		t.Errorf("another boarding point should hold nothing")

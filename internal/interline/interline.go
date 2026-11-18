@@ -1,15 +1,26 @@
-// Package interline bills between carriers: when a passenger flies one
-// carrier on a ticket another carrier sold -- the recorded day's seven
-// thousand codeshares -- the carrier that flew the coupon invoices the
-// carrier whose document it was for the coupon's share of the fare, less
-// an interline service charge for the seller's cost of sale. In the world
+// Package interline bills between carriers. When a passenger flies one
+// carrier on a ticket another carrier sold, the carrier that flew the
+// coupon invoices the carrier whose document it was for the coupon's
+// share of the fare, less a service charge for the seller's cost of
+// sale. The coupon may be a codeshare, sold under the seller's code, or
+// a plain interline coupon under the flying carrier's own. In the world
 // the bill is raised from the books the machine holds, once a day and as
 // the day goes, and each pair of carriers gets an invoice.
 //
-// The proration is jetway's pkg/prorate, straight rate by mileage; the
-// invoice layout here is the world's own summary, not IATA's IS-XML, whose
-// passenger record structures sit behind the SIS participation guide and
-// were not consulted.
+// Who gets what. A coupon's share is its part of the fare component
+// that covers it: the pricing divided each through fare between its
+// segments by their miles, which is straight rate proration, and a
+// segment with a fare of its own keeps that fare. A record priced
+// without that detail is prorated whole, by miles (jetway's
+// pkg/prorate). The service charge is what the two carriers have agreed:
+// nine per cent with nothing but the multilateral agreement, less
+// between alliance partners, a commission on a codeshare, nothing
+// inside a joint venture, which shares its revenue another way
+// (internal/partners).
+//
+// The invoice layout here is the world's own summary, not IATA's IS-XML,
+// whose passenger record structures sit behind the SIS participation
+// guide and were not consulted.
 package interline
 
 import (
@@ -41,6 +52,11 @@ type Plan struct {
 	// Accounting names each carrier's three-digit code, which the
 	// documents carry.
 	Accounting func(designator string) string
+	// Charge, when set, is the service charge the carrier that ticketed a
+	// coupon keeps when another flew it, in hundredths of a percent, and
+	// the name of what the two carriers are to each other. Unset, every
+	// pair is charged ServiceCharge.
+	Charge func(ticketed, flown string) (rate int, tie string)
 }
 
 // Line is one billed coupon.
@@ -52,6 +68,9 @@ type Line struct {
 	Flight string `json:"flight"`
 	Sold   string `json:"sold"`
 	Sector string `json:"sector"`
+	// Tie is what the two carriers are to each other, which set the
+	// charge: interline, alliance, codeshare or joint venture.
+	Tie string `json:"tie,omitempty"`
 	// Prorate is the coupon's share of the fare, ServiceCharge what the
 	// biller keeps back for the seller, Net what the seller owes.
 	Prorate       int64 `json:"prorate"`
@@ -152,10 +171,10 @@ type operated struct {
 	km              int
 }
 
-// Run bills one day: every ticketed coupon in the books whose flight was
-// sold under one carrier's code and flown by another, prorated by mileage
-// across the ticket's coupons, less the service charge. A coupon is billed
-// once however many books hold the record.
+// Run bills one day: every ticketed coupon in the books that a carrier
+// other than the ticketing one flew, at its share of the fare less the
+// service charge. A coupon is billed once however many books hold the
+// record.
 func (p *Plan) Run(ctx context.Context, day time.Time, m *world.Manifest, books []Book) (*Summary, error) {
 	shares := map[string]operated{}
 	kmOf := map[string]int{}
@@ -213,24 +232,43 @@ func (p *Plan) Run(ctx context.Context, day time.Time, m *world.Manifest, books 
 				if len(coupons) == 0 {
 					continue
 				}
+				// Each coupon's share: its part of its fare component when
+				// the pricing kept that, and otherwise the whole fare by
+				// miles.
 				fare := rec.Pricing.Base / int64(len(rec.Passengers))
+				var own []int64
 				for _, pp := range rec.Pricing.Passengers {
 					if pp.Ref == tk.PaxRef {
 						fare = 0
 						for _, a := range pp.Segments {
 							fare += a
 						}
+						own = pp.Segments
 					}
 				}
 				prorated, err := prorate.Straight(fare, coupons)
 				if err != nil {
 					continue
 				}
+				airIndex := map[int]int{} // segment ref to its place among the air segments
+				n := 0
+				for i := range rec.Segments {
+					if rec.Segments[i].Type == pnr.SegmentAir {
+						airIndex[rec.Segments[i].Ref] = n
+						n++
+					}
+				}
 				doc := tk.Number.AirlineCode + tk.Number.Serial
 				for i, seg := range segs {
-					op, ok := shares[seg.Carrier+strings.TrimLeft(seg.FlightNum, "0")+"/"+seg.Board]
-					if !ok || op.carrier == validating {
-						continue // flown by the seller, or by the seller's own metal: nothing to bill
+					flown, number := seg.Carrier, seg.FlightNum
+					if seg.OperatingCarrier != "" {
+						flown = seg.OperatingCarrier
+					}
+					if op, ok := shares[seg.Carrier+strings.TrimLeft(seg.FlightNum, "0")+"/"+seg.Board]; ok {
+						flown, number = op.carrier, op.number
+					}
+					if flown == validating {
+						continue // flown by the seller: nothing to bill
 					}
 					id := doc + "/" + fmt.Sprint(coupons[i].Number)
 					if billed[id] {
@@ -238,15 +276,22 @@ func (p *Plan) Run(ctx context.Context, day time.Time, m *world.Manifest, books 
 					}
 					billed[id] = true
 					amount := prorated[i].Amount
-					isc := prorate.ServiceCharge(amount, p.ServiceCharge)
-					k := PairKey(op.carrier, validating)
+					if k, ok := airIndex[seg.Ref]; ok && len(own) == n && k < len(own) {
+						amount = own[k]
+					}
+					rate, tie := p.ServiceCharge, ""
+					if p.Charge != nil {
+						rate, tie = p.Charge(validating, flown)
+					}
+					isc := prorate.ServiceCharge(amount, rate)
+					k := PairKey(flown, validating)
 					inv := sum.ByPair[k]
 					if inv == nil {
-						inv = &Invoice{Biller: op.carrier, Billed: validating}
+						inv = &Invoice{Biller: flown, Billed: validating}
 						sum.ByPair[k] = inv
 					}
 					inv.Lines = append(inv.Lines, Line{Document: doc, Coupon: coupons[i].Number,
-						Flight: op.carrier + op.number, Sold: seg.Carrier + seg.FlightNum, Sector: seg.Board + "-" + seg.Off,
+						Flight: flown + number, Sold: seg.Carrier + seg.FlightNum, Sector: seg.Board + "-" + seg.Off, Tie: tie,
 						Prorate: amount, ServiceCharge: isc, Net: amount - isc})
 					inv.Coupons++
 					inv.Prorate += amount
