@@ -21,6 +21,50 @@ type Operations interface {
 	Project(ctx context.Context, carrier string, req json.RawMessage) (any, error)
 }
 
+// Economics is what a world with an economy tells about a carrier's
+// money: its fuel and fleet, and what an aircraft does on the ground
+// before a departure.
+type Economics interface {
+	Economy(carrier string) (any, bool)
+	Turn(carrier, flight, board string) (any, bool)
+}
+
+func (s *Server) economy(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	code := strings.ToUpper(r.PathValue("carrier"))
+	e, ok := s.view().(Economics)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("this world keeps no economy"))
+		return
+	}
+	v, ok := e.Economy(code)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no economy for %s here", code))
+		return
+	}
+	writeJSON(w, v)
+}
+
+func (s *Server) turn(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	code := strings.ToUpper(r.PathValue("carrier"))
+	e, ok := s.view().(Economics)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("this world keeps no economy"))
+		return
+	}
+	v, ok := e.Turn(code, r.URL.Query().Get("flight"), r.URL.Query().Get("board"))
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no departure %s from %s", r.URL.Query().Get("flight"), r.URL.Query().Get("board")))
+		return
+	}
+	writeJSON(w, v)
+}
+
 func (s *Server) operations() (Operations, bool) {
 	o, ok := s.view().(Operations)
 	return o, ok
@@ -32,6 +76,8 @@ func (s *Server) operationsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /carrier/{carrier}/noc", s.nocState)
 	mux.HandleFunc("POST /carrier/{carrier}/noc/project", s.nocProject)
 	mux.HandleFunc("GET /noc/{carrier}", s.nocPage)
+	mux.HandleFunc("GET /carrier/{carrier}/economy", s.economy)
+	mux.HandleFunc("GET /carrier/{carrier}/turn", s.turn)
 }
 
 func (s *Server) crew(w http.ResponseWriter, r *http.Request) {

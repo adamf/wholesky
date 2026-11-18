@@ -75,6 +75,7 @@ func run() error {
 		noCrew     = flag.Bool("no-crew", false, "fly with any crew and reserves at every hub: no rosters, agreements or labour (saves memory on the whole sky)")
 		nocAuto    = flag.Bool("noc-autopilot", false, "every carrier's operations centre projects forecast weather and acts on the cheapest policy, not only those run by a seat")
 		nocTrials  = flag.Int("noc-trials", 120, "plays of the day in each live projection")
+		econStart  = flag.String("economy-start", "", "the calendar date of the world's first day, YYYY-MM-DD: jet fuel costs what it cost on that date while the record lasts (from 1990-04-02), so 2008-01-02 lives the 2008 spike; empty starts on the day the world sells")
 		liveWx     = flag.Bool("live-weather", false, "add the real terminal forecasts of the busiest airports (aviationweather.gov) to the day; meaningful at -warp 1")
 		gdsCount   = flag.Int("gds", 0, "how many distribution systems to run; 0 runs all five")
 		statsSnap  = flag.String("stats-snapshot", "", "persist the stats rings here across restarts; empty disables")
@@ -169,7 +170,7 @@ func run() error {
 		}
 	}
 	opts := sim.Options{
-		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, NoCrew: *noCrew, NOCAutopilot: *nocAuto, NOCTrials: *nocTrials, LiveWeather: *liveWx, External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
+		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, NoCrew: *noCrew, NOCAutopilot: *nocAuto, NOCTrials: *nocTrials, LiveWeather: *liveWx, EconomyStart: parseDay(*econStart), External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
 		GDSCount:      *gdsCount,
@@ -318,4 +319,13 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseDay reads a YYYY-MM-DD date; anything else is the zero time.
+func parseDay(s string) time.Time {
+	t, err := time.Parse("2006-01-02", strings.TrimSpace(s))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

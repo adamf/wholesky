@@ -186,6 +186,7 @@ var Actions = []struct {
 	{"fares", "multiplier, optionally from and to", "multiply the carrier's fares, in every market or in the one that from and to name. 0.9 is a sale, 1.2 a premium, 0 restores the filing. Fares above the filing lose price-sensitive passengers"},
 	{"ready", "flight, board", "send REA (ready) to the Network Manager and request a slot improvement"},
 	{"reserves", "flight, board", "call a reserve crew for a flight whose crew has timed out, instead of cancelling the flight. The flight must leave a crew base"},
+	{"hedge", "policy, count, minutes", "fix the price of fuel: policy is swap, cap or collar, count the per cent of the fuel to cover, minutes the days it runs (180 when not given)"},
 	{"standby", "board, count", "bring standby crews in at a crew base for the rest of the day: volunteers on a day off, paid half again to sit reserve"},
 	{"noc", "policy", "act on the operations centre's forecast now: absorb, thin 15%, thin 30% or standby crews"},
 	{"respond", "unit, choice", "answer a union's open proposal: accept, counter or refuse"},

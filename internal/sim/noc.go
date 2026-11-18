@@ -27,6 +27,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
+	"github.com/adamf/wholesky/internal/fuel"
 	"github.com/adamf/wholesky/internal/noc"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/workforce"
@@ -490,8 +491,39 @@ func (s *Sim) applyInject(ctx context.Context, ev nocEvent) (string, error) {
 			pf.ArrDelay = max(pf.ArrDelay, pf.Own)
 		})
 		changed = append([]world.Flight{f}, s.fate.Replan(s.Manifest, f.Carrier, f.Tail)...)
+	case "fuel":
+		// A shock to the price of fuel: Factor is the size of the step (0.4
+		// is about half as much again), Duration its half-life in days.
+		if s.econ == nil {
+			return "", fmt.Errorf("this world keeps no economy")
+		}
+		if ev.Factor == 0 || ev.Factor > 1.5 || ev.Factor < -1.5 {
+			ev.Factor = 0.4
+		}
+		half := float64(ev.Duration)
+		if half <= 0 || half == 180 {
+			half = 120
+		}
+		day := int(s.econ.day.Load())
+		before := s.econ.fuel.Reference(day)
+		s.econ.fuel.AddShock(fuel.Shock{Day: day, Step: ev.Factor, HalfLife: half, Name: ev.Source})
+		s.econ.mu.Lock()
+		s.econ.index = map[int]float64{}
+		s.econ.mu.Unlock()
+		s.saveState()
+		res := fmt.Sprintf("fuel shock: spot from $%.2f to $%.2f a gallon, fading by half every %.0f days", before, s.econ.fuel.Reference(day), half)
+		ev.Result = res
+		s.noc.mu.Lock()
+		s.noc.events = append(s.noc.events, ev)
+		s.noc.mu.Unlock()
+		if s.Airline != nil {
+			for code := range s.Tenants {
+				s.Airline.Emit(code, "incident", res, nil)
+			}
+		}
+		return res, nil
 	default:
-		return "", fmt.Errorf("an event is weather, groundstop, closure, sickout or aog")
+		return "", fmt.Errorf("an event is weather, groundstop, closure, sickout, aog or fuel")
 	}
 	byCarrier := map[string][2]int{}
 	for _, f := range changed {
@@ -932,6 +964,10 @@ var _ airline.Operations = seatWorld{}
 // schedule with crews staffed afresh, the cancellations are the new day's
 // to announce, and the desks decide again.
 func (s *Sim) newDay() {
+	if s.econ != nil {
+		s.econ.day.Add(1)
+		s.saveState()
+	}
 	if s.Workforce != nil && s.fate != nil {
 		s.Workforce.NextDay()
 		s.fate.Rebuild(s.Manifest, delayFor)

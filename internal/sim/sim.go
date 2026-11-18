@@ -286,6 +286,12 @@ type Options struct {
 	// as it comes. It means something at warp 1, when the world's clock is
 	// the real one.
 	LiveWeather bool
+	// EconomyStart is the calendar date of the world's first day, for the
+	// things that have a history: the price of fuel is the recorded price
+	// for that date while the record lasts, so a world started in January
+	// 2008 lives that year's spike. Zero starts on the day the world
+	// sells.
+	EconomyStart time.Time
 	// crewFor says which carriers this machine staffs; nil staffs every
 	// carrier it has.
 	crewFor func(string) bool
@@ -318,6 +324,9 @@ type Sim struct {
 	// slots, late aircraft, crews -- decided once from the schedule so every
 	// machine agrees; see internal/dayplan.
 	fate *dayplan.Plan
+	// econ is the world's money side: the calendar, the fuel market, the
+	// fleets and what they cost. See economy.go.
+	econ *economy
 	// Workforce is the carriers' crews and agreements; nil without rosters.
 	Workforce *workforce.Workforce
 	// noc is the operations centres' state: projections, the decisions
@@ -566,7 +575,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		s.Workforce = workforce.New(m, sellingDate(m), opts.crewFor)
 		staff = s.Workforce
 	}
-	s.fate = dayplan.BuildWith(m, sellingDate(m), delayFor, dayplan.Options{Staff: staff})
+	s.initEconomy(m, opts)
+	s.fate = dayplan.BuildWith(m, sellingDate(m), delayFor, dayplan.Options{Staff: staff, MinTurn: minTurn})
 	s.noc = newNOCDesk(opts)
 	s.Airline = airline.New(opts.DecisionWindow)
 	s.lobby = &lobbyCache{inner: seatWorld{s}}
@@ -652,6 +662,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 		mux.HandleFunc("/shard/revenue", s.serveRevenue)
 		mux.HandleFunc("POST /noc/inject", s.serveInject)
+		mux.HandleFunc("GET /economy.json", s.serveEconomy)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)

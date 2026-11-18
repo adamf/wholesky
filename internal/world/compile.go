@@ -3,6 +3,7 @@ package world
 import (
 	"encoding/csv"
 	"fmt"
+	"github.com/adamf/wholesky/internal/equipment"
 	"hash/fnv"
 	"os"
 	"path/filepath"
@@ -168,7 +169,22 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 		// the manifest.
 		rs := append([]rawRoute(nil), a.routes...)
 		sortRoutes(rs)
+		model := equipment.ModelOf(c.Designator)
+		both := map[string]bool{}
 		for _, r := range rs {
+			both[r.src+"/"+r.dst] = true
+		}
+		for _, r := range rs {
+			// A route flown both ways is flown out and back: the aircraft
+			// leaves the carrier's busier station, turns round at the other
+			// end and comes home. The return leg is scheduled from the
+			// outbound, so it is made with it and not as a route of its
+			// own.
+			returns := both[r.dst+"/"+r.src]
+			outward := a.touch[r.src] > a.touch[r.dst] || (a.touch[r.src] == a.touch[r.dst] && r.src < r.dst)
+			if returns && !outward {
+				continue
+			}
 			src, dst := airports[r.src], airports[r.dst]
 			km := haversineKM(src.Lat, src.Lon, dst.Lat, dst.Lon)
 			if km < 30 {
@@ -218,6 +234,22 @@ func Compile(opts CompileOptions) (*Manifest, error) {
 					Equipment: eq, Seats: seats, KM: int(km),
 				})
 				usedAirport[r.src], usedAirport[r.dst] = true, true
+				if !returns {
+					continue
+				}
+				numbers[c.Designator]++
+				if n = numbers[c.Designator]; n > 9999 {
+					break
+				}
+				// Home again after the turnaround the type needs, and a
+				// few minutes the schedule rounds up by.
+				back := dep + block + ScheduledTurn(eq, seats, model, int(km)) + int(h>>12%4)*5
+				flights = append(flights, Flight{
+					Carrier: c.Designator, Number: fmt.Sprintf("%04d", n),
+					From: r.dst, To: r.src,
+					DepMin: back, ArrMin: back + block, BlockMin: block,
+					Equipment: eq, Seats: seats, KM: int(km),
+				})
 			}
 		}
 	}
@@ -423,13 +455,15 @@ func sortAirports(as []Airport) {
 }
 
 // assignTails chains each carrier's flights into aircraft rotations. Greedy
-// and deterministic: flights in departure order, each taken by a tail that
-// last arrived at its origin and has had its turnaround, or by a fresh tail
-// when none has. The result is what a real day of tails looks like from the
-// movement stream: registrations that work their way around the network.
+// and deterministic: flights in departure order, each taken by a tail of
+// its own type that last arrived at its origin and has had its
+// turnaround, or by a fresh tail when none has. The turnaround is the
+// type's, for the way the carrier works: a low-cost carrier's A320 is
+// scheduled 25 or 30 minutes on the ground, a network carrier's 50, and
+// a wide-body going long haul an hour and a half. The result is what a
+// real day of tails looks like from the movement stream: registrations
+// that work their way around the network.
 func assignTails(flights []Flight) {
-	const turnaroundMin = 35
-
 	byCarrier := map[string][]int{}
 	for i, f := range flights {
 		byCarrier[f.Carrier] = append(byCarrier[f.Carrier], i)
@@ -442,6 +476,7 @@ func assignTails(flights []Flight) {
 
 	for _, code := range codes {
 		idx := byCarrier[code]
+		model := equipment.ModelOf(code)
 		sort.SliceStable(idx, func(a, b int) bool {
 			fa, fb := flights[idx[a]], flights[idx[b]]
 			if fa.DepMin != fb.DepMin {
@@ -450,15 +485,19 @@ func assignTails(flights []Flight) {
 			return fa.Number < fb.Number
 		})
 		type tail struct {
-			at      string
+			at, eq  string
 			freeMin int
+			lastKM  int
 		}
 		var tails []tail
 		for _, i := range idx {
 			f := &flights[i]
 			best := -1
 			for j, tl := range tails {
-				if tl.at != f.From || tl.freeMin+turnaroundMin > f.DepMin {
+				if tl.at != f.From || tl.eq != f.Equipment {
+					continue
+				}
+				if tl.freeMin+ScheduledTurn(f.Equipment, f.Seats, model, max(tl.lastKM, f.KM)) > f.DepMin {
 					continue
 				}
 				// The tightest connection wins, which is how schedules are
@@ -472,7 +511,16 @@ func assignTails(flights []Flight) {
 				best = len(tails) - 1
 			}
 			f.Tail = fmt.Sprintf("W%s%03d", code, best+1)
-			tails[best] = tail{at: f.To, freeMin: f.ArrMin}
+			tails[best] = tail{at: f.To, eq: f.Equipment, freeMin: f.ArrMin, lastKM: f.KM}
 		}
 	}
+}
+
+// ScheduledTurn is the ground time a schedule gives an aircraft between
+// two legs, in minutes: the turnaround its tasks take with a full cabin,
+// and the carrier's buffer. km is the longer of the two legs.
+func ScheduledTurn(code string, seats int, model equipment.Model, km int) int {
+	full := seats * 9 / 10
+	t := equipment.TurnFor(equipment.Ground{Type: code, Seats: seats, Off: full, On: full, NextKM: km, Model: model, LongHaul: km >= 4500})
+	return int(t.Scheduled)
 }

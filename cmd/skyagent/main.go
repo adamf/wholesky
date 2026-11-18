@@ -23,6 +23,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -125,6 +126,24 @@ func text(v any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}
 }
 
+type turnArgs struct {
+	Carrier string `json:"carrier,omitempty"`
+	Flight  string `json:"flight" jsonschema:"flight designator and number, e.g. BA0117"`
+	Board   string `json:"board" jsonschema:"boarding point IATA code of the departure"`
+}
+
+// compactEconomy drops the list of tails from the economy view: a large
+// carrier has hundreds, and the totals by type say what an agent needs.
+func compactEconomy(v map[string]any) map[string]any {
+	if fleet, ok := v["fleet"].(map[string]any); ok {
+		delete(fleet, "tails")
+		if offers, ok := fleet["offers"].([]any); ok && len(offers) > 24 {
+			fleet["offers"] = offers[:24]
+		}
+	}
+	return v
+}
+
 type carrierArg struct {
 	Carrier string `json:"carrier,omitempty" jsonschema:"two-letter carrier code; the seat's own when omitted"`
 }
@@ -158,7 +177,7 @@ type nodeArgs struct {
 
 type actArgs struct {
 	Carrier    string  `json:"carrier,omitempty"`
-	Kind       string  `json:"kind" jsonschema:"cancel, retime, substitute, class, fares, ready or reserves"`
+	Kind       string  `json:"kind" jsonschema:"cancel, retime, substitute, class, fares, ready, reserves, standby, noc, respond or hedge"`
 	Flight     string  `json:"flight,omitempty" jsonschema:"flight designator and number, e.g. BA0117"`
 	Board      string  `json:"board,omitempty" jsonschema:"boarding point IATA code of the departure"`
 	Minutes    int     `json:"minutes,omitempty" jsonschema:"retime: the delay to announce"`
@@ -292,7 +311,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board), bring in standby crews at a crew base (board, count), act on the operations centre's forecast now (policy), answer a union (unit, choice). Each lever sends the corresponding messages."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board), bring in standby crews at a crew base (board, count), act on the operations centre's forecast now (policy), answer a union (unit, choice), hedge fuel (kind hedge; policy swap, cap or collar; count the per cent of the fuel; minutes the days it runs). Each lever sends the corresponding messages."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a actArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -409,6 +428,30 @@ func newServer(s *seat) *mcp.Server {
 				return nil, nil, err
 			}
 			out, err := s.call(ctx, "GET", "/carrier/"+code+"/crew/"+a.ID, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "economy", Description: "The carrier's money side: the world's date, the price of jet fuel today (the recorded Gulf Coast spot price while the record lasts), the index the carrier pays on and what it pays at its hub, the forward prices 3, 6 and 12 months out, the share of its fuel that is hedged and each hedge's value; and its fleet by type with ages, which aircraft are leased, the monthly rent, and what lessors offer today. The 400 tails are left out."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/economy", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(compactEconomy(out)), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "turnaround", Description: "What an aircraft does on the ground before one of your departures: the leg it arrives on, the time the schedule gives it, and each task of the turnaround with its start and end in minutes (passengers off, cabin, passengers on, bags off and on, fuel), the path that sets the minimum, and the slack a late arrival can use."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a turnArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/turn?flight="+url.QueryEscape(a.Flight)+"&board="+url.QueryEscape(a.Board), nil)
 			if err != nil {
 				return nil, nil, err
 			}

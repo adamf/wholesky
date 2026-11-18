@@ -96,6 +96,9 @@ type welcome struct {
 	// of the reply. Peers set theirs to it: one world, one clock.
 	Pos    float64  `json:"pos"`
 	Closed []string `json:"closed"`
+	// Day is the core's calendar: the world's day number. One world, one
+	// date, so every machine prices fuel the same.
+	Day int64 `json:"day"`
 }
 
 // shardSummary is the compact state a peer serves at /shard/summary.json for
@@ -442,6 +445,9 @@ func (c *Core) register(w http.ResponseWriter, r *http.Request) {
 		Warp:         c.Sim.clock.Warp(),
 		Pos:          c.Sim.clock.Pos(time.Now()),
 		Closed:       closed,
+	}
+	if c.Sim.econ != nil {
+		wl.Day = c.Sim.econ.day.Load()
 	}
 	if len(c.Sim.Switches) > 1 {
 		wl.SwitchAddrs = map[string]string{}
@@ -792,6 +798,9 @@ func federate(ctx context.Context, s *Sim, coreURL string, reg registration,
 		}
 		if s.clock.Warp() != wl.Warp || drift > 1 {
 			s.clock.Sync(now, wl.Pos, wl.Warp)
+		}
+		if s.econ != nil && wl.Day > s.econ.day.Load() {
+			s.econ.day.Store(wl.Day)
 		}
 		nowClosed := map[string]bool{}
 		for _, a := range wl.Closed {

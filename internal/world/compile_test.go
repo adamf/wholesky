@@ -1,6 +1,7 @@
 package world
 
 import (
+	"github.com/adamf/wholesky/internal/equipment"
 	"sort"
 	"testing"
 )
@@ -28,6 +29,7 @@ func TestRotationsAreCoherent(t *testing.T) {
 		t.Fatal("no rotations at all")
 	}
 	multi := 0
+	turns := map[string][]int{}
 	for tail, legs := range byTail {
 		sort.Slice(legs, func(a, b int) bool { return legs[a].DepMin < legs[b].DepMin })
 		if len(legs) > 1 {
@@ -39,14 +41,36 @@ func TestRotationsAreCoherent(t *testing.T) {
 				t.Errorf("tail %s teleports: %s%s lands %s, %s%s departs %s",
 					tail, prev.Carrier, prev.Number, prev.To, next.Carrier, next.Number, next.From)
 			}
-			if next.DepMin < prev.ArrMin+35 {
-				t.Errorf("tail %s turns in %d minutes between %s%s and %s%s; 35 is the floor",
-					tail, next.DepMin-prev.ArrMin, prev.Carrier, prev.Number, next.Carrier, next.Number)
+			// An aircraft is one type all day, and it is given the ground
+			// time its type needs for the way its carrier works.
+			if next.Equipment != prev.Equipment {
+				t.Errorf("tail %s is a %s on %s%s and a %s on %s%s", tail, prev.Equipment, prev.Carrier, prev.Number, next.Equipment, next.Carrier, next.Number)
 			}
+			floor := ScheduledTurn(next.Equipment, next.Seats, equipment.ModelOf(next.Carrier), max(prev.KM, next.KM))
+			if next.DepMin < prev.ArrMin+floor {
+				t.Errorf("tail %s turns in %d minutes between %s%s and %s%s; a %s of %s is scheduled %d",
+					tail, next.DepMin-prev.ArrMin, prev.Carrier, prev.Number, next.Carrier, next.Number, next.Equipment, next.Carrier, floor)
+			}
+			turns[next.Carrier] = append(turns[next.Carrier], floor)
 		}
 	}
 	if multi == 0 {
 		t.Error("every tail flies exactly one leg; the chaining never chained anything")
+	}
+	// easyJet's standard turn is 25 minutes and the schedule gives it 30;
+	// a network carrier's narrow-body is given 45 and more.
+	low, net := 1000, 0
+	for carrier, ts := range turns {
+		for _, v := range ts {
+			if equipment.ModelOf(carrier) != equipment.Network {
+				low = min(low, v)
+			} else {
+				net = max(net, v)
+			}
+		}
+	}
+	if low > 30 || net < 45 {
+		t.Errorf("shortest low-cost turn %d, longest network turn %d", low, net)
 	}
 	t.Logf("%d flights on %d tails, %d rotations of 2+ legs", len(m.Flights), len(byTail), multi)
 }

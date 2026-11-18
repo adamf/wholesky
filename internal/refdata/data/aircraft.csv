@@ -1,0 +1,31 @@
+iata,icao,name,body,seats,mtow_tonnes,lto_fuel_kg,burn_fixed_kg,burn_kg_per_km,value_new_musd,lease_new_kusd_month,lease_10y_kusd_month,maintenance_usd_block_hour,turn_full_min,turn_minimum_min,basis
+AT7,AT76,ATR 72-600,T,70,23.0,199,56,1.447,21,150,108,575,25,20,value:S lease_new:E lease_10y:S dmc:E turn:R
+DH4,DH8D,Dash 8-400,T,78,30.5,259,133,1.711,21,160,95,775,25,20,value:E lease_new:E lease_10y:E dmc:E turn:R
+CR9,CRJ9,CRJ900,R,76,38.3,480,184,1.898,24,190,95,975,30,25,value:E lease_new:E lease_10y:E dmc:E turn:E
+E75,E75L,Embraer 175,R,76,40.4,482,235,1.703,29.5,215,120,900,18,16,value:E lease_new:E lease_10y:S dmc:E turn:E
+E90,E190,Embraer 190,R,100,51.8,596,185,2.235,34,270,145,850,18,16,value:S lease_new:E lease_10y:E dmc:E turn:S
+221,BCS1,Airbus A220-100,N,120,63.0,598,294,2.406,34,250,185,900,32,25,value:E lease_new:E lease_10y:E dmc:E turn:E
+223,BCS3,Airbus A220-300,N,140,69.9,530,313,2.635,40,300,185,900,32,25,value:S lease_new:S lease_10y:E dmc:E turn:E
+319,A319,Airbus A319,N,140,75.5,689,233,2.569,35,259,160,1050,37,21,value:S lease_new:S lease_10y:E dmc:E turn:S
+320,A320,Airbus A320,N,180,78.0,816,274,2.773,42.8,300,240,1125,44,22,value:S lease_new:S lease_10y:S dmc:E turn:S
+321,A321,Airbus A321,N,220,93.5,1075,210,3.551,48.4,344,275,1275,52,23,value:S lease_new:S lease_10y:E dmc:E turn:S
+32N,A20N,Airbus A320neo,N,180,79.0,661,227,2.414,55,400,315,800,44,22,value:E lease_new:S lease_10y:E dmc:E turn:S
+32Q,A21N,Airbus A321neo,N,220,97.0,749,245,2.866,64.5,460,365,900,52,23,value:E lease_new:S lease_10y:E dmc:E turn:S
+73G,B737,Boeing 737-700,N,137,70.1,825,245,2.598,35,250,160,1050,35.4,25,value:S lease_new:E lease_10y:E dmc:E turn:S
+73H,B738,Boeing 737-800,N,174,79.0,825,319,2.85,44.9,339,240,1125,37.5,16.5,value:S lease_new:S lease_10y:S dmc:E turn:S
+7M8,B38M,Boeing 737 MAX 8,N,175,82.2,731,258,2.415,55,400,315,800,40,16.5,value:S lease_new:S lease_10y:E dmc:E turn:S
+752,B752,Boeing 757-200,N,190,115.7,1363,205,4.164,0,0,110,1800,39,30,lease_10y:E dmc:E turn:S
+763,B763,Boeing 767-300ER,W,240,186.9,1730,545,5.457,0,0,220,2150,55,40,lease_10y:E dmc:E turn:S
+332,A332,Airbus A330-200,W,260,242.0,2168,569,6.178,75,621,275,2050,51,32,value:S lease_new:S lease_10y:E dmc:E turn:S
+333,A333,Airbus A330-300,W,290,242.0,2168,787,5.876,86.8,729,330,2050,55,34,value:S lease_new:S lease_10y:S dmc:E turn:S
+339,A339,Airbus A330-900,W,290,251.0,1817,108,6.152,115,750,500,1700,55,34,value:E lease_new:S lease_10y:E dmc:E turn:E
+788,B788,Boeing 787-8,W,240,227.9,1638,170,5.338,120,850,500,1700,41.5,29,value:E lease_new:E lease_10y:E dmc:E turn:S
+789,B789,Boeing 787-9,W,290,254.0,1638,276,5.702,155,1050,700,1800,51,29,value:E lease_new:S lease_10y:E dmc:E turn:S
+781,B78X,Boeing 787-10,W,320,254.0,1868,667,5.825,165,1200,760,1900,55,30,value:E lease_new:E lease_10y:E dmc:E turn:E
+359,A359,Airbus A350-900,W,315,283.0,2138,207,6.726,168.5,1140,800,1700,62,34,value:S lease_new:S lease_10y:E dmc:E turn:S
+351,A35K,Airbus A350-1000,W,360,319.0,2412,353,7.496,190,1400,900,2100,65,36,value:E lease_new:E lease_10y:E dmc:E turn:E
+772,B772,Boeing 777-200ER,W,300,297.6,2168,317,7.053,0,0,200,2700,60,35,lease_10y:E dmc:E turn:E
+77W,B77W,Boeing 777-300ER,W,360,351.5,2907,278,9.214,165.2,1300,450,2650,62,35,value:S lease_new:E lease_10y:S dmc:E turn:S
+744,B744,Boeing 747-400,W,400,396.9,3908,665,10.688,0,0,170,4000,100,75,lease_10y:S dmc:E turn:E
+74H,B748,Boeing 747-8,W,410,447.7,3495,965,11.735,160.8,1268,400,3400,108.5,75,value:S lease_new:S lease_10y:E dmc:E turn:S
+388,A388,Airbus A380-800,W,500,575.0,3859,128,14.541,224.1,1757,758,4750,89,70,value:S lease_new:S lease_10y:S dmc:E turn:S

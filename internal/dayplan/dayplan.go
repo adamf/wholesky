@@ -113,6 +113,10 @@ type Plan struct {
 	// and whether a reserve answers. Unset, any crew flies and reserves
 	// wait at every carrier's hub.
 	Staff Staff
+	// MinTurn, when set, is the least time the aircraft of a leg needs on
+	// the ground before it: the type's turnaround for the carrier's way
+	// of working. Unset, every aircraft turns in MinTurnMin.
+	MinTurn func(f world.Flight) int
 	// mu guards Flights once the plan is in use: whoever runs a carrier may
 	// change a flight's fate (call reserves, take a slot improvement) while
 	// the simulation reads it.
@@ -201,7 +205,7 @@ func Build(m *world.Manifest, day time.Time, own Own) *Plan {
 // BuildWith computes the day with a scenario's weather, ground stops and
 // cancellations in place of the drawn ones, and a crew roster.
 func BuildWith(m *world.Manifest, day time.Time, own Own, opts Options) *Plan {
-	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}, Staff: opts.Staff, released: map[string]bool{}, ready: map[string]bool{}}
+	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}, Staff: opts.Staff, MinTurn: opts.MinTurn, released: map[string]bool{}, ready: map[string]bool{}}
 	for _, f := range m.Flights {
 		pf := &Flight{}
 		if f.Actual != nil {
@@ -583,25 +587,36 @@ func rotations(m *world.Manifest) map[string][]world.Flight {
 }
 
 // rotate passes a late aircraft's delay to its next leg: a departure
-// cannot leave before the aircraft has arrived and turned.
+// cannot leave before the aircraft has arrived and turned. The turn is
+// the type's minimum for the carrier, and never more than the time the
+// schedule itself gave the aircraft: a schedule that plans a turn is
+// taken to know its own ground operation. What the schedule gave beyond
+// the minimum is the slack that absorbs a late arrival.
 func (p *Plan) rotate(m *world.Manifest) {
 	for _, legs := range rotations(m) {
-		prevIn := -1
+		prevIn, prevSched := -1, -1
 		for _, f := range legs {
 			pf := p.Flights[Key(f)]
 			if pf.Cancelled {
-				prevIn = -1
+				prevIn, prevSched = -1, -1
 				continue
 			}
 			dep := f.DepMin + pf.DepDelay
-			if prevIn >= 0 && prevIn+MinTurnMin > dep {
-				late := prevIn + MinTurnMin - dep
+			turn := MinTurnMin
+			if p.MinTurn != nil {
+				turn = p.MinTurn(f)
+			}
+			if prevSched >= 0 && f.DepMin-prevSched < turn {
+				turn = max(f.DepMin-prevSched, 0)
+			}
+			if prevIn >= 0 && prevIn+turn > dep {
+				late := prevIn + turn - dep
 				pf.LateAircraft = late
 				pf.DepDelay += late
 				pf.ArrDelay += late
 				p.Summary.LateAircraft++
 			}
-			prevIn = f.ArrMin + pf.ArrDelay
+			prevIn, prevSched = f.ArrMin+pf.ArrDelay, f.ArrMin
 		}
 	}
 }

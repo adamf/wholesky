@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
+	"github.com/adamf/wholesky/internal/fuel"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/noc"
 	"github.com/adamf/wholesky/internal/revenue"
@@ -272,11 +274,23 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			if block <= 0 {
 				block = f.ArrMin - f.DepMin
 			}
-			perMin := costPerBlockMinBase + costPerBlockMinSeat*int64(seats)
-			if !roster {
-				perMin += costPerBlockMinCrew
+			if w.s.econ != nil {
+				fc := w.s.econ.flightCost(f, booked)
+				sc.Costs["fuel"] += fc.Fuel
+				sc.Costs["maintenance"] += fc.Maintenance + fc.Reserves
+				sc.Costs["airports"] += fc.Airports
+				sc.Costs["navigation"] += fc.Navigation
+				sc.Costs["ground handling"] += fc.Handling
+				if !roster {
+					sc.Costs["crew"] += int64(block) * costPerBlockMinCrew
+				}
+			} else {
+				perMin := costPerBlockMinBase + costPerBlockMinSeat*int64(seats)
+				if !roster {
+					perMin += costPerBlockMinCrew
+				}
+				sc.Costs["block hours"] += int64(block) * perMin
 			}
-			sc.Costs["block hours"] += int64(block) * perMin
 			if fate.DepDelay <= 15 {
 				sc.OnTime++
 			} else {
@@ -298,6 +312,17 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		tr := t.Tracing()
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
+	}
+	if e := w.s.econ; e != nil {
+		// The fleet costs what it costs whether it flies or not: the share
+		// of a day's rent and ownership that has passed, and what the fuel
+		// hedges paid or cost over the same hours.
+		share := math.Min(1, math.Max(0, pos/(24*60)))
+		rent, own := e.fixedCosts(code, share)
+		sc.Costs["aircraft rent"] += rent
+		sc.Costs["aircraft ownership"] += own
+		sc.Costs["fuel hedges"] -= e.hedgeResult(code, share)
+		sc.Costs["fuel hedges"] += e.premiumsToday(code)
 	}
 	for k, v := range sc.Costs {
 		if v == 0 {
@@ -411,6 +436,9 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		}
 		pos, _ := w.Clock()
 		return s.applyPolicy(ctx, code, md, s.forecast(code, pos, md), pol), nil
+	}
+	if a.Kind == "hedge" {
+		return s.hedge(code, fuel.Kind(strings.ToLower(a.Policy)), a.Count, a.Minutes)
 	}
 	if a.Kind == "fares" {
 		if a.From != "" && a.To != "" {
@@ -912,6 +940,21 @@ func (c *lobbyCache) Project(ctx context.Context, code string, req json.RawMessa
 		return o.Project(ctx, code, req)
 	}
 	return nil, fmt.Errorf("this world has no operations centres")
+}
+
+// Economy and Turn pass the economy through.
+func (c *lobbyCache) Economy(code string) (any, bool) {
+	if e, ok := c.inner.(airline.Economics); ok {
+		return e.Economy(code)
+	}
+	return nil, false
+}
+
+func (c *lobbyCache) Turn(code, flight, board string) (any, bool) {
+	if e, ok := c.inner.(airline.Economics); ok {
+		return e.Turn(code, flight, board)
+	}
+	return nil, false
 }
 
 // Has answers cheaply from the inner world.

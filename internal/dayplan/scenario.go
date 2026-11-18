@@ -28,6 +28,8 @@ type Options struct {
 	Cancel map[string]string
 	// Staff is the crew roster.
 	Staff Staff
+	// MinTurn is the least ground time before a leg; see Plan.MinTurn.
+	MinTurn func(f world.Flight) int
 }
 
 // GroundStop holds every departure to an airport from Start to End:
@@ -269,7 +271,7 @@ func (p *Plan) Rebuild(m *world.Manifest, own Own) {
 	if p == nil {
 		return
 	}
-	fresh := BuildWith(m, p.Day, own, Options{Staff: p.Staff})
+	fresh := BuildWith(m, p.Day, own, Options{Staff: p.Staff, MinTurn: p.MinTurn})
 	p.mu.Lock()
 	p.Flights, p.Weather, p.Regulations, p.Summary = fresh.Flights, fresh.Weather, fresh.Regulations, fresh.Summary
 	p.released, p.ready = fresh.released, fresh.ready

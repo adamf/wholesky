@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/adamf/wholesky/internal/airline"
+	"github.com/adamf/wholesky/internal/fuel"
 )
 
 // What a restart must not forget. A world's books start each day clean by
@@ -33,6 +34,15 @@ type worldState struct {
 	Nodes    map[string]string          `json:"nodes"`
 	// Worlds are the joined worlds' hellos, with the side this world took.
 	Worlds []savedWorld `json:"worlds"`
+	// Economy is the calendar and what was done to the market: the day the
+	// world has reached, the shocks added, and the hedges carriers hold.
+	Economy *savedEconomy `json:"economy,omitempty"`
+}
+
+type savedEconomy struct {
+	Day    int64                   `json:"day"`
+	Shocks []fuel.Shock            `json:"shocks,omitempty"`
+	Hedges map[string][]fuel.Hedge `json:"hedges,omitempty"`
 }
 
 type savedWorld struct {
@@ -151,6 +161,21 @@ func (s *Sim) snapshot() worldState {
 	}
 	s.foreignMu.RUnlock()
 	sort.Slice(st.Worlds, func(i, j int) bool { return st.Worlds[i].Hello.Code < st.Worlds[j].Hello.Code })
+	if e := s.econ; e != nil {
+		se := &savedEconomy{Day: e.day.Load(), Shocks: e.fuel.Shocks(), Hedges: map[string][]fuel.Hedge{}}
+		e.mu.Lock()
+		for code, hs := range e.hedges {
+			// The hedges a carrier had before the world began are worked
+			// out again at boot; only the ones taken since are kept.
+			for _, h := range hs {
+				if h.Bought >= 0 {
+					se.Hedges[code] = append(se.Hedges[code], h)
+				}
+			}
+		}
+		e.mu.Unlock()
+		st.Economy = se
+	}
 	return st
 }
 
@@ -269,6 +294,19 @@ func (s *Sim) restoreState(ctx context.Context) {
 	}
 	for code, u := range st.Nodes {
 		s.SetNodeURL(code, u)
+	}
+	if e := s.econ; e != nil && st.Economy != nil {
+		e.day.Store(st.Economy.Day)
+		for _, sh := range st.Economy.Shocks {
+			e.fuel.AddShock(sh)
+		}
+		e.mu.Lock()
+		for code, hs := range st.Economy.Hedges {
+			if _, ok := e.fleets[code]; ok {
+				e.hedges[code] = append(e.hedges[code], hs...)
+			}
+		}
+		e.mu.Unlock()
 	}
 	for _, w := range st.Worlds {
 		// A world that said hello again while this one was booting is
