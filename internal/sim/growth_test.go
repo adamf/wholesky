@@ -226,3 +226,249 @@ func TestAServiceIsProjectedOrderedAndFlown(t *testing.T) {
 		t.Errorf("the book after the restart: %+v", got)
 	}
 }
+
+// A running world takes a schedule change overnight. A carrier orders a
+// service of 2 round trips a day. At the end of a day before the service
+// is due the world carries on. At the end of the day it comes due the
+// world stops and starts again: the carrier has 4 more flights, the
+// calendar and the carrier's cash are where they were, and the order is
+// marked as flying. The world does not stop again for the same order.
+func TestARunningWorldTakesAScheduleChangeOvernight(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	before := len(m.Flights)
+	worlds := make(chan *Sim, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, m, Options{Log: log, AllowPrivatePeers: true, LinkSecret: "keep"},
+			func(_ context.Context, s *Sim) { worlds <- s })
+	}()
+	next := func() *Sim {
+		select {
+		case s := <-worlds:
+			return s
+		case err := <-done:
+			t.Fatalf("the world ended: %v", err)
+		case <-ctx.Done():
+			t.Fatal("no world started")
+		}
+		return nil
+	}
+	s := next()
+	var code string
+	var f world.Flight
+	for _, c := range m.Carriers {
+		for _, g := range s.Flights[c.Designator] {
+			if g.From == c.Hub && g.KM > 300 {
+				code, f = c.Designator, g
+				break
+			}
+		}
+		if code != "" {
+			break
+		}
+	}
+	if code == "" {
+		t.Skip("no carrier in the small world flies 300 km from its hub")
+	}
+	had := len(s.Flights[code])
+	w := seatWorld{s}
+	if _, err := w.Act(ctx, code, airline.Action{Kind: "grow", From: f.From, To: f.To, Policy: "320", Count: 2}); err != nil {
+		t.Fatal(err)
+	}
+	day := s.econ.day.Load()
+
+	// The service is weeks from due: the day ends and the world goes on.
+	if s.wrapDay(ctx) {
+		t.Fatal("the world stopped for a service that is not due")
+	}
+	select {
+	case <-s.Rescheduled():
+		t.Fatal("the world says it stopped")
+	default:
+	}
+	// The day before it is due.
+	s.econ.mu.Lock()
+	due := s.bookOf(code).Orders[0].Due
+	s.econ.mu.Unlock()
+	s.econ.day.Store(int64(due) - 1)
+	if !s.wrapDay(ctx) {
+		t.Fatal("the service came due and the world went on without it")
+	}
+	// What the carrier had when the world stopped, after 2 days closed.
+	s.econ.mu.Lock()
+	cash := s.bookOf(code).Cash
+	s.econ.mu.Unlock()
+	s2 := next()
+	if s2 == s {
+		t.Fatal("the same world came back")
+	}
+	if got := len(s2.Flights[code]); got != had+4 {
+		t.Errorf("%s flew %d flights and now flies %d; 2 round trips are 4 more", code, had, got)
+	}
+	added := 0
+	for _, g := range s2.Flights[code] {
+		if (g.From == f.From && g.To == f.To) || (g.From == f.To && g.To == f.From) {
+			added++
+		}
+	}
+	if added < 4 {
+		t.Errorf("%d flights between %s and %s after the order", added, f.From, f.To)
+	}
+	if got := s2.econ.day.Load(); got != int64(due) || got <= day {
+		t.Errorf("the calendar is at day %d; the service was due on day %d", got, due)
+	}
+	s2.econ.mu.Lock()
+	b := s2.bookOf(code)
+	flying, cash2 := len(b.Orders) == 1 && b.Orders[0].Flying, b.Cash
+	s2.econ.mu.Unlock()
+	if !flying {
+		t.Error("the order is not marked as flying in the new world")
+	}
+	if cash2 != cash {
+		t.Errorf("the carrier's cash was %d when the world stopped and is %d", cash, cash2)
+	}
+	if len(m.Flights) != before {
+		t.Errorf("the manifest the world came from had %d flights and has %d", before, len(m.Flights))
+	}
+	// The next day ends as any day does.
+	if s2.wrapDay(ctx) {
+		t.Error("the world stopped again for a service it already flies")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("the world ended with %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Error("the world did not end with its context")
+	}
+}
+
+// An incumbent answers an entrant with flights. A rival begins 2 round
+// trips a day on a route that a carrier flies from its hub. The rival is
+// losing money and has cash for a few days of it, so the carrier orders
+// half as many flights again as it flies there, and no more than 4. It
+// answers once. It does not answer a rival with the cash to last, and a
+// carrier whose network planning is in a seat's hands is left to decide.
+func TestAnIncumbentAnswersAWeakEntrant(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{Log: log, AllowPrivatePeers: true, LinkSecret: "keep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	// An incumbent, a route from its hub that it flies, and the flights
+	// it would add: they must earn what they cost to fly.
+	var inc, hub, far, typ string
+	own, add := 0, 0
+	for _, c := range m.Carriers {
+		routes := map[string]int{}
+		types := map[string]string{}
+		for _, f := range s.Flights[c.Designator] {
+			if f.From == c.Hub && f.KM > 300 {
+				routes[f.To]++
+				types[f.To] = f.Equipment
+			}
+		}
+		for to, n := range routes {
+			want := growth.Answer(n, growth.Entrant{Daily: 2, Aircraft: 1})
+			p, mk, costs, err := s.proposal(c.Designator, c.Hub, to, types[to], want)
+			if err == nil && growth.Project(p, mk, costs).Covers() && (inc == "" || to < far) {
+				inc, hub, far, typ, own, add = c.Designator, c.Hub, to, types[to], n, want
+			}
+		}
+		if inc != "" {
+			break
+		}
+	}
+	if inc == "" {
+		t.Skip("no route in the small world would cover the cost of more flights")
+	}
+	var rival string
+	for _, c := range m.Carriers {
+		if c.Designator != inc && s.Tenants[c.Designator] != nil && c.Hub != hub && c.Hub != far {
+			rival = c.Designator
+			break
+		}
+	}
+	if rival == "" {
+		t.Skip("no second carrier in the small world")
+	}
+	day := int(s.econ.day.Load())
+	enter := func(id string, cash int64) {
+		s.econ.mu.Lock()
+		b := s.bookOf(rival)
+		b.Days, b.Cash = nil, cash
+		b.Orders = append(b.Orders, growth.Order{ID: id, From: far, To: hub, Type: "320", Daily: 2, Aircraft: 1, Placed: day - leadDays, Due: day, Flying: true})
+		s.econ.mu.Unlock()
+	}
+	answers := func(code string) []growth.Order {
+		s.econ.mu.Lock()
+		defer s.econ.mu.Unlock()
+		var out []growth.Order
+		for _, o := range s.bookOf(code).Orders {
+			if o.Answers != "" {
+				out = append(out, o)
+			}
+		}
+		return out
+	}
+	// A rival with 10,000 dollars: the day it closes with no flights
+	// flown is a loss, and it cannot pay for a second.
+	enter("R-1", 10_000_00)
+	s.closeDay()
+	got := answers(inc)
+	if len(got) != 1 {
+		t.Fatalf("%s flies %d a day %s-%s and a weak rival began 2: its answers are %+v", inc, own, hub, far, got)
+	}
+	o := got[0]
+	if o.Answers != "R-1" || o.From != hub || o.To != far || o.Daily != add || o.Type != typ || o.Due != day+leadDays || o.Paid <= 0 || o.Flying {
+		t.Errorf("the answer %+v; want %d more a day %s-%s on %s, due on day %d", o, add, hub, far, typ, day+leadDays)
+	}
+	if add != min((own+1)/2, 4) {
+		t.Errorf("%d a day answered with %d", own, add)
+	}
+	// The next day it has answered already.
+	s.closeDay()
+	if got := answers(inc); len(got) != 1 {
+		t.Errorf("a second day, and the answers are %+v", got)
+	}
+	// An answer is not an entry: the rival does not add flights against
+	// the incumbent's answer.
+	if got := answers(rival); len(got) != 0 {
+		t.Errorf("the rival answered the answer: %+v", got)
+	}
+	// A rival with the cash to last: no flights are added against it,
+	// unless its fleet is small.
+	s.econ.mu.Lock()
+	fleet := len(s.econ.fleets[rival])
+	s.econ.mu.Unlock()
+	t.Logf("%s flies %d a day %s-%s on the %s and adds %d; the rival %s has %d aircraft", inc, own, hub, far, typ, add, rival, fleet)
+	enter("R-2", 1_000_000_000_000_00)
+	s.closeDay()
+	if got := answers(inc); fleet >= 10 && len(got) != 1 {
+		t.Errorf("a rival with %d aircraft and cash to last was answered: %+v", fleet, got)
+	}
+	// A seat that plans its own network is not answered for.
+	_, token, err := s.Airline.Take(inc, "planner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Airline.SetManual(inc, token, "network", true); err != nil {
+		t.Fatal(err)
+	}
+	enter("R-3", 10_000_00)
+	s.closeDay()
+	for _, o := range answers(inc) {
+		if o.Answers == "R-3" {
+			t.Errorf("network planning is in a seat's hands and the carrier answered for it: %+v", o)
+		}
+	}
+}

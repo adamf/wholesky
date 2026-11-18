@@ -471,10 +471,31 @@ leaves the book at once. The service comes due in 42 days, or in 90
 days at a station that the carrier does not serve. A schedule change in
 the airline industry takes 2 to 10 weeks.
 
-A schedule changes when the world starts. `skyd` reads the state file
-and adds the flights of each order that is due. A world on several
-machines needs one world file for all of them. Write it with
+**The schedule change.** A schedule changes overnight. A world on one
+machine ends the day on which an order comes due, stops, and starts
+again with the service in its schedule. The new world reads the state
+file, which holds the calendar, the books, the fares and the policies.
+The clock follows the wall clock, and the new world is at the same
+minute of the day. A world on several machines does not do this. It
+needs one world file for all of its machines. Write that file with
 `worldc -in world.json -grow state.json -o next.json`.
+
+**The answer to an entrant.** At the end of each day, a carrier looks
+for a rival that has begun a service on a route from the carrier's hub.
+The carrier answers a weak rival with flights.
+
+| Step | Value | Source |
+| --- | --- | --- |
+| A weak rival | Fewer than 10 aircraft, or cash for less than 12 months of its losses | [Rule 6 of the competition note](research/competition.md) |
+| Flights added | Half as many again as the carrier flies on the route | American added 35 to 80 % against Vanguard and Western Pacific in 1995 and 1996 |
+| Limit | 2 round trips for each of the rival's | Qantas against Virgin Australia, 2011 to 2014 |
+| Condition | The added flights earn at least their cost without the aircraft rent | The court in *United States v. AMR* found no liability inside this line |
+| Time | The order comes due in 42 days | The record is 1 to 3 months |
+| A rival that is not weak | No flights added. The pricing desk answers on price | American against Southwest. Goolsbee and Syverson (2008) |
+
+A carrier answers each new service once, and an answer is not itself
+answered. The order records the rival's order that it answers. A seat
+that takes the `network` department decides for itself.
 
 ## What is missing
 
@@ -490,16 +511,27 @@ machines needs one world file for all of them. Write it with
 - **Joint ventures as one seller.** The parties of a joint venture pool
   revenue. Their pricing desks still compete with each other, and no
   venture shares profit.
-- **A rolling calendar.** The world flies one date. A traveller's
-  booking date is a property of the traveller, and a return flight is on
-  a later date that the world never flies.
+- **A rolling calendar.** The world flies one date, and flies it again
+  each day. At the end of a day the books are emptied and written again.
+  A traveller's booking date is a property of the traveller, and a
+  return flight is on a later date that the world never flies. A
+  calendar that rolls needs a book for each future date, filled to its
+  place on the booking curve. The next date's book must then become the
+  day's book. On the recorded day, each date is 1.4 million records.
 - **After a missed connection.** A passenger whose inbound flight is
   late misses the connection by the curve in `internal/airport`, and the
   scorecard counts them. Nobody rebooks them, and they cost the carrier
   nothing.
 - **Ancillary revenue.** A ticket has a fare and taxes. Bags, seats and
-  other fees are not sold.
-- **Schedule change in a running world.** An order takes effect at a
-  start of the world.
-- **Capacity response.** A pricing desk changes fares. It does not add
-  or remove flights in response to a competitor.
+  other fees are not sold. The fares are calibrated to a report that
+  excludes fees. US carriers earned 4.6 % more than their fares from
+  bags and changes in 2023. Spirit earned $53.01 of fare and $68.57 of
+  other revenue for each passenger segment. A model with fees needs a
+  lower base fare for the ultra-low-cost carriers, the fee in the price
+  that a traveller compares, and a new calibration. The
+  [research note](research/rm-fares.md) has the figures.
+- **Exits.** A carrier does not drop a service, leave a market or fail.
+  An incumbent therefore never takes its added flights out again, and
+  fares do not return after a fight.
+- **Schedule change on several machines.** Only a world on one machine
+  starts again on its own when an order comes due.

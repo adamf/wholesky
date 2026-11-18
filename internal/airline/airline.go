@@ -47,6 +47,7 @@ var Departments = []Department{
 	{"ground", "Ground and baggage", "bags left behind: rush them on the next flight or hold them for tomorrow"},
 	{"noc", "Network operations centre", "a forecast disruption: absorb it, thin the schedule ahead of it, or bring in standby crews, with each choice's projected cost"},
 	{"labour", "Labour relations", "a union's proposal when an agreement is open: accept, counter or refuse"},
+	{"network", "Network planning", "new services, and the answer in flights to a rival that enters a route from the hub"},
 }
 
 func departmentKnown(key string) bool {

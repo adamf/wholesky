@@ -432,6 +432,11 @@ Reading across the three: adjacent discount rungs sit 12% to 32% apart, mostly 1
 | US baggage fees | $7.0bn in 2023 across 18 carriers | **[V]** same, citing BTS |
 | Top LCCs vs traditional, 2023 | per-passenger ancillary up 13.1% vs down 4.3% | **[V]** IdeaWorks press release |
 | Wizz, Ryanair | about 45% and about 30-35% | **[R]** |
+| US scheduled passenger airlines, 2023 | Operating revenue $236.3bn. Fares $179.2bn (75.8%). Baggage fees $7.1bn (3.0%). Reservation change fees $1.1bn (0.4%) | **[V]** BTS, "U.S. Airlines Gain $7.8 Billion in 2023" <https://www.bts.gov/newsroom/us-airlines-gain-78-billion-2023-increase-over-2022>; the baggage and change-fee amounts as summarised by Aviation Week and confirmed by the 2024 release's comparison figures |
+| Spirit, FY2023 | Per passenger flight segment: fare revenue $53.01 (2022: $63.85), non-ticket revenue $68.57 (2022: $67.93), total $121.58 | **[V]** Form 10-K <https://www.sec.gov/Archives/edgar/data/1498710/000149871024000117/save-20231231.htm> |
+| Ryanair, FY2024 (to 31 March 2024) | Average fare EUR 49.80. Ancillary sales EUR 4.30bn on 183.7m passengers, about EUR 23.40 each | **[V]** company results <https://investor.ryanair.com/wp-content/uploads/2024/05/FY24-Ryanair-Results.pdf> and press coverage of them |
+
+**For the model.** The simulator's fares are calibrated to the DOT Consumer Airfare Report, whose fares exclude optional fees. Fees are therefore additional revenue: for US carriers as a group, bags and changes add 4.6% to fares (8.2 / 179.2). An ultra-low-cost carrier is a different case: Spirit earned 1.29 times its fare revenue again in non-ticket revenue, and its fare was 44% of what a passenger paid it. The simulator's ultra-low-cost fare level (0.62 of the market average) is the report's low-fare share, not a base fare of that kind. Adding fees needs three changes together: a lower base fare for those carriers, the expected fee in the price a traveller compares, and a new calibration run. Adding fee revenue on top of today's fares would count it twice.
 
 ---
 

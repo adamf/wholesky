@@ -604,6 +604,10 @@ Here is what works. `go test ./...` proves it on every run.
 - The scorecard charges each flight its fuel, maintenance, airport and
   navigation charges, and each ticket its cost of sale. A carrier's book
   keeps its cash and its days across restarts.
+- A carrier can order a new service, and a carrier answers a weak rival
+  that enters a route from its hub with more flights of its own. A world
+  on one machine takes the schedule change overnight: it ends the day,
+  stops, and starts again with the new flights.
 - Every departure runs the whole ground process:
   1. Reservations sends the name list at T−180.
   2. Departure control (Jetway's `pkg/dcs`) opens the flight.

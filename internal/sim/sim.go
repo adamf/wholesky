@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -154,6 +155,10 @@ type Options struct {
 	// can be published for nodes on the internet to dial; zero picks a
 	// free port.
 	LinkPort int
+	// Reschedule makes the world stop at the end of a day on which a
+	// service that a carrier ordered has come due. Its owner then starts
+	// it again, and the service is in the schedule. Run sets it.
+	Reschedule bool
 	// StateFile, when set, is where the world keeps what a restart must
 	// not forget: seats, claims, nodes, joined worlds. See state.go.
 	StateFile string
@@ -320,7 +325,13 @@ type Sim struct {
 	fill       float64
 	fillSeed   int64
 	refill     bool
-	Manifest   *world.Manifest
+	// reschedules is Options.Reschedule. rescheduled closes when the
+	// world has stopped its day for a schedule change, and consoleDone
+	// when the console has let go of its address.
+	reschedules bool
+	rescheduled chan struct{}
+	consoleDone chan struct{}
+	Manifest    *world.Manifest
 	// fate is the day's plan for every flight -- delays with their causes,
 	// slots, late aircraft, crews -- decided once from the schedule so every
 	// machine agrees; see internal/dayplan.
@@ -553,6 +564,8 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		fill:            opts.Fill,
 		fillSeed:        opts.FillSeed,
 		refill:          opts.Refill,
+		reschedules:     opts.Reschedule,
+		rescheduled:     make(chan struct{}),
 		flightsByOrigin: byOrigin,
 		BookingDate:     sellingDate(m),
 		maxMessages:     opts.MaxMessages, maxRecords: opts.MaxRecords,
@@ -750,7 +763,9 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	s.Fleet.LivePeers = sw.LivePeers
 	s.Fleet.LinkControl = s.LinkControl
 	if opts.Console != "" {
+		s.consoleDone = make(chan struct{})
 		go func() {
+			defer close(s.consoleDone)
 			if err := sw.Serve(ctx, 10*time.Second); err != nil && ctx.Err() == nil {
 				log.Error("switch console stopped", "err", err)
 			}
@@ -1722,20 +1737,9 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			// The day wrapped. What was booked for it has flown or not;
 			// the tenants' books of record start the new day clean.
 			prev = 0
-			s.dayMu.Lock()
-			before := s.dayStarted
-			s.dayStarted = time.Now()
-			s.dayMu.Unlock()
-			s.closeDay()
-			s.newDay()
-			go func() {
-				s.purgeTenants(ctx, before)
-				s.fillDay(ctx)
-				s.rebuildInventories(ctx)
-				s.rebuildLedger(ctx)
-				s.Settle(ctx)
-				s.Bill(ctx)
-			}()
+			if s.wrapDay(ctx) {
+				return
+			}
 		}
 		if cur-prev > maxCatchUp {
 			prev = cur - maxCatchUp
@@ -3754,4 +3758,130 @@ func aogHash(key string) int {
 		h = -h
 	}
 	return h
+}
+
+// wrapDay ends a day and begins the next: the carriers' books close, the
+// calendar moves on, and the books of record are purged and written
+// again for the new day. It reports true when the world has instead
+// stopped for a schedule change, and its owner must start it again.
+func (s *Sim) wrapDay(ctx context.Context) bool {
+	s.dayMu.Lock()
+	before := s.dayStarted
+	s.dayStarted = time.Now()
+	s.dayMu.Unlock()
+	s.closeDay()
+	s.newDay()
+	if s.reschedules && s.scheduleDue() {
+		// The schedule changes overnight: this world ends here, and the
+		// one that starts from its state flies the new service.
+		if s.state != nil {
+			if err := s.writeState(); err != nil {
+				s.log.Warn("state not saved before the schedule change", "err", err)
+			}
+		}
+		s.log.Info("a service has come due; the world starts again with it in the schedule")
+		close(s.rescheduled)
+		return true
+	}
+	go func() {
+		s.purgeTenants(ctx, before)
+		s.fillDay(ctx)
+		s.rebuildInventories(ctx)
+		s.rebuildLedger(ctx)
+		s.Settle(ctx)
+		s.Bill(ctx)
+	}()
+	return false
+}
+
+// Rescheduled closes when the world has ended its day to take a schedule
+// change. It never closes in a world booted without Options.Reschedule.
+func (s *Sim) Rescheduled() <-chan struct{} { return s.rescheduled }
+
+// scheduleDue reports whether a service a carrier ordered has come due
+// and is not in the schedule this world was built from.
+func (s *Sim) scheduleDue() bool {
+	if s.econ == nil {
+		return false
+	}
+	day := s.econ.day.Load()
+	s.econ.mu.Lock()
+	defer s.econ.mu.Unlock()
+	for _, b := range s.econ.books {
+		for _, o := range b.Orders {
+			if !o.Flying && int64(o.Due) <= day {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Run boots a world and keeps it running until ctx ends. It calls
+// started after each boot, with that boot's context, to set the world
+// going: its flight day and its demand.
+//
+// A schedule changes overnight, as an airline's does. When a service a
+// carrier ordered comes due, the world ends that day, stops, and boots
+// again from the same manifest and its own state, and the service is in
+// the schedule. The clock is the wall's, so the new world is at the same
+// minute of the day. What a restart keeps is what the state file keeps:
+// the calendar, the carriers' books, fares, policies and hedges. With no
+// state file named, Run keeps one in a temporary directory.
+//
+// A world on several machines does not do this. Its machines must all
+// start from one world file, which the world compiler writes.
+func Run(ctx context.Context, m *world.Manifest, opts Options, started func(ctx context.Context, s *Sim)) error {
+	if opts.StateFile == "" {
+		dir, err := os.MkdirTemp("", "wholesky-state-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir) //nolint:errcheck
+		opts.StateFile = filepath.Join(dir, "state.json")
+	}
+	opts.Reschedule = true
+	for boot := 0; ; boot++ {
+		bctx, cancel := context.WithCancel(ctx)
+		// Each world grows its own copy: the orders are added to the
+		// schedule the manifest came with, once.
+		start := func() (*Sim, error) {
+			world := *m
+			world.Flights = append(m.Flights[:0:0], m.Flights...)
+			world.Carriers = append(m.Carriers[:0:0], m.Carriers...)
+			return Boot(bctx, &world, opts)
+		}
+		s, err := start()
+		for try := 0; err != nil && boot > 0 && try < 10 && ctx.Err() == nil; try++ {
+			// The world before this one may not have let go of an
+			// address yet.
+			time.Sleep(2 * time.Second)
+			s, err = start()
+		}
+		if err != nil {
+			cancel()
+			if ctx.Err() != nil {
+				return nil // ended while it was starting
+			}
+			return err
+		}
+		started(bctx, s)
+		select {
+		case <-ctx.Done():
+			cancel()
+			s.Stop()
+			return nil
+		case <-s.Rescheduled():
+		}
+		cancel()
+		s.Stop()
+		if s.consoleDone != nil {
+			select {
+			case <-s.consoleDone:
+			case <-time.After(15 * time.Second):
+			}
+		}
+		// The new world's day is a new day: its books are written again.
+		opts.Refill = true
+	}
 }

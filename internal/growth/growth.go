@@ -367,6 +367,60 @@ type Order struct {
 	Paid int64 `json:"paid"`
 	// Flying says the schedule holds the service.
 	Flying bool `json:"flying"`
+	// Answers is the rival's order that this one answers, when the
+	// carrier added the flights because the rival entered the route.
+	Answers string `json:"answers,omitempty"`
+}
+
+// Entrant is a rival that has begun a service on a route that a carrier
+// flies from its hub.
+type Entrant struct {
+	// Daily is the round trips a day of the new service.
+	Daily int
+	// Aircraft is the rival's whole fleet.
+	Aircraft int
+	// Cash is what the rival has and Loss what it loses a day, both in
+	// cents. Loss is 0 or less for a rival that makes money.
+	Cash, Loss int64
+}
+
+// Weak reports whether an entrant is one that an incumbent fights with
+// capacity: it has fewer than 10 aircraft, or cash for less than 12
+// months of its losses. A larger carrier that makes money is fought on
+// price alone (docs/research/competition.md, rule 6).
+func (e Entrant) Weak() bool {
+	return e.Aircraft < 10 || (e.Loss > 0 && e.Cash < e.Loss*365)
+}
+
+// Answer is the round trips a day that an incumbent adds to a route from
+// its hub when a rival enters it: half as many again as it flies there,
+// and no more than 2 for each of the rival's. It is 0 against a rival
+// that is not weak.
+//
+// The record of such fights is 35 to 75 per cent more seats within 1 to
+// 3 months: American went from 8 round trips to 14 between Dallas and
+// Kansas City against Vanguard, from 5 to 9 at Colorado Springs, and
+// added 35 per cent at Wichita. Against Southwest it added nothing
+// (United States v. AMR Corp., 140 F. Supp. 2d 1141). Half as many again
+// is inside that range. The limit of 2 for 1 is the most that Qantas
+// said it would add against Virgin Australia in 2011 to 2014.
+func Answer(own int, e Entrant) int {
+	if own <= 0 || e.Daily <= 0 || !e.Weak() {
+		return 0
+	}
+	add := (own + 1) / 2
+	if add > 2*e.Daily {
+		add = 2 * e.Daily
+	}
+	return add
+}
+
+// Covers reports whether a service earns at least what it costs to fly,
+// the aircraft's rent apart. An incumbent that adds flights against an
+// entrant stays inside that line: the court in AMR found no liability
+// where the added flights covered their variable cost.
+func (p Projection) Covers() bool {
+	return p.Revenue >= p.Cost-p.Lines["aircraft rent"]
 }
 
 // Book is a carrier's money across days.

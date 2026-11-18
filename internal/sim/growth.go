@@ -87,7 +87,100 @@ func (s *Sim) closeDay() {
 		s.bookOf(code).Close(d)
 		s.econ.mu.Unlock()
 	}
+	s.answerEntrants()
 	s.saveState()
+}
+
+// answerWindow is the days after a rival starts a service in which an
+// incumbent still answers it: the record is 1 to 3 months.
+const answerWindow = 90
+
+// answerEntrants is the carriers' network planning at the end of a day.
+// A rival has begun a service on a route that a carrier flies from its
+// hub. If the rival is weak, the carrier orders more flights on the
+// route (growth.Answer), provided they would earn what they cost to fly
+// and it has the cash to start them. The flights come due after the lead
+// time of any order, 6 weeks, and the world takes them into its schedule
+// at the end of that day.
+//
+// A carrier answers each of a rival's services once. An answer is not
+// itself answered, so 2 carriers do not add flights against each other
+// without end. A carrier whose seat has taken network planning in hand
+// decides for itself.
+func (s *Sim) answerEntrants() {
+	if s.econ == nil || !s.runsDesks() {
+		return
+	}
+	day := int(s.econ.day.Load())
+	type entry struct {
+		rival string
+		o     growth.Order
+		e     growth.Entrant
+	}
+	var entries []entry
+	answered := map[string]bool{} // "carrier/order"
+	s.econ.mu.Lock()
+	for code, b := range s.econ.books {
+		for _, o := range b.Orders {
+			if o.Answers != "" {
+				answered[code+"/"+o.Answers] = true
+				continue
+			}
+			if !o.Flying || day-o.Due > answerWindow {
+				continue
+			}
+			e := growth.Entrant{Daily: o.Daily, Aircraft: len(s.econ.fleets[code]), Cash: b.Cash}
+			if t := b.Trend(30); t.Days > 0 && t.Cost > t.Revenue {
+				e.Loss = (t.Cost - t.Revenue) / int64(t.Days)
+			}
+			entries = append(entries, entry{code, o, e})
+		}
+	}
+	s.econ.mu.Unlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].o.ID < entries[j].o.ID })
+	for _, en := range entries {
+		var codes []string
+		for code := range s.Tenants {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		for _, code := range codes {
+			hub := s.carriers[code].Hub
+			if code == en.rival || s.External(code) || answered[code+"/"+en.o.ID] || (hub != en.o.From && hub != en.o.To) ||
+				(s.Airline != nil && s.Airline.Manual(code, "network")) {
+				continue
+			}
+			far := en.o.To
+			if hub == en.o.To {
+				far = en.o.From
+			}
+			own := 0
+			types := map[string]int{}
+			for _, f := range s.Flights[code] {
+				if f.From == hub && f.To == far {
+					own++
+					types[f.Equipment]++
+				}
+			}
+			add := growth.Answer(own, en.e)
+			if add == 0 {
+				continue
+			}
+			typ := ""
+			for t, n := range types {
+				if n > types[typ] || (n == types[typ] && t < typ) {
+					typ = t
+				}
+			}
+			said, err := s.orderFor(code, hub, far, typ, add, en.o.ID)
+			if err != nil {
+				s.log.Info("no answer in flights to an entrant", "carrier", code, "rival", en.rival, "route", hub+"-"+far, "why", err.Error())
+				continue
+			}
+			answered[code+"/"+en.o.ID] = true
+			s.log.Info("answered an entrant with flights", "carrier", code, "rival", en.rival, "route", hub+"-"+far, "order", said)
+		}
+	}
 }
 
 // financeView is a carrier's money across days, for its seat.
@@ -118,7 +211,7 @@ func (w seatWorld) Finance(carrier string) (any, bool) {
 	}
 	return financeView{Day: int(s.econ.day.Load()), Opening: b.Opening, Cash: b.Cash, All: b.Trend(0), Week: b.Trend(7),
 		Days: append([]growth.Day{}, days...), Orders: append([]growth.Order{}, b.Orders...),
-		Note: "Money is in cents. A day is closed into the book when it ends. Opening cash is 18% of a year's revenue at the filed schedule. An order is flown from the first start of the world after it comes due."}, true
+		Note: "Money is in cents. A day is closed into the book when it ends. Opening cash is 18% of a year's revenue at the filed schedule. A world on one machine starts again at the end of the day an order comes due and flies it. A world on several machines flies it from its next start."}, true
 }
 
 // marketFor is what is known of a market a service would be sold into.
@@ -259,14 +352,22 @@ func (s *Sim) proposal(carrier, from, to, typ string, daily int) (growth.Proposa
 // order places a service on a carrier's book: the cash to start it goes
 // out now and the service comes due after its lead time.
 func (s *Sim) order(carrier, from, to, typ string, daily int) (string, error) {
+	return s.orderFor(carrier, from, to, typ, daily, "")
+}
+
+// orderFor is order, for a service that answers a rival's order.
+func (s *Sim) orderFor(carrier, from, to, typ string, daily int, answers string) (string, error) {
 	p, m, c, err := s.proposal(carrier, from, to, typ, daily)
 	if err != nil {
 		return "", err
 	}
 	proj := growth.Project(p, m, c)
+	if answers != "" && !proj.Covers() {
+		return "", fmt.Errorf("%d more a day %s-%s would earn %d dollars a day and cost %d to fly", daily, p.From, p.To, proj.Revenue/100, (proj.Cost-proj.Lines["aircraft rent"])/100)
+	}
 	day := int(s.econ.day.Load())
 	o := growth.Order{From: p.From, To: p.To, Type: p.Aircraft.IATA, Age: 8, Daily: daily, Aircraft: proj.Aircraft,
-		Placed: day, Due: day + s.leadFor(p.Carrier, p.From, p.To), Paid: proj.Start}
+		Placed: day, Due: day + s.leadFor(p.Carrier, p.From, p.To), Paid: proj.Start, Answers: answers}
 	s.econ.mu.Lock()
 	b := s.bookOf(p.Carrier)
 	o.ID = fmt.Sprintf("%s-%d-%d", p.Carrier, day, len(b.Orders)+1)
@@ -277,7 +378,7 @@ func (s *Sim) order(carrier, from, to, typ string, daily int) (string, error) {
 		return "", err
 	}
 	s.saveState()
-	return fmt.Sprintf("ordered %s: %d daily %s-%s on %d %s, %d dollars paid to start, due on day %d; cash now %d dollars. It is flown from the first start of the world after that day.",
+	return fmt.Sprintf("ordered %s: %d daily %s-%s on %d %s, %d dollars paid to start, due on day %d; cash now %d dollars. A world on one machine starts again at the end of that day and flies it; a world on several flies it from its next start.",
 		o.ID, daily, o.From, o.To, o.Aircraft, p.Aircraft.Name, o.Paid/100, o.Due, cash/100), nil
 }
 

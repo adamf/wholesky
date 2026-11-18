@@ -142,7 +142,10 @@ func TestWhoSoldTheTicket(t *testing.T) {
 // that treats every channel alike tells the systems what it knows. The
 // lever turns the one into the other.
 func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
-	s := bootWorld(t, Options{GDSCount: 1, AVSInterval: 300 * time.Millisecond})
+	// The timed broadcast of every flight is 5 seconds apart, so that a
+	// slow machine has time for the rest. A class that changes is told at
+	// once and does not wait for it.
+	s := bootWorld(t, Options{GDSCount: 1, AVSInterval: 5 * time.Second})
 	ctx := context.Background()
 	morning(s)
 	w := seatWorld{s}
@@ -235,7 +238,7 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer := "HN"
-	for deadline := time.Now().Add(8 * time.Second); answer == "HN" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+	for deadline := time.Now().Add(30 * time.Second); answer == "HN" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		if rec, err := s.GDSStore.GetPNR(ctx, res.PNR.RecordLocator); err == nil {
 			answer = rec.Segments[0].Status
 		}
@@ -267,7 +270,7 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 	if !told(alike, f2, "N", avail.Closed) {
 		t.Fatalf("%s closed N and the systems hear %s", alike, status(alike, f2, "N"))
 	}
-	time.Sleep(700 * time.Millisecond) // two more broadcasts
+	time.Sleep(1500 * time.Millisecond) // time for a change to S to be told, had there been one
 	if st := status(alike, f2, "S"); st == avail.Closed {
 		t.Errorf("%s treats every channel alike and told the systems S was closed", alike)
 	}
@@ -279,8 +282,8 @@ func TestACarrierHoldsItsLastSeatsForItsOwnSite(t *testing.T) {
 	if pol := s.policyOf(alike); !pol.DirectFirst || pol.FullContent {
 		t.Errorf("after the lever: %+v", pol)
 	}
-	// The policy changed and no seat did: the broadcast finds the flight
-	// on its round of every flight, inside twenty turns.
+	// The policy changed and no seat did: the next broadcast tells the
+	// systems of every flight again.
 	if !told(alike, f2, "S", avail.Closed) {
 		t.Errorf("%s now holds its seats and the systems still hear S %s", alike, status(alike, f2, "S"))
 	}

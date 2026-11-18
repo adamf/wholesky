@@ -199,21 +199,21 @@ func run() error {
 
 	switch *role {
 	case "all":
-		s, err := sim.Boot(ctx, &m, opts)
-		if err != nil {
-			return err
-		}
-		defer s.Stop()
-		total := 0
-		for _, fs := range s.Flights {
-			total += len(fs)
-		}
-		log.Info("fabric up", "links", len(s.Switch.LivePeers()),
-			"flights_per_day", total,
-			"console", "http://"+*console, "eye", "http://"+*console+"/eye")
-		go s.FlyDay(ctx)
-		go s.Demand(ctx, *demand, *seed)
-		return watch(ctx, log, s.RunStats)
+		// One machine runs the whole world, and the world takes its own
+		// schedule changes: when a service a carrier ordered comes due, it
+		// ends the day, stops, and starts again with the service flying.
+		return sim.Run(ctx, &m, opts, func(ctx context.Context, s *sim.Sim) {
+			total := 0
+			for _, fs := range s.Flights {
+				total += len(fs)
+			}
+			log.Info("fabric up", "links", len(s.Switch.LivePeers()),
+				"flights_per_day", total,
+				"console", "http://"+*console, "eye", "http://"+*console+"/eye")
+			go s.FlyDay(ctx)
+			go s.Demand(ctx, *demand, *seed)
+			go watch(ctx, log, s.RunStats) //nolint:errcheck
+		})
 
 	case "core":
 		c, err := sim.BootCore(ctx, &m, opts, *advertise)

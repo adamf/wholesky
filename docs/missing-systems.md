@@ -339,10 +339,11 @@ order they should be done:
    technical. The operations centre decides how to meet forecast
    weather, with the projected cost of each choice. Labour relations
    answer the unions. Events that anyone adds to the day compound with
-   the plan's own. A carrier can order a new service, and the service
-   is flown from the first start of the world after it comes due. A
-   running world does not change its schedule, and there are no
-   seasons.
+   the plan's own. A carrier can order a new service, and a carrier
+   answers a weak entrant with more flights. A world on one machine
+   takes the change overnight: it stops at the end of the day and
+   starts again with the new flights. A world on several machines takes
+   it at its next start. There are no seasons.
 5. **Identity.** Anyone can take any free carrier. The token is the only
    protection. There are no accounts and no season. Each carrier has a
    book that keeps its cash and its days, and the book belongs to the

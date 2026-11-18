@@ -97,13 +97,16 @@ type Tenant struct {
 	// touched is the flights whose seats or classes have changed since
 	// the last broadcast looked at them, by number and boarding point;
 	// avsTurn counts the broadcasts.
-	touchedMu sync.Mutex
-	touched   map[string]bool
-	avsTurn   int
-	Carrier   world.Carrier
-	Gateway   *gateway.Gateway
-	Store     store.Store
-	Inventory *inventory.Inventory
+	touchedMu  sync.Mutex
+	touched    map[string]bool
+	touchedAll bool
+	avsTurn    int
+	// touchSignal wakes the broadcast of changes.
+	touchSignal chan struct{}
+	Carrier     world.Carrier
+	Gateway     *gateway.Gateway
+	Store       store.Store
+	Inventory   *inventory.Inventory
 
 	flights      []world.Flight
 	client       link
@@ -465,6 +468,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
 	t.channelCost, t.avsSent, t.touched = opts.ChannelCost, map[avail.Key]avail.Status{}, map[string]bool{}
+	t.touchSignal = make(chan struct{}, 1)
 	t.rushDecision = opts.RushDecision
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
@@ -546,10 +550,10 @@ func avsPhase(designator string, interval time.Duration) time.Duration {
 
 // availabilityInterval is how often a tenant re-broadcasts.
 //
-// Change-triggered broadcasting is the realistic model and the roadmap; the
-// timer keeps phase one honest about staleness instead -- the cache's rule
-// that an old assertion never moves state backwards gets exercised on every
-// cycle.
+// The four classes of every flight go out on this timer, which keeps the
+// distribution systems' belief fresh and exercises the cache's rule that
+// an old assertion never moves state backwards. A change to any class of
+// the day's flights does not wait for it: see the broadcast of changes.
 const availabilityInterval = 30 * time.Second
 
 func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, interval time.Duration, log *slog.Logger) {
@@ -607,34 +611,6 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 				return
 			}
 		}
-		// The rest of the ladder, for the day the world flies: a class
-		// whose status has changed since the distribution systems were
-		// last told. The four classes above go out every time and keep
-		// the systems' belief fresh; these go out when they move, which is
-		// what a carrier's availability messages are for.
-		var changed []avail.Entry
-		for _, e := range t.ladderOfTheDay(date) {
-			if was, told := t.avsSent[e.Key]; (told && was == e.Status) || (!told && e.Status == avail.Open) {
-				continue
-			}
-			t.avsSent[e.Key] = e.Status
-			changed = append(changed, e)
-		}
-		for i := 0; i < len(changed); i += flightDatesPerMessage * 4 {
-			end := min(i+flightDatesPerMessage*4, len(changed))
-			if err := t.sendTypeBTo(ctx, append(t.distributionList(), t.partners...), avs.Build(changed[i:end]), "AVS"); err != nil {
-				failed++
-				// Not heard: say it again next time.
-				for _, e := range changed[i:end] {
-					delete(t.avsSent, e.Key)
-				}
-			} else {
-				sent++
-			}
-			if ctx.Err() != nil {
-				return
-			}
-		}
 		if failed > 0 {
 			// Loud, not debug: an undelivered broadcast is a carrier the
 			// network has stopped hearing from, and it hid at debug level
@@ -643,6 +619,61 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 				"carrier", t.Carrier.Designator, "sent", sent, "failed", failed)
 		}
 	}
+	// The rest of the ladder, for the day the world flies: a class whose
+	// status has changed since the distribution systems were last told.
+	// The four classes above go out on the timer and keep the systems'
+	// belief fresh. These go out when they move, which is what a
+	// carrier's availability messages are for: a sale, a cancellation or
+	// a class closed by hand wakes this at once, and it does not wait
+	// behind the timer's broadcast.
+	news := func() {
+		var changed []avail.Entry
+		for _, e := range t.ladderOfTheDay(date) {
+			if was, told := t.avsSent[e.Key]; (told && was == e.Status) || (!told && e.Status == avail.Open) {
+				continue
+			}
+			t.avsSent[e.Key] = e.Status
+			changed = append(changed, e)
+		}
+		failed := 0
+		for i := 0; i < len(changed); i += flightDatesPerMessage * 4 {
+			end := min(i+flightDatesPerMessage*4, len(changed))
+			if err := t.sendTypeBTo(ctx, append(t.distributionList(), t.partners...), avs.Build(changed[i:end]), "AVS"); err != nil {
+				failed++
+				// Not heard: say it again next time.
+				for _, e := range changed[i:end] {
+					delete(t.avsSent, e.Key)
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		if failed > 0 {
+			log.Warn("availability changes partly undelivered", "carrier", t.Carrier.Designator, "failed", failed)
+		}
+	}
+	go func() {
+		// The timer here is the round of the flights nothing has happened
+		// to, whose classes move as the day does.
+		round := time.NewTicker(interval)
+		defer round.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.touchSignal:
+				// A moment for the rest of the same booking to land.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
+			case <-round.C:
+			}
+			news()
+		}
+	}()
 	// Each carrier broadcasts on its own phase of the interval. Started in
 	// lockstep, five hundred carriers all broadcast in the same second and
 	// the switch takes a thundering herd every cycle -- and again, worst of
@@ -668,6 +699,16 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 // every broadcast names these four classes of each flight.
 var broadcastClasses = map[string]bool{"F": true, "J": true, "Y": true, "M": true}
 
+// TouchAll says every flight's classes may have changed: the carrier
+// has changed how it sells through the distribution systems. The next
+// availability broadcast looks at every ladder again.
+func (t *Tenant) TouchAll() {
+	t.touchedMu.Lock()
+	t.touchedAll = true
+	t.touchedMu.Unlock()
+	t.wake()
+}
+
 // ladderOfTheDay is the availability of every class the four-class
 // broadcast leaves out, on the day's flights that have not left, as the
 // distribution systems are to see it. A ladder is revenue management's
@@ -682,8 +723,8 @@ func (t *Tenant) ladderOfTheDay(date time.Time) []avail.Entry {
 		pos = t.dayPos()
 	}
 	t.touchedMu.Lock()
-	touched := t.touched
-	t.touched = map[string]bool{}
+	touched, all := t.touched, t.touchedAll
+	t.touched, t.touchedAll = map[string]bool{}, false
 	turn := t.avsTurn
 	t.avsTurn++
 	t.touchedMu.Unlock()
@@ -695,7 +736,7 @@ func (t *Tenant) ladderOfTheDay(date time.Time) []avail.Entry {
 		if pos >= 0 && float64(f.DepMin) < pos {
 			return // gone: nothing left to sell
 		}
-		if !touched[strings.TrimLeft(number, "0")+"/"+f.From] && n%20 != turn%20 {
+		if !all && !touched[strings.TrimLeft(number, "0")+"/"+f.From] && n%20 != turn%20 {
 			return
 		}
 		var keys []avail.Key
@@ -1138,6 +1179,15 @@ func (t *Tenant) Touch(flightNum, board string) {
 	t.touchedMu.Lock()
 	t.touched[strings.TrimLeft(flightNum, "0")+"/"+board] = true
 	t.touchedMu.Unlock()
+	t.wake()
+}
+
+// wake starts the broadcast of changes, if it is not already due.
+func (t *Tenant) wake() {
+	select {
+	case t.touchSignal <- struct{}{}:
+	default:
+	}
 }
 
 // forwardCodeshare puts the operating leg on the record and requests it from

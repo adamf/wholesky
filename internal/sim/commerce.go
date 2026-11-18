@@ -164,6 +164,11 @@ func (s *Sim) setPolicy(carrier string, change func(*distribution.Policy)) distr
 	s.commerce.mu.Lock()
 	s.commerce.policy[carrier] = cp
 	s.commerce.mu.Unlock()
+	// What the carrier shows the distribution systems depends on the
+	// policy: they are told again, of every flight.
+	if t := s.Tenants[carrier]; t != nil && cp.DirectFirst != p.DirectFirst {
+		t.TouchAll()
+	}
 	return cp
 }
 

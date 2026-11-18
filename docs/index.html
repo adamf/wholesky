@@ -614,7 +614,8 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <h3>Growth: cash across days, a projection, an order</h3>
         <p>When a day ends, the simulator closes each carrier's scorecard into its book. Profit goes to cash. The book reports margin, load factor, revenue and cost for each seat-kilometre, and the days of cash left.</p>
         <p><code>/carrier/XX/growth</code> projects a new service of daily round trips on one aircraft type.</p>
-        <p>The projection returns the load factor at maturity, the break-even load factor, the cash to start and the days to pay it back. The order takes the lessors' deposits and the price of any slots from the carrier's cash. The service is flown from the first start of the world after it comes due.</p>
+        <p>The projection returns the load factor at maturity, the break-even load factor, the cash to start and the days to pay it back. The order takes the lessors' deposits and the price of any slots from the carrier's cash. A schedule changes overnight: a world on one machine ends the day on which the service comes due and starts again with the service flying.</p>
+        <p>Carriers also answer each other with flights. When a weak rival begins a service on a route from a carrier's hub, the carrier orders half as many flights again on that route, and at most 2 round trips for each of the rival's. A weak rival has fewer than 10 aircraft or cash for less than 12 months of its losses. American answered Vanguard and Western Pacific this way in 1995 and 1996, and added nothing against Southwest.</p>
         <p class="small">In the test world, 3 daily A320 round trips from Lyon to Brest reach a load factor of 0.50 against a break-even of 0.56. The projection says the service never pays back.</p>
       </div>
       <div>

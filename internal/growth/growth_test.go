@@ -244,3 +244,40 @@ func TestScheduleOfAnOrder(t *testing.T) {
 		t.Errorf("an aircraft flew %d legs of seven hours in a day", len(long))
 	}
 }
+
+// The answer to an entrant. An incumbent with 8 round trips a day adds 4
+// against a weak rival that starts 2: half as many again, and 2 for each
+// of the rival's. It adds nothing against a rival that is not weak.
+func TestTheAnswerToAnEntrant(t *testing.T) {
+	weak := Entrant{Daily: 2, Aircraft: 6, Cash: 1}
+	for _, c := range []struct {
+		own  int
+		e    Entrant
+		want int
+	}{
+		{8, weak, 4},
+		{5, Entrant{Daily: 3, Aircraft: 6}, 3},  // half of 5, rounded up
+		{1, Entrant{Daily: 1, Aircraft: 6}, 1},  // at least one
+		{10, Entrant{Daily: 1, Aircraft: 6}, 2}, // no more than 2 for 1
+		{0, weak, 0},                            // a route it does not fly
+		{8, Entrant{Daily: 0, Aircraft: 6}, 0},
+		{8, Entrant{Daily: 2, Aircraft: 40, Cash: 1_000_000_00}, 0},             // a large carrier that makes money
+		{8, Entrant{Daily: 2, Aircraft: 40, Cash: 400_00, Loss: 1_00}, 0},       // cash for 400 days of its losses
+		{8, Entrant{Daily: 2, Aircraft: 40, Cash: 100_00, Loss: 1_00}, 4},       // cash for 100 days
+		{8, Entrant{Daily: 2, Aircraft: 9, Cash: 1_000_000_00, Loss: -5_00}, 4}, // 9 aircraft
+	} {
+		if got := Answer(c.own, c.e); got != c.want {
+			t.Errorf("an incumbent with %d a day against %+v adds %d, want %d", c.own, c.e, got, c.want)
+		}
+	}
+	// The line an incumbent stays inside: the flights earn what they cost
+	// to fly, the rent apart.
+	p := Projection{Revenue: 90_000_00, Cost: 100_000_00, Lines: map[string]int64{"aircraft rent": 15_000_00}}
+	if !p.Covers() {
+		t.Error("revenue of 90,000 against 85,000 of flying costs does not cover")
+	}
+	p.Revenue = 84_000_00
+	if p.Covers() {
+		t.Error("revenue of 84,000 against 85,000 of flying costs covers")
+	}
+}
