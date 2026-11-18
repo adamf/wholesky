@@ -15,6 +15,7 @@ import (
 	"github.com/adamf/wholesky/internal/airport"
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/fuel"
+	"github.com/adamf/wholesky/internal/growth"
 	"github.com/adamf/wholesky/internal/refdata"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -44,6 +45,7 @@ type economy struct {
 	index  map[int]float64                          // the averaged fuel index by day
 	hedges map[string][]fuel.Hedge                  // carrier
 	burn   map[string]float64                       // carrier -> gallons a day as scheduled
+	books  map[string]*growth.Book                  // carrier -> its money across days
 }
 
 // groundHandling is what a handler charges for a turnaround, in dollars:
@@ -92,7 +94,7 @@ func (s *Sim) initEconomy(m *world.Manifest, opts Options) {
 		start = sellingDate(m)
 	}
 	e := &economy{fuel: fuel.New(start, m.Seed), deps: map[string]int{}, region: map[string]string{},
-		fleets: map[string]map[string]equipment.Aircraft{}, index: map[int]float64{}, hedges: map[string][]fuel.Hedge{}, burn: map[string]float64{}}
+		fleets: map[string]map[string]equipment.Aircraft{}, index: map[int]float64{}, hedges: map[string][]fuel.Hedge{}, burn: map[string]float64{}, books: map[string]*growth.Book{}}
 	for _, a := range m.Airports {
 		e.region[a.IATA] = refdata.Region(a.Country, a.TZ)
 	}

@@ -63,6 +63,10 @@ const (
 // travellers change.
 const mixRatio = 1.40
 
+// MixRatio is the average fare travellers pay over the lowest regular
+// fare a network carrier files.
+func MixRatio() float64 { return mixRatio }
+
 // MarketFare is the average one-way fare the report's line gives for a
 // market of a length, in dollars.
 func MarketFare(km int) float64 { return FareBase + FarePerMile*float64(km)/kmPerMile }

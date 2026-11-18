@@ -757,6 +757,15 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 }
 
 func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
+	// A schedule changes when the world starts: the services the carriers
+	// ordered that have come due are flown from here on.
+	if opts.StateFile != "" {
+		if b, err := os.ReadFile(opts.StateFile); err == nil {
+			if n := GrowManifest(m, b); n > 0 && opts.Log != nil {
+				opts.Log.Info("schedule grown from the carriers' orders", "flights", n)
+			}
+		}
+	}
 	s, err := bootBase(ctx, m, opts, true)
 	if err != nil {
 		return nil, err
@@ -1594,6 +1603,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			before := s.dayStarted
 			s.dayStarted = time.Now()
 			s.dayMu.Unlock()
+			s.closeDay()
 			s.newDay()
 			go func() {
 				s.purgeTenants(ctx, before)

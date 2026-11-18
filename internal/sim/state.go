@@ -15,6 +15,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/fuel"
+	"github.com/adamf/wholesky/internal/growth"
 )
 
 // What a restart must not forget. A world's books start each day clean by
@@ -79,6 +80,8 @@ type savedEconomy struct {
 	Day    int64                   `json:"day"`
 	Shocks []fuel.Shock            `json:"shocks,omitempty"`
 	Hedges map[string][]fuel.Hedge `json:"hedges,omitempty"`
+	// Books is each carrier's money across days and its orders.
+	Books map[string]*growth.Book `json:"books,omitempty"`
 }
 
 type savedWorld struct {
@@ -207,6 +210,15 @@ func (s *Sim) snapshot() worldState {
 				if h.Bought >= 0 {
 					se.Hedges[code] = append(se.Hedges[code], h)
 				}
+			}
+		}
+		if len(e.books) > 0 {
+			se.Books = map[string]*growth.Book{}
+			for code, b := range e.books {
+				cp := *b
+				cp.Days = append([]growth.Day(nil), b.Days...)
+				cp.Orders = append([]growth.Order(nil), b.Orders...)
+				se.Books[code] = &cp
 			}
 		}
 		e.mu.Unlock()
@@ -342,6 +354,16 @@ func (s *Sim) restoreState(ctx context.Context) {
 		for code, hs := range st.Economy.Hedges {
 			if _, ok := e.fleets[code]; ok {
 				e.hedges[code] = append(e.hedges[code], hs...)
+			}
+		}
+		for code, b := range st.Economy.Books {
+			if _, ok := e.fleets[code]; ok && b != nil {
+				// An order that has come due is in the schedule this
+				// world was built from.
+				for i := range b.Orders {
+					b.Orders[i].Flying = int64(b.Orders[i].Due) <= st.Economy.Day
+				}
+				e.books[code] = b
 			}
 		}
 		e.mu.Unlock()

@@ -447,6 +447,9 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		pos, _ := w.Clock()
 		return s.applyPolicy(ctx, code, md, s.forecast(code, pos, md), pol), nil
 	}
+	if a.Kind == "grow" {
+		return s.order(code, a.From, a.To, a.Policy, a.Count)
+	}
 	if a.Kind == "hedge" {
 		return s.hedge(code, fuel.Kind(strings.ToLower(a.Policy)), a.Count, a.Minutes)
 	}
@@ -935,6 +938,21 @@ func (c *lobbyCache) Turn(code, flight, board string) (any, bool) {
 		return e.Turn(code, flight, board)
 	}
 	return nil, false
+}
+
+// Finance and Growth pass the carrier's book and projections through.
+func (c *lobbyCache) Finance(code string) (any, bool) {
+	if g, ok := c.inner.(airline.Growth); ok {
+		return g.Finance(code)
+	}
+	return nil, false
+}
+
+func (c *lobbyCache) Growth(code, from, to, aircraft string, daily int) (any, error) {
+	if g, ok := c.inner.(airline.Growth); ok {
+		return g.Growth(code, from, to, aircraft, daily)
+	}
+	return nil, fmt.Errorf("this world keeps no economy")
 }
 
 // Has answers cheaply from the inner world.

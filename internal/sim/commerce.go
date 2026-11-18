@@ -193,15 +193,23 @@ func saleChannel(r *pnr.PNR) string {
 
 // costOfSale is what a ticket's sale cost the carrier that ticketed it.
 func (s *Sim) costOfSale(r *pnr.PNR, ticketing string, segments int, fareCents, paid int64) revenue.Cost {
-	sale := distribution.Sale{Channel: saleChannel(r), Segments: segments, Fare: fareCents, Paid: paid}
+	sale := distribution.Sale{Channel: market.Agency, Segments: segments, Fare: fareCents, Paid: paid}
 	if s.econ != nil {
-		for _, sg := range r.Segments {
-			if sg.Type == pnr.SegmentAir {
-				sale.Region = s.econ.region[sg.Board]
-				break
+		// With no record, the sale is one in the carrier's home market
+		// through an agency: what a ticket costs to sell at the most.
+		sale.Region = s.econ.region[s.carriers[ticketing].Hub]
+		if r != nil {
+			sale.Channel = saleChannel(r)
+			for _, sg := range r.Segments {
+				if sg.Type == pnr.SegmentAir {
+					sale.Region = s.econ.region[sg.Board]
+					break
+				}
 			}
 		}
 		sale.Home = sale.Region == s.econ.region[s.carriers[ticketing].Hub]
+	} else if r != nil {
+		sale.Channel = saleChannel(r)
 	}
 	c := s.policyOf(ticketing).CostOf(sale)
 	return revenue.Cost{System: c.System, Commission: c.Commission, Payment: c.Payment, Own: c.Own}

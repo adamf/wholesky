@@ -179,6 +179,15 @@ func equipmentFor(km float64) (string, int) {
 //
 // Cruise plus a fixed taxi-and-climb allowance; padded a little on short legs
 // the way real schedules are.
+// BlockMinutes is the block time the schedule gives a flight of a
+// length: cruise at 820 kilometres an hour and 30 or 40 minutes for the
+// ground and the climb.
+func BlockMinutes(km float64) int { return blockMinutes(km) }
+
+// Haversine is the great-circle distance between two points in
+// kilometres.
+func Haversine(lat1, lon1, lat2, lon2 float64) float64 { return haversineKM(lat1, lon1, lat2, lon2) }
+
 func blockMinutes(km float64) int {
 	cruise := km / 820 * 60 // km/h to minutes
 	pad := 40.0

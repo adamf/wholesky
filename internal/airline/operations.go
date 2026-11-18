@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +28,54 @@ type Operations interface {
 type Economics interface {
 	Economy(carrier string) (any, bool)
 	Turn(carrier, flight, board string) (any, bool)
+}
+
+// Growth is what a world with an economy tells about a carrier's money
+// across days and about a service it might start.
+type Growth interface {
+	Finance(carrier string) (any, bool)
+	Growth(carrier, from, to, aircraft string, daily int) (any, error)
+}
+
+func (s *Server) finance(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	code := strings.ToUpper(r.PathValue("carrier"))
+	g, ok := s.view().(Growth)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("this world keeps no economy"))
+		return
+	}
+	v, ok := g.Finance(code)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no book for %s here", code))
+		return
+	}
+	writeJSON(w, v)
+}
+
+func (s *Server) growth(w http.ResponseWriter, r *http.Request) {
+	if s.forwarded(w, r) {
+		return
+	}
+	code := strings.ToUpper(r.PathValue("carrier"))
+	g, ok := s.view().(Growth)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("this world keeps no economy"))
+		return
+	}
+	q := r.URL.Query()
+	daily, _ := strconv.Atoi(q.Get("daily"))
+	if daily == 0 {
+		daily = 1
+	}
+	v, err := g.Growth(code, q.Get("from"), q.Get("to"), q.Get("type"), daily)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, v)
 }
 
 func (s *Server) economy(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +127,8 @@ func (s *Server) operationsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /noc/{carrier}", s.nocPage)
 	mux.HandleFunc("GET /carrier/{carrier}/economy", s.economy)
 	mux.HandleFunc("GET /carrier/{carrier}/turn", s.turn)
+	mux.HandleFunc("GET /carrier/{carrier}/finance", s.finance)
+	mux.HandleFunc("GET /carrier/{carrier}/growth", s.growth)
 }
 
 func (s *Server) crew(w http.ResponseWriter, r *http.Request) {

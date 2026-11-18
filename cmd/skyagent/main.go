@@ -126,6 +126,14 @@ func text(v any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}
 }
 
+type growthArgs struct {
+	Carrier string `json:"carrier,omitempty" jsonschema:"the carrier, when not the seat's own"`
+	From    string `json:"from" jsonschema:"the airport the service flies from"`
+	To      string `json:"to" jsonschema:"the airport it flies to"`
+	Type    string `json:"type" jsonschema:"the aircraft type's IATA code, such as 320 or 738"`
+	Daily   int    `json:"daily,omitempty" jsonschema:"round trips a day, 1 when not given"`
+}
+
 type turnArgs struct {
 	Carrier string `json:"carrier,omitempty"`
 	Flight  string `json:"flight" jsonschema:"flight designator and number, e.g. BA0117"`
@@ -311,7 +319,7 @@ func newServer(s *seat) *mcp.Server {
 			}
 			return text(out), nil, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board), bring in standby crews at a crew base (board, count), act on the operations centre's forecast now (policy), answer a union (unit, choice), hedge fuel (kind hedge; policy swap, cap or collar; count the per cent of the fuel; minutes the days it runs). Each lever sends the corresponding messages."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "act", Description: "Apply a lever now: cancel a flight (flight, board, reason), retime it (flight, board, minutes), substitute a smaller aircraft (flight, board), close a booking class or reopen it (flight, board, class, status C or empty), multiply the fares (multiplier), send REA to request a better slot (flight, board), call reserves for a flight whose crew has timed out (flight, board), bring in standby crews at a crew base (board, count), act on the operations centre's forecast now (policy), answer a union (unit, choice), hedge fuel (kind hedge; policy swap, cap or collar; count the per cent of the fuel; minutes the days it runs), order a new service (kind grow; from, to; policy the aircraft type; count the daily round trips: see the growth tool first). Each lever sends the corresponding messages."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a actArgs) (*mcp.CallToolResult, any, error) {
 			code, err := s.carrier(a.Carrier)
 			if err != nil {
@@ -452,6 +460,33 @@ func newServer(s *seat) *mcp.Server {
 				return nil, nil, err
 			}
 			out, err := s.call(ctx, "GET", "/carrier/"+code+"/turn?flight="+url.QueryEscape(a.Flight)+"&board="+url.QueryEscape(a.Board), nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "finance", Description: "The carrier's money across days: the cash it began with and has now, each closed day's revenue, cost and profit (the last 30), the trend over all days and over the last 7 (margin, load factor, revenue and cost per seat-kilometre in cents, yield, growth in seat-kilometres, days of cash left when it loses money), and the services it has ordered with the day each comes due. Money is in cents."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a carrierArg) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := s.call(ctx, "GET", "/carrier/"+code+"/finance", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			return text(out), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "growth", Description: "What a new service would do before you order it: daily round trips between two airports on an aircraft type (320, 321, 738, 77W, AT7 and the other types the lessors offer). Returns the market (travellers a day, the average fare, each carrier there with its flights and fare level), and the projection: aircraft needed, share of the market, passengers and load factor once it has filled, the fare, a day's revenue and cost by line, the break-even load factor, the cash to start (lessors' deposits and slots), the first 180 days while loads build, the days to pay the start back, and notes on what was assumed. To order it use act with kind grow, from, to, policy (the type) and count (the daily round trips)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a growthArgs) (*mcp.CallToolResult, any, error) {
+			code, err := s.carrier(a.Carrier)
+			if err != nil {
+				return nil, nil, err
+			}
+			if a.Daily <= 0 {
+				a.Daily = 1
+			}
+			out, err := s.call(ctx, "GET", fmt.Sprintf("/carrier/%s/growth?from=%s&to=%s&type=%s&daily=%d", code, url.QueryEscape(a.From), url.QueryEscape(a.To), url.QueryEscape(a.Type), a.Daily), nil)
 			if err != nil {
 				return nil, nil, err
 			}

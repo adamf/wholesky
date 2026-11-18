@@ -7,6 +7,7 @@
 //	worldc -scale 0.05 -o small-sky.json
 //	worldc -o whole-sky.json
 //	worldc -bts data/bts/2025-11-26.csv -date 2025-11-26 -o thanksgiving.json
+//	worldc -in world.json -grow state.json -o next-season.json
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 	_ "time/tzdata" // a replay converts local schedules to UTC wherever it is built
 
+	"github.com/adamf/wholesky/internal/sim"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -33,6 +35,8 @@ func main() {
 		date      = flag.String("date", "", "replay: the day to compile from the BTS file, YYYY-MM-DD")
 		mirror    = flag.String("mirror", "", "rename every carrier from this prefix letter (Q0, Q1, ...) so the world is disjoint from one compiled from the same data and can join it")
 		ssimOut   = flag.String("ssim", "", "also write the schedule as an SSIM chapter 7 file, one carrier after another")
+		in        = flag.String("in", "", "start from this manifest and do not compile one: with -grow, the world file of a world on several machines")
+		grow      = flag.String("grow", "", "a world's state file: add the services its carriers have ordered that have come due")
 	)
 	flag.Parse()
 
@@ -44,7 +48,13 @@ func main() {
 	}
 	var m *world.Manifest
 	var err error
-	if *bts != "" {
+	if *in != "" {
+		var b []byte
+		if b, err = os.ReadFile(*in); err == nil {
+			m = &world.Manifest{}
+			err = json.Unmarshal(b, m)
+		}
+	} else if *bts != "" {
 		m, err = world.CompileReplay(world.ReplayOptions{DataDir: *dataDir, BTS: *bts, Date: *date})
 	} else {
 		m, err = world.Compile(world.CompileOptions{
@@ -57,6 +67,14 @@ func main() {
 		os.Exit(1)
 	}
 	m.GeneratedAt = time.Now().UTC()
+	if *grow != "" {
+		state, err := os.ReadFile(*grow)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "worldc:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d flights added from the carriers' orders\n", sim.GrowManifest(m, state))
+	}
 
 	if *mirror != "" {
 		taken, err := world.Designators(*dataDir)
