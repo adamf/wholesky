@@ -127,8 +127,8 @@ type Options struct {
 // pool is how many travellers consider a flight for each seat it is meant
 // to carry. Some find every fare left too dear and stay at home, so the
 // pool is larger than the load: measured over a filled world at the
-// fares as filed, 100 travellers in the pool put 81 in seats.
-const pool = 1.0 / 0.58
+// fares as filed, 100 travellers in the pool put 57 in seats.
+const pool = 1.0 / 0.57
 
 // Plan is what a fill produced.
 type Plan struct {

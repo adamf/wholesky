@@ -61,7 +61,7 @@ const (
 // averages the report's line. The test of internal/fill holds it there,
 // and says which way to move it when the ladder, the limits or the
 // travellers change.
-const mixRatio = 1.40
+const mixRatio = 1.53
 
 // MixRatio is the average fare travellers pay over the lowest regular
 // fare a network carrier files.
@@ -610,7 +610,9 @@ func Forecast(compartment string, seats int) []inventory.ClassDemand {
 	case "F":
 		m = []mix{{"F", 1}}
 	case "C":
-		m = []mix{{"J", 1.0 / 3}, {"C", 1.0 / 3}, {"D", 1.0 / 3}}
+		// The front cabin's mix, measured the same way: most of its
+		// travellers take the fare they can get back.
+		m = []mix{{"J", 0.03}, {"C", 0.63}, {"D", 0.34}}
 	default:
 		m = []mix{{"Y", .116}, {"B", .006}, {"M", .073}, {"H", .105}, {"Q", .159}, {"K", .162}, {"L", .130}, {"V", .047}, {"S", .072}, {"N", .128}}
 	}

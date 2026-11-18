@@ -267,7 +267,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	// An aircraft substitution changes a leg's cabins for the day; the
 	// override is consulted before the schedule's type.
 	overrides := &equipmentOverrides{by: map[string]string{}}
-	fleet := fleetData()
+	fleet := fleetOf(c.Designator)
 	capacity := func(cr, flightNum, wireDate, board string) (map[string]int, bool) {
 		if typ := overrides.get(cr, flightNum, board); typ != "" {
 			if t, ok := fleet.Type(typ); ok {
@@ -999,7 +999,9 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 // sections for its type, or one economy cabin of the schedule's seat count
 // when the type is not known. The filler and the inventory must agree on
 // this, or the filler sells cabins the inventory does not have.
-func Cabins(f world.Flight, override int) map[string]int { return cabinsOf(fleetData(), f, override) }
+func Cabins(f world.Flight, override int) map[string]int {
+	return cabinsOf(fleetOf(f.Carrier), f, override)
+}
 
 func cabinsOf(fleet *dcs.FleetData, f world.Flight, override int) map[string]int {
 	comps := map[string]int{}
@@ -1025,9 +1027,10 @@ func capacityFor(carrier string, flights []world.Flight, override int) inventory
 	type leg struct{ num, board string }
 	byLeg := map[leg]map[string]int{}
 	first := map[string]map[string]int{}
-	fleet := fleetData()
 	for _, f := range flights {
-		comps := cabinsOf(fleet, f, override)
+		// The cabins are the operating carrier's: a marketing carrier
+		// sells the aircraft its partner flies.
+		comps := cabinsOf(fleetOf(f.Carrier), f, override)
 		num := strings.TrimLeft(f.Number, "0")
 		if f.Carrier != carrier && f.Marketing == carrier {
 			num = strings.TrimLeft(f.MarketingNumber, "0")

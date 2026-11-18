@@ -18,6 +18,7 @@ import (
 	"github.com/adamf/jetway/pkg/avail"
 	"github.com/adamf/jetway/pkg/dcs"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/inventory"
 	"github.com/adamf/jetway/pkg/pnr"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/wholesky/internal/host"
@@ -1287,10 +1288,21 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 	// gone, availability says how many are left, and a party larger than
 	// what is left waitlists instead of overselling the aircraft.
 	s.rebuildInventories(ctx)
+	// The main cabin: a network carrier's narrow-body has a front cabin
+	// too, and the seats sold there are not the main cabin's.
+	cabins := host.Cabins(f, 0)
+	inY := 0
+	for _, r := range recs {
+		for _, sg := range r.Segments {
+			if sg.FlightNum == f.Number && sg.Board == f.From && inventory.CompartmentFor(sg.Class, cabins) == "Y" {
+				inY += sg.Seats
+			}
+		}
+	}
 	ak := avail.NewKey(f.Carrier, f.Number, day, f.From, f.To, "Y")
 	av := tn.Inventory.Availability([]avail.Key{ak}, time.Now())
-	if len(av) != 1 || !av[0].SeatsKnown || av[0].Seats != f.Seats-seats {
-		t.Fatalf("availability after fill: %+v (seats %d, filled %d)", av, f.Seats, seats)
+	if len(av) != 1 || !av[0].SeatsKnown || av[0].Seats != cabins["Y"]-inY {
+		t.Fatalf("availability after fill: %+v (main cabin %d, filled %d)", av, cabins["Y"], inY)
 	}
 	ask := func(n int) string {
 		p := &pnr.PNR{Segments: []pnr.Segment{{Ref: 1, Type: pnr.SegmentAir, Carrier: f.Carrier, FlightNum: f.Number,
@@ -1301,7 +1313,7 @@ func TestFilledDayOpensWithFullNameLists(t *testing.T) {
 		}
 		return out[p.Segments[0].Key()]
 	}
-	if got := ask(f.Seats - seats); got != "KK" {
+	if got := ask(cabins["Y"] - inY); got != "KK" {
 		t.Errorf("exactly the seats left should confirm: %s", got)
 	}
 	if got := ask(1); got != "US" {

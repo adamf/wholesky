@@ -21,6 +21,7 @@ import (
 	"github.com/adamf/jetway/pkg/iatci"
 	"github.com/adamf/jetway/pkg/paxlst"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/baggage"
@@ -30,6 +31,7 @@ import (
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/typeb"
 
+	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -61,6 +63,49 @@ func registrationOf(f world.Flight) string {
 	}
 	return fmt.Sprintf("SKY%03d", hashOf(f.Carrier+f.Number)%1000)
 }
+
+// fleetOf is the fleet a carrier flies: the same types with the cabins a
+// carrier of its kind fits. A network carrier's narrow-bodies have a
+// front cabin, two seats either side of the aisle: three rows on an
+// A320, four on a 737-800 and five on an A321, which is 12, 16 and 20
+// seats and about what American, Delta and United fit. A low-cost
+// carrier's have one cabin from the door to the tail. The wide-bodies
+// have a business cabin whoever flies them.
+func fleetOf(carrier string) *dcs.FleetData {
+	if equipment.ModelOf(carrier) != equipment.Network {
+		oneCabinOnce.Do(func() { oneCabin = fleetData() })
+		return oneCabin
+	}
+	twoCabinOnce.Do(func() {
+		fl := fleetData()
+		front := func(code string, rows int) {
+			t, ok := fl.Types[code]
+			if !ok {
+				return
+			}
+			cp := *t
+			cp.Cabin.Sections = []dcs.Section{{Compartment: "C", FromRow: 1, ToRow: rows, Letters: "AC DF"}}
+			for _, sec := range t.Cabin.Sections {
+				if sec.ToRow <= rows {
+					continue
+				}
+				sec.FromRow = max(sec.FromRow, rows+1)
+				cp.Cabin.Sections = append(cp.Cabin.Sections, sec)
+			}
+			fl.Types[code] = &cp
+		}
+		front("320", 3)
+		front("73H", 4)
+		front("321", 5)
+		twoCabin = fl
+	})
+	return twoCabin
+}
+
+var (
+	oneCabinOnce, twoCabinOnce sync.Once
+	oneCabin, twoCabin         *dcs.FleetData
+)
 
 // fleetData is jetway's representative fleet plus the two types a replayed
 // US day is mostly made of: the 76-seat regional jet and the 737-800.
@@ -131,7 +176,7 @@ func (t *Tenant) startGround(accountingCode string) {
 	st := dcs.NewStation(t.Carrier.Designator)
 	st.AccountingCode = accountingCode
 	st.Store = nopStore{}
-	st.Fleet = fleetData()
+	st.Fleet = fleetOf(t.Carrier.Designator)
 	st.Log = t.log
 	st.Equipment = func(k dcs.Key) (dcs.Equipment, bool) {
 		f, ok := t.flightsByNum[k.Flight]

@@ -243,7 +243,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
     <div class="tile"><span class="ife">Recorded flights</span><b>22,889</b><span class="lbl">US flights on Thanksgiving eve 2025</span><span class="fn">from the BTS record, flown at real time</span></div>
     <div class="tile"><span class="ife">jetway nodes</span><b>522</b><span class="lbl">on the demo</span><span class="fn">518 carriers, three distribution systems, one switch, across six machines when deployed</span></div>
     <div class="tile"><span class="ife">Pre-sold bookings</span><b>1.4M</b><span class="lbl">before the recorded day starts</span><span class="fn">in Postgres, each with a ticket and a fare</span></div>
-    <div class="tile"><span class="ife">Recorded day's sales</span><b>$631M</b><span class="lbl">priced at a synthetic tariff</span><span class="fn">synthetic fares, calibrated to the US government's fare report</span></div>
+    <div class="tile"><span class="ife">Recorded day's sales</span><b>$624M</b><span class="lbl">priced at a synthetic tariff</span><span class="fn">synthetic fares, calibrated to the US government's fare report</span></div>
   </section>
 
   <!-- ways in -->
@@ -386,10 +386,11 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <p><code>pkg/inventory</code> provides leg-based seat control. It has cabins per leg, serial nested class authorisations, and waitlists one tenth of the cabin deep. A full cabin waitlists a sell. A closed class refuses a sell even when the cabin has seats. The last seats sell at the higher fares. Each carrier rebuilds its inventory from the book of record at every boot, because an in-memory count of sold seats oversells after a restart.</p>
         <div class="table-wrap"><table>
           <tr><th>the recorded day, filled to 0.85</th><th>value</th></tr>
-          <tr><td>whole day, 30,003 legs</td><td class="mono">$631M</td></tr>
+          <tr><td>whole day, 30,017 legs</td><td class="mono">$624M</td></tr>
           <tr><td>average fare per passenger-leg</td><td class="mono">$197</td></tr>
-          <tr><td>median fare per passenger-leg</td><td class="mono">$168</td></tr>
-          <tr><td>full-fare Y · the 4 cheapest classes</td><td class="mono">$425 · $112–153</td></tr>
+          <tr><td>median fare per passenger-leg</td><td class="mono">$156</td></tr>
+          <tr><td>full-fare Y · the 4 cheapest classes</td><td class="mono">$385 · $101–139</td></tr>
+          <tr><td>the front cabin, 4% of passengers</td><td class="mono">$630–942</td></tr>
           <tr><td>taxes, as a share of the total</td><td class="mono">13%</td></tr>
         </table></div>
         <p class="small">These fares are synthetic and labelled as synthetic. They copy no carrier's filing. <a href="#business/fares-level">The business</a> gives the calibration.</p>
@@ -529,9 +530,9 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <div>
         <div class="table-wrap"><table>
           <tr><th>measure</th><th>target</th><th>result</th></tr>
-          <tr><td>load factor</td><td class="mono">0.82</td><td class="mono">0.821</td></tr>
-          <tr><td>fare paid, as a share of the report's average</td><td class="mono">1.00</td><td class="mono">1.003</td></tr>
-          <tr><td>ultra-low-cost carriers, as a share of their markets</td><td class="mono">0.749</td><td class="mono">0.79</td></tr>
+          <tr><td>load factor</td><td class="mono">0.82</td><td class="mono">0.812</td></tr>
+          <tr><td>fare paid, as a share of the report's average</td><td class="mono">1.00</td><td class="mono">1.006</td></tr>
+          <tr><td>ultra-low-cost carriers, as a share of their markets</td><td class="mono">0.749</td><td class="mono">0.72</td></tr>
           <tr><td>a carrier that cuts its fares 20%, sales in the test world</td><td class="mono"></td><td class="mono">308 → 377</td></tr>
           <tr><td>a carrier that raises its fares 25%</td><td class="mono"></td><td class="mono">308 → 235</td></tr>
         </table></div>

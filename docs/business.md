@@ -164,9 +164,9 @@ the result with the report.
 
 | Measure | Target | Result |
 | --- | --- | --- |
-| Load factor | 0.82 | 0.821 |
-| Fare paid, as a share of the report's line | 1.00 | 1.003 |
-| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.79 |
+| Load factor | 0.82 | 0.812 |
+| Fare paid, as a share of the report's line | 1.00 | 1.006 |
+| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.72 |
 | Travellers who chose a fare that the engine refused | 0 | 0 |
 
 The test fails when a change to the ladder, the class limits or the
@@ -221,8 +221,16 @@ reads the booking curve on the world's clock. For a connecting request
 the controller compares the fare with the bid prices of the legs.
 
 The forecast's class mix is the measured mix of the calibration test.
-About 1 traveller in 9 pays full fare. About 4 in 10 fly in the 4
-cheapest classes.
+About 1 traveller in 9 pays full fare. More than 1 in 3 fly in the 4
+cheapest classes. About 1 in 30 flies in the front cabin.
+
+A network carrier's narrow-body has a front cabin with 2 seats on each
+side of the aisle: 12 seats on an A320, 16 on a 737-800 and 20 on an
+A321. The large US carriers fit about that. A low-cost carrier's
+narrow-body has one cabin. In a short market 7 % of travellers want the
+front cabin, which is an estimate set to the size of the cabin. The
+fares of the front cabin are 1.11 to 1.67 times full fare, and those
+ratios are also estimates.
 
 jetway's `inventory.Controller.Value` lets a carrier value a request net
 of the cost of the channel that asked. A carrier that holds its last
@@ -446,9 +454,8 @@ machines needs one world file for all of them. Write it with
 - **Agencies as players.** An agency has an account and no decisions. It
   does not set its fee, choose a distribution system or bargain with a
   carrier.
-- **Premium cabins.** The fleet table gives most narrow-body types one
-  cabin. The traveller model has travellers who want a premium cabin,
-  and most of them fly in economy.
+- **Premium economy and upgrades.** An aircraft has at most 2 cabins.
+  Nobody is upgraded into the front cabin, and its fares are estimates.
 - **Joint venture pooling.** A joint venture has a service charge of
   0 %. The model does not pool the revenue of the routes.
 - **A rolling calendar.** The world flies one date. A traveller's

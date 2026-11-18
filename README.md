@@ -371,11 +371,12 @@ The bar at the top of the globe shows what the aircraft in the air were
 sold for and what has been bought since boot. The ledger behind the bar
 is rebuilt from the books at every start.
 
-Filled to a load factor of 0.85, the recorded day comes to $631M across
-30,003 legs. The average fare is $197 a passenger-leg, the median is
-$168, and taxes are 13% of the total. Full-fare Y averages $425, and the
-4 cheapest classes average $112 to $153. One passenger in 10 pays full
-fare. Every cent is synthetic. The level is calibrated: a test fills a
+Filled to a load factor of 0.85, the recorded day comes to $624M across
+30,017 legs. The average fare is $197 a passenger-leg, the median is
+$156, and taxes are 13% of the total. Full-fare Y averages $385, and the
+4 cheapest classes average $101 to $139. One passenger in 10 pays full
+fare. The front cabin of a network carrier's narrow-body holds 4% of the
+passengers at $630 to $942. Every cent is synthetic. The level is calibrated: a test fills a
 US world and holds what travellers paid within 3% of the report's
 average fare for each market.
 
