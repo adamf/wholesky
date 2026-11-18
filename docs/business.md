@@ -10,6 +10,8 @@ constant from a paper, a court record or a company report. An estimate
 is a value that no public source gives. The text says which kind each
 number is. [internal/refdata/SOURCES.md](../internal/refdata/SOURCES.md)
 lists every data file with its publisher and the date it was read.
+[research/](research/README.md) holds the research notes behind the
+numbers.
 
 The mechanisms that a production system needs are in jetway: the fare
 engine, minimum connecting times, proration and inventory control. The

@@ -54,7 +54,8 @@ the alliances' member lists as Wikipedia reproduces them. Basis S.
 ## Numbers in the code
 
 Each package that uses a constant from research says where it comes from
-in its comments. The main ones are:
+in its comments. The research notes are in
+[docs/research](../../docs/research/README.md). The main constants are:
 
 | Package | Number | Source |
 | --- | --- | --- |
