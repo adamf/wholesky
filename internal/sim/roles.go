@@ -530,7 +530,7 @@ func (c *Core) pollRevenue(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		total := LegFeed{Revenue: map[string]int64{}, Seats: map[string]int{}, Accounts: map[string]revenue.Account{}}
+		total := LegFeed{Revenue: map[string]int64{}, Seats: map[string]int{}, Accounts: map[string]revenue.Account{}, Agents: map[string]revenue.Agent{}}
 		var regions []registration
 		for _, p := range c.livePeers() {
 			switch p.Role {
@@ -552,6 +552,11 @@ func (c *Core) pollRevenue(ctx context.Context) {
 					sum := total.Accounts[c]
 					sum.Merge(a)
 					total.Accounts[c] = sum
+				}
+				for code, a := range f.Agents {
+					sum := total.Agents[code]
+					sum.Merge(a)
+					total.Agents[code] = sum
 				}
 			case "region":
 				regions = append(regions, p)
@@ -1129,7 +1134,7 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		}
 		mine++
 		tenantBus := gateway.NewBus(64)
-		s.tapTenantRevenue(ctx, tenantBus)
+		s.tapTenantRevenue(ctx, c.Designator, tenantBus)
 		switchAddr := wl.SwitchAddr
 		if a, ok := wl.SwitchAddrs[c.Designator]; ok {
 			switchAddr = a
@@ -1155,6 +1160,8 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 			LinkToken:             linkToken(linkSecretOf(opts), c.Designator),
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
+			Miles:                 s.tariff.Miles,
+			ChannelCost:           s.channelCost,
 			WatchAddress:          s.watcher(),
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],

@@ -36,7 +36,13 @@ func sample(s *Sim, n int, seed int64, carriers []string) marketSample {
 		}
 		out.n++
 		t, base := s.travellerFor(rng, o, d, km)
-		found := s.shop(rng, s.GDSes[0], t, s.pathsFor(rng, o, d))
+		g := s.GDSes[0]
+		var ag distribution.Agency
+		if t.Channel != market.Direct {
+			ag, _ = distribution.Pick(rng, s.commerce.agencies, t.Channel, s.econ.region[o])
+			g = s.nodeOf(ag, g)
+		}
+		found := s.shop(rng, g, t, ag, s.pathsFor(rng, o, d))
 		if len(found) == 0 {
 			out.noOffer++
 			continue
@@ -85,6 +91,7 @@ func bootQuiet(t *testing.T) (*Sim, []string, context.Context) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Stop)
+	morning(s)
 	var carriers []string
 	for code := range s.Flights {
 		if len(s.Flights[code]) > 0 {
@@ -217,3 +224,7 @@ func TestScorecardCountsTheSelling(t *testing.T) {
 		t.Fatalf("%d carriers sold, %d collected in taxes", counted, taxes)
 	}
 }
+
+// morning holds the world's clock at four in the morning: the day's
+// flights are all still to come, whatever hour the test runs at.
+func morning(s *Sim) { s.clock.Sync(time.Now(), 4*60, 0) }

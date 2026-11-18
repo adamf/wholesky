@@ -115,11 +115,10 @@ the programme did not reach falls back to its ladder. The solver is a
 plain dense simplex. A connecting point is therefore bounded at 120 legs,
 and the most-booked paths are kept. The forecast's class mix is the mix
 that the traveller model buys in a filled world. A forecast learned from
-each flight's own history is still missing. A carrier's inventory also
-does not value a request by the channel that asked. jetway has the hook
-(`inventory.Controller.Value`, v0.1.97). Every traveller in the
-simulator books through a distribution system node, and a carrier cannot
-tell a direct sale from an agency sale on the wire.
+each flight's own history is still missing. A carrier that holds its
+last seats for its own channels values a request by the channel that
+asked (`inventory.Controller.Value`). A sale on the carrier's own site
+is made on the carrier's own node (jetway v0.1.100).
 
 **Interline through check-in (IATCI).** IATCI is done (jetway v0.1.61-63,
 `pkg/iatci`). Of the connections, 1 in 4 crosses carriers. The first

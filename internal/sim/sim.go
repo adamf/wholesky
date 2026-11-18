@@ -347,6 +347,7 @@ type Sim struct {
 	revenueMu   sync.RWMutex
 	revenueFeed map[string]int64
 	accountFeed map[string]revenue.Account
+	agentFeed   map[string]revenue.Agent
 	seatsFeed   map[string]int
 	// The world's own name and codes, and the worlds it has joined.
 	worldName     string
@@ -452,7 +453,11 @@ type Sim struct {
 	DemNoOffer, DemPricedOut, DemConnecting, DemRoundTrip atomic.Int64
 	DemBusiness, DemDirections, DemFarePaid               atomic.Int64
 	// FareMoves counts the fares the pricing desks have filed.
-	FareMoves                                                atomic.Int64
+	FareMoves atomic.Int64
+	// DemDirect counts the sales made on carriers' own systems,
+	// DemConnected the ones agencies made over a direct connection, and
+	// DemRefused the ones a carrier's own inventory would not sell.
+	DemDirect, DemConnected, DemRefused                      atomic.Int64
 	DemTicketed, DemCancelled, DemRefunded, DemSplit, DemNDC atomic.Int64
 	// SlotsImproved counts the flights of this machine's carriers that
 	// took an earlier slot when one was given back.
@@ -681,6 +686,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 		mux.HandleFunc("POST /noc/inject", s.serveInject)
 		mux.HandleFunc("GET /economy.json", s.serveEconomy)
 		mux.HandleFunc("GET /fares.json", s.serveFares)
+		mux.HandleFunc("GET /agencies.json", s.serveAgencies)
 		s.airlineSrv.Routes(mux)
 		mux.HandleFunc("GET /settlement/", s.serveHOT)
 		mux.HandleFunc("GET /billing.json", s.serveBilling)
@@ -806,7 +812,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			continue // run by someone's own jetway node; see Options.External
 		}
 		tenantBus := gateway.NewBus(64)
-		s.tapTenantRevenue(ctx, tenantBus)
+		s.tapTenantRevenue(ctx, c.Designator, tenantBus)
 		switchAddr := s.switchAddrFor(c)
 		tenantMaxMsgs, tenantMaxRecs := opts.TenantMaxMessages, opts.TenantMaxRecords
 		if tenantMaxMsgs == 0 {
@@ -820,6 +826,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			LinkToken:             linkToken(linkSecretOf(opts), c.Designator),
 			DayPos:                func() float64 { return s.clock.Pos(time.Now()) },
 			Tariff:                s.tariff,
+			Miles:                 s.tariff.Miles,
+			ChannelCost:           s.channelCost,
 			WatchAddress:          s.watcher(),
 			DistributionAddresses: distribution,
 			PartnerAddresses:      partners[c.Designator],
@@ -1262,6 +1270,14 @@ func (s *Sim) fillDay(ctx context.Context) {
 		Mix:     s.mixFor,
 		Offered: func(carrier, channel string) bool { return s.policyOf(carrier).Offered(channel) },
 		Share:   s.shareOf,
+		Seller:  s.seller,
+		Channels: func() []string {
+			var out []string
+			for _, g := range gdsSlots {
+				out = append(out, g.Designator)
+			}
+			return out
+		}(),
 		// A connection sold in advance makes the station's minimum
 		// connecting time, as one sold on the day does.
 		Connect: s.connectTime,
@@ -2166,31 +2182,42 @@ func (s *Sim) servePack(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(pack) //nolint:errcheck
 }
 
-// tapTenantRevenue feeds the revenue ledger from a carrier's own book on a
-// machine that runs no distribution system: a region hears each sale as
-// the carrier's copy of the record, priced, and that is the only copy it
-// has. Where a distribution system runs on the same machine its copy is
-// counted instead, once, so the two never double.
-func (s *Sim) tapTenantRevenue(ctx context.Context, bus *gateway.Bus) {
-	if len(s.GDSes) > 0 {
-		return
-	}
+// tapTenantRevenue feeds the revenue ledger from a carrier's own book.
+// A sale the carrier made on its own system is in no other book, and is
+// counted here wherever the carrier runs. A sale a distribution system
+// made is counted from that system's copy when one runs on this machine,
+// so the two never double; on a machine that runs none, a region, the
+// carrier's priced copy is the only copy there is and is counted here.
+func (s *Sim) tapTenantRevenue(ctx context.Context, carrier string, bus *gateway.Bus) {
 	go s.tapBus(ctx, bus, func(ev gateway.Event) {
 		if ev.Type != gateway.EvPNR {
 			return
 		}
-		if p, ok := ev.Data.(map[string]any); ok {
-			// The carrier's copy is priced when the fare reaches it, which
-			// may be a version or two after the sell; count each record the
-			// first time it is seen priced.
-			if rec, ok := p["record"].(*pnr.PNR); ok && rec != nil && rec.Pricing != nil && rec.Origin.Channel != "codeshare" {
-				if rec.Status == pnr.StatusCancelled {
-					s.Ledger.Reverse(rec.RecordLocator)
-					return
-				}
-				if _, seen := s.ledgerSeen.LoadOrStore(rec.RecordLocator, true); !seen {
-					s.Ledger.Record(rec)
-				}
+		p, ok := ev.Data.(map[string]any)
+		if !ok {
+			return
+		}
+		rec, ok := p["record"].(*pnr.PNR)
+		if !ok || rec == nil || rec.Pricing == nil || rec.Origin.Channel == "codeshare" {
+			return
+		}
+		own := rec.Origin.Party == carrier && len(rec.Locators) == 0
+		if len(s.GDSes) > 0 && !own {
+			return
+		}
+		if rec.Status == pnr.StatusCancelled {
+			s.Ledger.Reverse(rec.RecordLocator)
+			return
+		}
+		// The carrier's copy is priced when the fare reaches it, which
+		// may be a version or two after the sell; count each record the
+		// first time it is seen priced.
+		if _, seen := s.ledgerSeen.LoadOrStore(rec.RecordLocator, true); !seen {
+			s.Ledger.Record(rec)
+			if own {
+				s.Eye.OnBooking()
+				s.Stats.OnBooking()
+				s.Stats.OnRevenue(rec.Pricing.Total)
 			}
 		}
 	})

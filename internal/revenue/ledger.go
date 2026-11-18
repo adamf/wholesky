@@ -45,12 +45,58 @@ type Ledger struct {
 	seats    map[string]int
 	total    int64
 	accounts map[string]*Account
+	agents   map[string]*Agent
 	entries  map[string]*entry // by record locator, for a cancellation
 }
 
-// Cost is what a sale cost, by line.
+// Agent is one agency's sales: what it sold and what it earned from the
+// distribution system, the carriers and the travellers.
+type Agent struct {
+	Tickets int `json:"tickets"`
+	// Connected is the tickets it sold over a direct connection.
+	Connected int `json:"connected,omitempty"`
+	// Sales is the fares it sold, Incentive what its distribution system
+	// paid it, Commission what the carriers paid it, and Fees what it
+	// charged travellers.
+	Sales      int64 `json:"sales"`
+	Incentive  int64 `json:"incentive"`
+	Commission int64 `json:"commission"`
+	Fees       int64 `json:"fees"`
+	// Carriers is its tickets by the carrier that ticketed them.
+	Carriers map[string]int `json:"carriers,omitempty"`
+}
+
+// Income is everything the agency earned.
+func (a Agent) Income() int64 { return a.Incentive + a.Commission + a.Fees }
+
+func (a *Agent) add(d Agent, sign int64) {
+	a.Tickets += int(sign) * d.Tickets
+	a.Connected += int(sign) * d.Connected
+	a.Sales += sign * d.Sales
+	a.Incentive += sign * d.Incentive
+	a.Commission += sign * d.Commission
+	a.Fees += sign * d.Fees
+	for c, n := range d.Carriers {
+		if a.Carriers == nil {
+			a.Carriers = map[string]int{}
+		}
+		a.Carriers[c] += int(sign) * n
+	}
+}
+
+// Cost is what a sale cost the carrier, by line, and who sold it.
 type Cost struct {
 	System, Commission, Payment, Own int64
+	// Agent is the agency that sold the ticket, by its number, or "" for
+	// the carrier's own sale. Incentive is what the distribution system
+	// passes on to the agency out of System, and Fee what the agency
+	// charged the traveller: both are the agency's income and neither is
+	// the carrier's cost. Connected says the sale came over a direct
+	// connection.
+	Agent     string
+	Incentive int64
+	Fee       int64
+	Connected bool
 }
 
 // Total is the whole cost of a sale.
@@ -111,13 +157,15 @@ type entry struct {
 	legs     map[string]int64
 	seats    map[string]int
 	accounts map[string]Account
+	agent    string
+	sold     Agent
 }
 
 // Reset forgets everything, before a rebuild from the book.
 func (l *Ledger) Reset() {
 	l.mu.Lock()
 	l.legs, l.seats, l.total = map[string]int64{}, map[string]int{}, 0
-	l.accounts, l.entries = map[string]*Account{}, map[string]*entry{}
+	l.accounts, l.entries, l.agents = map[string]*Account{}, map[string]*entry{}, map[string]*Agent{}
 	l.mu.Unlock()
 }
 
@@ -140,7 +188,7 @@ func (l *Ledger) key(carrier, number, board string) string {
 
 // New returns an empty ledger.
 func New() *Ledger {
-	return &Ledger{legs: map[string]int64{}, seats: map[string]int{}, accounts: map[string]*Account{}, entries: map[string]*entry{}}
+	return &Ledger{legs: map[string]int64{}, seats: map[string]int{}, accounts: map[string]*Account{}, entries: map[string]*entry{}, agents: map[string]*Agent{}}
 }
 
 // Key names a leg: the operating carrier, the flight number without
@@ -253,6 +301,14 @@ func (l *Ledger) record(r *pnr.PNR, keep bool) {
 	if l.Sale != nil {
 		c := l.Sale(r, ticketing, len(air)*pax, r.Pricing.Base+r.Pricing.CarrierFees, r.Pricing.Total)
 		t.System, t.Commission, t.Payment, t.Own = c.System, c.Commission, c.Payment, c.Own
+		if c.Agent != "" {
+			e.agent = c.Agent
+			e.sold = Agent{Tickets: pax, Sales: r.Pricing.Base + r.Pricing.CarrierFees, Incentive: c.Incentive, Commission: c.Commission,
+				Fees: c.Fee * int64(pax), Carriers: map[string]int{ticketing: pax}}
+			if c.Connected {
+				e.sold.Connected = pax
+			}
+		}
 	}
 	e.accounts[ticketing] = t
 
@@ -284,11 +340,13 @@ func (l *Ledger) Reverse(locator string) bool {
 	}
 	delete(l.entries, locator)
 	// A distribution system charges for a cancelled segment too, and the
-	// carrier's own cost of the sale was spent: those are left in.
+	// carrier's own cost of the sale was spent: those are left in, and so
+	// is what the system paid the agency for the booking.
 	for c, a := range e.accounts {
 		a.System, a.Own = 0, 0
 		e.accounts[c] = a
 	}
+	e.sold.Incentive = 0
 	l.apply(e, -1)
 	return true
 }
@@ -321,7 +379,37 @@ func (l *Ledger) apply(e *entry, sign int64) {
 	for c, a := range e.accounts {
 		l.account(c).add(a, sign)
 	}
+	if e.agent != "" {
+		if l.agents == nil {
+			l.agents = map[string]*Agent{}
+		}
+		a := l.agents[e.agent]
+		if a == nil {
+			a = &Agent{}
+			l.agents[e.agent] = a
+		}
+		a.add(e.sold, sign)
+	}
 }
+
+// Agents is every agency's sales, by its number.
+func (l *Ledger) Agents() map[string]Agent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make(map[string]Agent, len(l.agents))
+	for code, a := range l.agents {
+		cp := *a
+		cp.Carriers = map[string]int{}
+		for k, v := range a.Carriers {
+			cp.Carriers[k] = v
+		}
+		out[code] = cp
+	}
+	return out
+}
+
+// Merge adds another machine's count of an agency's sales to this one.
+func (a *Agent) Merge(b Agent) { a.add(b, 1) }
 
 // AccountOf is a carrier's account so far.
 func (l *Ledger) AccountOf(carrier string) Account {

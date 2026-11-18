@@ -40,6 +40,14 @@ type commerce struct {
 	// one whose programme the people who live there belong to.
 	home map[string]string
 
+	// agencies is the world's sellers that are not carriers, and agency
+	// the same by their numbers. open is what carriers' own systems said
+	// they would sell, kept for a moment.
+	agencies []distribution.Agency
+	agency   map[string]distribution.Agency
+	openMu   sync.Mutex
+	open     map[string]openClasses
+
 	// desk is the carriers' pricing desks, and seats the seats each
 	// carrier flies in each market, by "A/B" with A before B.
 	desk   *pricing.Desk
@@ -83,6 +91,8 @@ func (s *Sim) initCommerce(m *world.Manifest) {
 		c.home[ap] = best
 	}
 	c.partners = partners.New(codes, shares)
+	c.open = map[string]openClasses{}
+	c.initSellers()
 	s.commerce = c
 	if s.tariff != nil {
 		s.tariff.Partners = c.partners.Of
@@ -132,7 +142,8 @@ func (s *Sim) setPolicy(carrier string, change func(*distribution.Policy)) distr
 	carrier = strings.ToUpper(carrier)
 	p := s.policyOf(carrier)
 	// A copy of the maps: the default's are shared.
-	cp := distribution.Policy{Sells: map[string]bool{}, Surcharge: map[string]int64{}, Override: map[string]int{}, WebOnly: p.WebOnly, FullContent: p.FullContent}
+	cp := p
+	cp.Sells, cp.Surcharge, cp.Override = map[string]bool{}, map[string]int64{}, map[string]int{}
 	for k, v := range p.Sells {
 		cp.Sells[k] = v
 	}
@@ -191,15 +202,25 @@ func saleChannel(r *pnr.PNR) string {
 	return market.Agency
 }
 
-// costOfSale is what a ticket's sale cost the carrier that ticketed it.
+// costOfSale is what a ticket's sale cost the carrier that ticketed it,
+// and which agency sold it.
 func (s *Sim) costOfSale(r *pnr.PNR, ticketing string, segments int, fareCents, paid int64) revenue.Cost {
 	sale := distribution.Sale{Channel: market.Agency, Segments: segments, Fare: fareCents, Paid: paid}
+	var ag distribution.Agency
+	sold := false
+	if r != nil {
+		sale.Channel = saleChannel(r)
+		ag, sold = s.commerce.agency[r.Origin.Agent]
+		if strings.EqualFold(r.Origin.Channel, distribution.NDC) && sold {
+			// An agency connected to the carrier directly.
+			sale.Channel, sale.Kind = distribution.NDC, ag.Kind
+		}
+	}
 	if s.econ != nil {
 		// With no record, the sale is one in the carrier's home market
 		// through an agency: what a ticket costs to sell at the most.
 		sale.Region = s.econ.region[s.carriers[ticketing].Hub]
 		if r != nil {
-			sale.Channel = saleChannel(r)
 			for _, sg := range r.Segments {
 				if sg.Type == pnr.SegmentAir {
 					sale.Region = s.econ.region[sg.Board]
@@ -208,11 +229,13 @@ func (s *Sim) costOfSale(r *pnr.PNR, ticketing string, segments int, fareCents, 
 			}
 		}
 		sale.Home = sale.Region == s.econ.region[s.carriers[ticketing].Hub]
-	} else if r != nil {
-		sale.Channel = saleChannel(r)
 	}
 	c := s.policyOf(ticketing).CostOf(sale)
-	return revenue.Cost{System: c.System, Commission: c.Commission, Payment: c.Payment, Own: c.Own}
+	out := revenue.Cost{System: c.System, Commission: c.Commission, Payment: c.Payment, Own: c.Own}
+	if sold && sale.Channel != market.Direct {
+		out.Agent, out.Incentive, out.Fee, out.Connected = ag.Code, c.Incentive, ag.Fee, sale.Channel == distribution.NDC
+	}
+	return out
 }
 
 // connectTime is the least time a passenger needs between two flights at
@@ -233,6 +256,9 @@ func (s *Sim) connectTime(in, out world.Flight) int {
 	return m
 }
 
+// checkinCloses is the minutes before departure a flight stops selling.
+const checkinCloses = 45
+
 // path is one way to fly a market: one flight, or two that connect.
 type path []world.Flight
 
@@ -247,12 +273,15 @@ func (s *Sim) pathsFor(rng *rand.Rand, o, d string) []path {
 	if len(from) == 0 {
 		return nil
 	}
+	// A flight that has left, or whose check-in has closed, is not for
+	// sale: a traveller buys for the part of the day still to come.
+	gone := int(s.clock.Pos(time.Now())) + checkinCloses
 	start := rng.Intn(len(from))
 	scanned := 0
 	for i := 0; i < len(from) && scanned < 600; i++ {
 		f1 := from[(start+i)%len(from)]
 		scanned++
-		if s.isClosed(f1.From, f1.To) {
+		if s.isClosed(f1.From, f1.To) || f1.DepMin < gone {
 			continue
 		}
 		if f1.To == d {
@@ -356,12 +385,35 @@ type shopped struct {
 	stay    int
 	codes   [][2]string // carrier and number each segment is sold under
 	channel string
+	// agency is who sells it, when the carrier does not: the traveller's
+	// agency, in the traveller's own channel.
+	agency distribution.Agency
 }
 
-// shop prices every path for a traveller and returns the offers.
-func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path) []shopped {
+// ownCode reports whether every segment of the offer is sold under one
+// carrier's code, which is what that carrier's own system can sell.
+func (sh shopped) ownCode(carrier string) bool {
+	for _, c := range sh.codes {
+		if c[0] != carrier {
+			return false
+		}
+	}
+	return true
+}
+
+// shop prices every path for a traveller and returns the offers. g is the
+// distribution system the traveller's agency reads availability from, and
+// ag the agency, when the traveller has one.
+func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, ag distribution.Agency, paths []path) []shopped {
 	day := s.BookingDate
 	at := func(d time.Time, min int) time.Time { return d.Add(time.Duration(min) * time.Minute) }
+	// What the traveller's agency adds to a ticket. A travel management
+	// company's fee goes to the traveller's employer and is not a price
+	// the traveller compares.
+	var agencyFee int64
+	if ag.Kind != market.TMC {
+		agencyFee = ag.Fee
+	}
 	var out []shopped
 	for _, p := range paths {
 		codes := make([][2]string, 0, len(p)*2)
@@ -404,8 +456,22 @@ func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path)
 				continue
 			}
 			channels = []string{market.Direct}
-		} else if t.Channel != market.Direct && (pol.WebOnly || pol.Surcharge[t.Channel] > 0) {
+		} else if t.Channel != market.Direct && (pol.WebOnly || pol.DirectFirst || pol.Surcharge[t.Channel] > 0 || agencyFee > 0) {
+			// The carrier's own site may be the better buy, and a
+			// traveller who is paying for the difference looks.
 			channels = append(channels, market.Direct)
+		}
+		// What the carrier's own system will sell, where it tells the
+		// distribution systems less than it knows.
+		var own []map[string]bool
+		if tn := s.ownNode(seller); tn != nil && pol.DirectFirst {
+			for i, f := range p {
+				if codes[i][0] == seller {
+					own = append(own, s.trueOpen(tn, codes[i][0], codes[i][1], f))
+				} else {
+					own = append(own, nil)
+				}
+			}
 		}
 		for si, stay := range stays {
 			for _, ch := range channels {
@@ -436,6 +502,7 @@ func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path)
 					}
 				}
 				nOut := len(p)
+				direct := ch == market.Direct
 				req.Open = func(seg int, class string) bool {
 					if !want.Sells(class) {
 						return false
@@ -443,9 +510,14 @@ func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path)
 					if seg >= nOut {
 						return true // the way home is weeks off
 					}
+					if direct && seg < len(own) && own[seg] != nil {
+						if open, known := own[seg][class]; known {
+							return open
+						}
+					}
 					f := p[seg]
 					k := avail.NewKey(codes[seg][0], codes[seg][1], day, f.From, f.To, class)
-					return g.GW.Avail == nil || g.GW.Avail.Status(k) != avail.Closed
+					return g == nil || g.GW.Avail == nil || g.GW.Avail.Status(k) != avail.Closed
 				}
 				q, err := fare.Price(s.tariff, req)
 				if err != nil {
@@ -455,10 +527,16 @@ func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path)
 				if back != nil {
 					dirs = 2
 				}
-				// What the airline charges: the fare and its own fees. The
-				// taxes are the same whoever flies, and what a traveller
-				// will pay is measured in fares.
+				// What the traveller is charged for one direction: the fare
+				// and the carrier's own fees, and in an agency's channel
+				// the agency's. The taxes are the same whoever flies, and
+				// what a traveller will pay is measured in fares.
 				price := (q.Base.Amount+q.CarrierFees.Amount)/int64(t.Party)/dirs + pol.Surcharge[ch]
+				sh := shopped{quote: q, out: p, back: back, stay: stay, codes: all, channel: ch}
+				if !direct {
+					price += agencyFee / dirs
+					sh.agency = ag
+				}
 				o := market.Offer{Carriers: []string{seller}, Connections: len(p) - 1, Depart: p[0].DepMin, Price: price, Channel: ch,
 					Refundable: true, SaturdayNight: si == 1, Bonus: pol.Favour(ch, price)}
 				for _, c := range q.Components {
@@ -475,7 +553,8 @@ func (s *Sim) shop(rng *rand.Rand, g *GDSNode, t market.Traveller, paths []path)
 				if t.Loyal != "" && seller != t.Loyal {
 					o.Partner = s.commerce.partners.Between(t.Loyal, seller) != partners.None
 				}
-				out = append(out, shopped{offer: o, quote: q, out: p, back: back, stay: stay, codes: all, channel: ch})
+				sh.offer = o
+				out = append(out, sh)
 			}
 		}
 	}

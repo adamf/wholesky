@@ -44,6 +44,16 @@ type Policy struct {
 	// fee for a promise of every fare and no surcharge. American counted
 	// 133 million dollars a year saved from the deals of 2006.
 	FullContent bool `json:"full_content,omitempty"`
+	// Connect says the carrier offers agencies a direct connection: an
+	// agency that has one books at the carrier's own system over NDC and
+	// no distribution system is paid.
+	Connect bool `json:"connect,omitempty"`
+	// DirectFirst holds the last seats of each class for the carrier's
+	// own channels: a request that comes through a distribution system is
+	// worth the fare less what the channel costs, and is sold only while
+	// the class under it is still open. A full-content deal forbids it,
+	// so a carrier that turns it on gives the deal up.
+	DirectFirst bool `json:"direct_first,omitempty"`
 }
 
 // Default is how a carrier of a kind sells: a network carrier everywhere
@@ -55,9 +65,12 @@ func Default(model equipment.Model) Policy {
 	case equipment.UltraLowCost:
 		return Policy{Sells: map[string]bool{}}
 	case equipment.LowCost:
-		return Policy{Sells: map[string]bool{market.OTA: true, market.TMC: true}}
+		// A low-cost carrier has no full-content deal to keep: its lowest
+		// seats go to its own site first, and agencies that connect to it
+		// directly are welcome.
+		return Policy{Sells: map[string]bool{market.OTA: true, market.TMC: true}, Connect: true, DirectFirst: true}
 	}
-	return Policy{Sells: map[string]bool{market.OTA: true, market.TMC: true, market.Agency: true}, FullContent: true,
+	return Policy{Sells: map[string]bool{market.OTA: true, market.TMC: true, market.Agency: true}, FullContent: true, Connect: true,
 		Override: map[string]int{market.TMC: 200, market.OTA: 100}}
 }
 
@@ -79,18 +92,26 @@ type Cost struct {
 	// Own is the carrier's own cost of a direct sale, and the settlement
 	// plan's charge on an agency one.
 	Own int64 `json:"own"`
+	// Incentive is the part of System that the distribution system passes
+	// on to the agency that made the booking. It is the system's cost and
+	// the agency's income, and is not added to Total.
+	Incentive int64 `json:"incentive,omitempty"`
 }
 
 // Total is the whole cost.
 func (c Cost) Total() int64 { return c.System + c.Commission + c.Payment + c.Own }
 
-// The booking fee for a flight segment, in cents. In North America a
+// SegmentFee is the booking fee for a flight segment, in cents. In North America a
 // large carrier with a full-content deal paid 2.30 dollars (the weighted
 // average of American, Delta and United at Sabre, June 2019) and a
 // mid-sized one at least 3.41 (US Airways' contract of 2011). Elsewhere
 // the systems average about 6 euros a booking, less for a sale in the
 // carrier's home market: 4 dollars at home and 6 abroad are estimates
 // from Amadeus's 5.90 euros a booking in 2023.
+func SegmentFee(region string, fullContent, home bool) int64 {
+	return segmentFee(region, fullContent, home)
+}
+
 func segmentFee(region string, fullContent, home bool) int64 {
 	if region == refdata.NorthAmerica {
 		if fullContent {
@@ -120,10 +141,17 @@ func baseCommission(region string) int {
 	return 300
 }
 
+// NDC is the channel of an agency's sale over a direct connection to
+// the carrier.
+const NDC = "ndc"
+
 // Sale is one ticket sold.
 type Sale struct {
 	Channel  string
 	Segments int
+	// Kind is the kind of agency that sold it, when the channel is a
+	// direct connection: an online agency or a travel management company.
+	Kind string
 	// Fare is what the carrier is paid: the base fare and its own fees.
 	Fare int64
 	// Paid is everything the traveller paid, taxes in; the card fee is a
@@ -150,7 +178,21 @@ func (p Policy) CostOf(s Sale) Cost {
 		c.Own = 150
 		return c
 	}
-	c.System = segmentFee(s.Region, p.FullContent, s.Home) * int64(s.Segments)
+	fee := segmentFee(s.Region, p.FullContent, s.Home) * int64(s.Segments)
+	if s.Channel == NDC {
+		// An agency connected to the carrier directly. The carrier pays
+		// its technology vendor about a tenth of a distribution system's
+		// fee (Farelogix's price in United States v. Sabre; American put
+		// its saving at 80 to 90 per cent) and pays the agency two dollars
+		// a ticket for booking that way, which is what American paid from
+		// 2017.
+		c.System = fee * 15 / 100
+		c.Own = 25
+		c.Commission = 200 + s.Fare*int64(p.Override[s.Kind])/10000
+		return c
+	}
+	c.System = fee
+	c.Incentive = fee * IncentiveShare / 100
 	c.Own = 25
 	rate := p.Override[s.Channel]
 	if s.Channel == market.Agency {
@@ -159,6 +201,12 @@ func (p Policy) CostOf(s Sale) Cost {
 	c.Commission = s.Fare * int64(rate) / 10000
 	return c
 }
+
+// IncentiveShare is the per cent of a booking fee that a distribution
+// system passes on to the agency. Sabre's cost of revenue, which is
+// mostly incentives, was 2.93 to 3.11 dollars a booking in 2022 to 2024,
+// and Amadeus's was 51 per cent of its air distribution revenue in 2023.
+const IncentiveShare = 50
 
 // Favour is what a channel's display is worth to a carrier that pays it
 // an override, as a share of the fare: a carrier shown first is chosen

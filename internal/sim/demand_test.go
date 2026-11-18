@@ -24,6 +24,7 @@ func TestDemandWalksEveryLifecyclePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Stop()
+	morning(s)
 
 	var carriers []string
 	for code := range s.Flights {

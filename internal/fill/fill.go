@@ -108,6 +108,12 @@ type Options struct {
 	// Offered reports whether a carrier is sold in a channel. Nil is
 	// everywhere.
 	Offered func(carrier, channel string) bool
+	// Seller names who sold a record that the carrier did not sell
+	// itself: the agency's number, the distribution system it booked
+	// through, and whether it booked over a direct connection to the
+	// carrier, in which case no system's locator is on the record. Nil
+	// leaves the agent a number of the system's own.
+	Seller func(rng *rand.Rand, kind, carrier string, f world.Flight) (agent, system string, connected bool)
 	// Connect is the least time a passenger needs between two flights at
 	// the station where the first lands, in minutes: the minimum
 	// connecting time. Nil is 45 minutes everywhere.
@@ -895,8 +901,24 @@ func record(rng *rand.Rand, carrier, acct string, legs []world.Flight, seats int
 		}
 	} else {
 		ch := opts.Channels[rng.Intn(len(opts.Channels))]
-		rec.Locators = []pnr.ExternalLocator{{Owner: ch, Value: channels[ch].take()}}
-		rec.Origin = pnr.Origin{Party: ch, Agent: fmt.Sprintf("%s%04d", ch, rng.Intn(10000)), Channel: kind}
+		agent, connected := fmt.Sprintf("%s%04d", ch, rng.Intn(10000)), false
+		if who != nil && opts.Seller != nil {
+			if a, system, direct := opts.Seller(rng, kind, carrier, legs[0]); a != "" {
+				agent, connected = a, direct
+				if channels[system] != nil {
+					ch = system
+				}
+			}
+		}
+		if connected {
+			// The agency booked on the carrier's own system: the record
+			// is the carrier's alone, and names the agency.
+			rec.Origin = pnr.Origin{Party: carrier, Agent: agent, Channel: "ndc"}
+			ch = carrier
+		} else {
+			rec.Locators = []pnr.ExternalLocator{{Owner: ch, Value: channels[ch].take()}}
+			rec.Origin = pnr.Origin{Party: ch, Agent: agent, Channel: kind}
+		}
 		for i := range rec.Tickets {
 			rec.Tickets[i].IssuedBy = ch
 		}

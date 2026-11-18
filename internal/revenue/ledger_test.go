@@ -15,7 +15,8 @@ func TestLedgerCreditsLegsWithTheirShare(t *testing.T) {
 	l := New()
 	l.Charge = func(ticketed, flown string) int { return 700 }
 	l.Sale = func(r *pnr.PNR, ticketing string, segments int, fare, paid int64) Cost {
-		return Cost{System: 230 * int64(segments), Payment: paid * 2 / 100, Own: 25}
+		return Cost{System: 230 * int64(segments), Payment: paid * 2 / 100, Own: 25, Commission: 600,
+			Agent: "12345675", Incentive: 115 * int64(segments), Fee: 1500}
 	}
 	r := &pnr.PNR{
 		RecordLocator: "ABC123",
@@ -46,8 +47,15 @@ func TestLedgerCreditsLegsWithTheirShare(t *testing.T) {
 	if dl.Flown != 33000 || dl.Kept != 1540+500 || dl.Fees != 1000 || dl.Taxes != 4000 || dl.Tickets != 2 || dl.Channels["tmc"] != 2 {
 		t.Errorf("Delta's account: %+v", dl)
 	}
-	if dl.System != 230*4 || dl.Payment != 1200 || dl.Distribution() != 920+1200+25 {
+	if dl.System != 230*4 || dl.Payment != 1200 || dl.Distribution() != 920+1200+25+600 {
 		t.Errorf("what the sale cost Delta: %+v", dl)
+	}
+	// The agency that sold it: two tickets, the fare, half the booking
+	// fee from its distribution system, Delta's commission, and its own
+	// fee from each traveller.
+	ag := l.Agents()["12345675"]
+	if ag.Tickets != 2 || ag.Sales != 56000 || ag.Incentive != 460 || ag.Commission != 600 || ag.Fees != 3000 || ag.Income() != 4060 || ag.Carriers["DL"] != 2 {
+		t.Errorf("the agency's account: %+v", ag)
 	}
 	if oo.Flown != 22000-1540 || oo.Paid != 1540 || oo.Tickets != 0 {
 		t.Errorf("the operator's account: %+v", oo)
@@ -77,5 +85,10 @@ func TestLedgerCreditsLegsWithTheirShare(t *testing.T) {
 	dl = l.AccountOf("DL")
 	if l.Total() != 0 || dl.Flown != 0 || dl.Kept != 0 || dl.Tickets != 0 || dl.Payment != 0 || dl.System != 920 || dl.Own != 25 || l.Seats([]string{Key("DL", "100", "SEA")}) != 0 {
 		t.Errorf("after the cancellation: total %d, Delta %+v", l.Total(), dl)
+	}
+	// The agency gives back the commission and its fee with the fare, and
+	// keeps what the distribution system paid it for the booking.
+	if ag := l.Agents()["12345675"]; ag.Tickets != 0 || ag.Sales != 0 || ag.Commission != 0 || ag.Fees != 0 || ag.Incentive != 460 {
+		t.Errorf("the agency after the cancellation: %+v", ag)
 	}
 }

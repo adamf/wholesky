@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/adamf/wholesky/internal/airline"
+	"github.com/adamf/wholesky/internal/distribution"
 	"github.com/adamf/wholesky/internal/fuel"
 	"github.com/adamf/wholesky/internal/growth"
 )
@@ -41,6 +42,8 @@ type worldState struct {
 	// Fares is every fare multiplier filed: by carrier, and by carrier,
 	// origin and destination.
 	Fares *savedFares `json:"fares,omitempty"`
+	// Policies is how each carrier sells, where somebody has changed it.
+	Policies map[string]distribution.Policy `json:"policies,omitempty"`
 }
 
 type savedFares struct {
@@ -225,6 +228,16 @@ func (s *Sim) snapshot() worldState {
 		st.Economy = se
 	}
 	st.Fares = s.faresNow()
+	if s.commerce != nil {
+		s.commerce.mu.RLock()
+		if len(s.commerce.policy) > 0 {
+			st.Policies = map[string]distribution.Policy{}
+			for code, p := range s.commerce.policy {
+				st.Policies[code] = p
+			}
+		}
+		s.commerce.mu.RUnlock()
+	}
 	return st
 }
 
@@ -345,6 +358,13 @@ func (s *Sim) restoreState(ctx context.Context) {
 		s.SetNodeURL(code, u)
 	}
 	s.loadFares(st.Fares)
+	if s.commerce != nil && len(st.Policies) > 0 {
+		s.commerce.mu.Lock()
+		for code, p := range st.Policies {
+			s.commerce.policy[code] = p
+		}
+		s.commerce.mu.Unlock()
+	}
 	if e := s.econ; e != nil && st.Economy != nil {
 		e.day.Store(st.Economy.Day)
 		for _, sh := range st.Economy.Shocks {

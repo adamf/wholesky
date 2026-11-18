@@ -68,6 +68,7 @@ system must handle.
 | `class` closed or reopened on a flight | The carrier overrides the inventory. It sends availability status (AVS) messages as the availability changes. |
 | `fares` multiplier, optionally a market (`from`, `to`) | From now on, the multiplier scales every fare that the carrier files, in the pricing of every distribution system on every machine. With a market, it scales only the fares of that market, in both directions. The other carriers' desks see the change at the next filing. |
 | `hedge` (`policy`, `count`, `minutes`) | The carrier fixes the price of a share of its fuel. The policy is `swap`, `cap` or `collar`. The count is the per cent of the fuel, and the minutes are the days that the hedge runs. |
+| `channel` (`choice`, `unit`, `count`) | The carrier changes how it sells. The choice is the lever: `leave` or `join` a channel, `surcharge` it by `count` cents, pay it an `override` of `count` hundredths of a percent, `webonly`, `directfirst`, `fullcontent` or `connect` with `count` 1 or 0. The unit is the channel: `ota`, `tmc` or `agency`. [business.md](business.md) describes each lever. |
 | `grow` (`from`, `to`, `policy`, `count`) | The carrier orders a new service: `count` daily round trips on the aircraft type that `policy` names. The lessors' deposits and the price of any slots leave the carrier's cash at once. The service is flown from the first start of the world after it comes due. |
 | `ready` | The carrier sends REA to the Network Manager. When a slot ahead of the flight is free, the Network Manager answers with an SRM that has an earlier calculated take-off time (CTOT), or with an SLC when no wait is left. |
 | `reserves` | If the cancellation has not been announced and the flight leaves a crew base, a standby crew comes in. The cancellation for crew becomes a 90-minute delay. |
@@ -133,6 +134,7 @@ GET  /carrier/{XX}/growth?from=&to=&type=&daily=   what a new service would do
 GET  /economy.json                       the world's date and the price of fuel
 GET  /fares.json                         the fare multipliers in force and the desks' open moves
 GET  /billing.json                       what the carriers bill each other
+GET  /agencies.json                      the agencies, what each sold and what it earned
 GET  /carrier/{XX}/noc                   the operations centre's signals and last projection
 POST /carrier/{XX}/noc/project           {"trials", "method", "policies", "sensitivity", "scenario" | "taf" | "events"}
 POST /noc/inject                         {"kind", "airport", "in", "duration", "factor", "carrier", "rate", "flight"}

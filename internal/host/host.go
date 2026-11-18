@@ -88,10 +88,16 @@ type Tenant struct {
 	bookingDate    time.Time
 	pendingMu      sync.Mutex
 	pendingThrough map[string]throughPending
-	Carrier        world.Carrier
-	Gateway        *gateway.Gateway
-	Store          store.Store
-	Inventory      *inventory.Inventory
+	// channelCost says whether the carrier holds seats for its own
+	// channels (see Options.ChannelCost), and avsSent is what the
+	// distribution systems were last told about each class of the day's
+	// flights beyond the four every broadcast carries.
+	channelCost func(carrier string) (int64, bool)
+	avsSent     map[avail.Key]avail.Status
+	Carrier     world.Carrier
+	Gateway     *gateway.Gateway
+	Store       store.Store
+	Inventory   *inventory.Inventory
 
 	flights      []world.Flight
 	client       link
@@ -193,6 +199,17 @@ type Options struct {
 	// bid-price control hold a connecting passenger's through fare against
 	// the seats it displaces; nil leaves network control off.
 	Tariff fare.Tariff
+	// Miles, when set, is the ticketed mileage between two points, for
+	// the pricing of a sale the carrier makes on its own system.
+	Miles func(a, b string) int
+	// ChannelCost, when set, is what a sale that arrives through a
+	// distribution system costs the carrier over a sale on its own
+	// system, for each segment, in minor units. ok is false while the
+	// carrier treats every channel alike. When it is true the carrier
+	// holds the last seats of each class for its own channels: it values
+	// a request at the fare less this cost, and tells the distribution
+	// systems a class is closed when the class under it is.
+	ChannelCost func(carrier string) (cents int64, ok bool)
 	// RushDecision, when set, is asked before short-shipped bags are rushed
 	// on the next flight: false holds them for tomorrow. Nil rushes.
 	RushDecision func(ctx context.Context, f world.Flight, day time.Time, bags int) bool
@@ -300,6 +317,42 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	if opts.Tariff != nil {
 		inv.Network = rm
 	}
+	// The carrier sells on its own system too: its website and its call
+	// centre book here, at the fare its own filing gives or the one the
+	// traveller was quoted.
+	gw.Tariff, gw.AcceptQuotes, gw.Miles = opts.Tariff, true, opts.Miles
+	// What a request is worth by the channel it came through. A sale on
+	// the carrier's own system is worth its fare. One that came over the
+	// network is worth the fare less what the distribution system and the
+	// agency cost, and a single leg is then nested by that: it sells only
+	// while the class under it is still open.
+	if opts.Tariff != nil && opts.ChannelCost != nil {
+		rm.Value = func(p *pnr.PNR, asked []*pnr.Segment, peer *gateway.Peer) (float64, bool) {
+			extra, on := opts.ChannelCost(c.Designator)
+			if !on {
+				return 0, false
+			}
+			var worth float64
+			for _, sg := range asked {
+				leg, ok := legs[sg.Carrier+strings.TrimLeft(sg.FlightNum, "0")+"/"+sg.Board]
+				if !ok {
+					return 0, false
+				}
+				full, share := tariff.FullFare(opts.Tariff, sg.Carrier, sg.Board, leg.to), tariff.Share(sg.Class)
+				if full == 0 || share == 0 {
+					return 0, false
+				}
+				v := share * float64(full)
+				if peer != nil {
+					v -= float64(extra)
+				}
+				worth += v * float64(max(sg.Seats, 1))
+			}
+			// A hair over, so that dividing by the seats again does not
+			// leave an own sale a rounding error under its own fare.
+			return worth * (1 + 1e-9), true
+		}
+	}
 
 	// The switch identifies this tenant by the listener it dialled, the way
 	// a real circuit identifies its subscriber. Which client dials depends on
@@ -387,6 +440,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.openAHL = map[string]*baggage.TracingFile{}
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
+	t.channelCost, t.avsSent = opts.ChannelCost, map[avail.Key]avail.Status{}
 	t.rushDecision = opts.RushDecision
 	if opts.ICAO != nil {
 		gw.Identity.AFTNAddress = t.AFTNAddress(c.Hub)
@@ -519,8 +573,37 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 			if len(entries) == 0 {
 				continue
 			}
+			t.forDistribution(entries, date)
 			if err := t.sendTypeBTo(ctx, append(t.distributionList(), t.partners...), avs.Build(entries), "AVS"); err != nil {
 				failed++
+			} else {
+				sent++
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		// The rest of the ladder, for the day the world flies: a class
+		// whose status has changed since the distribution systems were
+		// last told. The four classes above go out every time and keep
+		// the systems' belief fresh; these go out when they move, which is
+		// what a carrier's availability messages are for.
+		var changed []avail.Entry
+		for _, e := range t.ladderOfTheDay(date) {
+			if was, told := t.avsSent[e.Key]; (told && was == e.Status) || (!told && e.Status == avail.Open) {
+				continue
+			}
+			t.avsSent[e.Key] = e.Status
+			changed = append(changed, e)
+		}
+		for i := 0; i < len(changed); i += flightDatesPerMessage * 4 {
+			end := min(i+flightDatesPerMessage*4, len(changed))
+			if err := t.sendTypeBTo(ctx, append(t.distributionList(), t.partners...), avs.Build(changed[i:end]), "AVS"); err != nil {
+				failed++
+				// Not heard: say it again next time.
+				for _, e := range changed[i:end] {
+					delete(t.avsSent, e.Key)
+				}
 			} else {
 				sent++
 			}
@@ -556,6 +639,104 @@ func (t *Tenant) broadcastAvailability(ctx context.Context, date time.Time, inte
 			send()
 		}
 	}
+}
+
+// every broadcast names these four classes of each flight.
+var broadcastClasses = map[string]bool{"F": true, "J": true, "Y": true, "M": true}
+
+// ladderOfTheDay is the availability of every class the four-class
+// broadcast leaves out, on the day's flights that have not left, as the
+// distribution systems are to see it.
+func (t *Tenant) ladderOfTheDay(date time.Time) []avail.Entry {
+	pos := -1.0
+	if t.dayPos != nil {
+		pos = t.dayPos()
+	}
+	now := time.Now().UTC()
+	var out []avail.Entry
+	view := func(carrier, number string, f world.Flight) {
+		if pos >= 0 && float64(f.DepMin) < pos {
+			return // gone: nothing left to sell
+		}
+		var keys []avail.Key
+		for _, cls := range tariff.Ladder() {
+			keys = append(keys, avail.NewKey(carrier, number, date, f.From, f.To, cls))
+		}
+		es := t.Inventory.Availability(keys, now)
+		t.forDistribution(es, date)
+		for _, e := range es {
+			if !broadcastClasses[e.Key.Class] {
+				out = append(out, e)
+			}
+		}
+	}
+	for _, f := range t.flights {
+		view(f.Carrier, f.Number, f)
+	}
+	for _, f := range t.marketed {
+		view(f.Marketing, f.MarketingNumber, f)
+	}
+	return out
+}
+
+// forDistribution turns the carrier's own view of its classes into the
+// one the distribution systems are told. They are the same while the
+// carrier treats every channel alike. A carrier that holds its last
+// seats for its own channels sells a class through a distribution
+// system only while the class under it is open, so that is the status
+// it sends: each class of the day's flights takes the status of the
+// next class down in its cabin. The entries are changed in place; a
+// class whose lower neighbour is not among them is asked for.
+func (t *Tenant) forDistribution(entries []avail.Entry, date time.Time) {
+	if t.channelCost == nil {
+		return
+	}
+	if _, on := t.channelCost(t.Carrier.Designator); !on {
+		return
+	}
+	day := date.Format("2006-01-02")
+	ladder := tariff.Ladder()
+	below := map[string]string{} // class -> the next class down in its cabin
+	for i := 0; i+1 < len(ladder); i++ {
+		if cabinOf(ladder[i]) == cabinOf(ladder[i+1]) {
+			below[ladder[i]] = ladder[i+1]
+		}
+	}
+	have := map[avail.Key]avail.Status{}
+	for _, e := range entries {
+		have[e.Key] = e.Status
+	}
+	now := time.Now().UTC()
+	for i := range entries {
+		k := entries[i].Key
+		lower, ok := below[k.Class]
+		if !ok || k.Date != day {
+			continue
+		}
+		lk := k
+		lk.Class = lower
+		st, known := have[lk]
+		if !known {
+			if es := t.Inventory.Availability([]avail.Key{lk}, now); len(es) == 1 {
+				st, known = es[0].Status, true
+			}
+		}
+		if known && st != avail.Open && entries[i].Status == avail.Open {
+			entries[i].Status = st
+		}
+	}
+}
+
+// cabinOf is the cabin a booking class sells: first, business or the
+// main cabin.
+func cabinOf(class string) string {
+	switch class {
+	case "F", "A", "P", "R":
+		return "F"
+	case "J", "C", "D", "I", "Z":
+		return "C"
+	}
+	return "Y"
 }
 
 // Depart emits the movement message for a flight leaving now.

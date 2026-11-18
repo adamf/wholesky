@@ -570,7 +570,8 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <div>
         <h3>Channels: what a sale costs</h3>
         <p>A traveller books on the carrier's own site, through an online travel agency, through a travel management company or through an agent. An online agency does not keep a share of the fare in most markets. The distribution system charges the carrier a booking fee for each segment and passes about half to the agency.</p>
-        <p>In the test world, distribution costs a network carrier 2.9% of its fares and card fees cost 2.0%. A carrier can leave a channel, add a surcharge to it, keep its lowest fares for its own site, or pay an override for a better place on the agent's display.</p>
+        <p>A world has 16 named agencies: online agencies, travel management companies and the travel agents of each region. The agencies are invented. A sale on a carrier's own site is made on the carrier's own node, and no distribution system is paid. An agency books through its distribution system, or over a direct connection to the carrier. <code>/agencies.json</code> shows what each agency sold and what it earned.</p>
+        <p>In the test world, distribution costs a network carrier 2.7% of its fares and card fees cost 2.0%. A carrier can leave a channel, add a surcharge to it, keep its lowest fares for its own site, pay an override, offer a direct connection, or hold the last seats of each class for its own channels.</p>
         <div class="tags"><span class="tag spec">fees · US court findings</span><span class="tag inf">overrides, fees outside the US · estimates</span></div>
       </div>
       <div>
@@ -580,6 +581,8 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
           <tr><td>the same without the agreement</td><td class="mono">$3.40</td><td>US Airways v. Sabre</td></tr>
           <tr><td>card and payment cost</td><td class="mono">2%</td><td>IATA, 2025</td></tr>
           <tr><td>a sale on the carrier's own site</td><td class="mono">$1.50</td><td>estimate</td></tr>
+          <tr><td>an agency's sale over a direct connection</td><td class="mono">15% of the fee + $2</td><td>United States v. Sabre</td></tr>
+          <tr><td>incentive from the distribution system to the agency</td><td class="mono">50% of the fee</td><td>Sabre and Amadeus reports</td></tr>
           <tr><td>agency commission outside North America, Europe and Oceania</td><td class="mono">3%</td><td>published range of 1 to 5%</td></tr>
         </table></div>
       </div>

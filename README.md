@@ -422,10 +422,13 @@ it and names the source of each number.
 - **Pricing desks.** Fares are filed 4 times a day. A carrier matches a
   cut by a carrier of its own kind, follows or refuses an increase, and
   answers an attack on its hub in the attacker's markets.
-- **Channels.** A traveller books on the carrier's site, through an
-  online travel agency, a travel management company or an agent. Each
-  sale costs booking fees, commission and card fees. Together they come
-  to about 5% of a network carrier's fares.
+- **Channels and sellers.** A traveller books on the carrier's own site
+  or with one of 16 named agencies. A sale on the carrier's site is made
+  on the carrier's own node. An agency books through its distribution
+  system, or over a direct connection to the carrier. Each sale costs
+  booking fees, commission and card fees. Together they come to about 5%
+  of a network carrier's fares. `/agencies.json` shows what each agency
+  sold and earned.
 - **Partners.** Star Alliance, oneworld and SkyTeam are in the world
   with their joint ventures. A coupon that a partner flies is billed by
   its fare component, less a service charge of 0% to 9%.
@@ -489,7 +492,8 @@ deadline, the simulator applies the default. Examples of decisions are:
 - Accept the union's proposal, counter it, or refuse it.
 
 The levers are cancel, retime, substitute, close a class, move the fares,
-hedge fuel, order a new service, REA, reserves, standby crews, the
+hedge fuel, change the channels, order a new service, REA, reserves,
+standby crews, the
 operations centre's policy, and the answer to a union. Each lever goes out on the wire as the message that the
 airline industry uses. The scorecard uses the same formula for every
 carrier. It counts revenue, costs from public data on fuel, aircraft,

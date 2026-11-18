@@ -225,15 +225,65 @@ About 1 traveller in 9 pays full fare. About 4 in 10 fly in the 4
 cheapest classes.
 
 jetway's `inventory.Controller.Value` lets a carrier value a request net
-of the cost of the channel that asked. wholesky does not use it yet. See
-the last section.
+of the cost of the channel that asked. A carrier that holds its last
+seats for its own channels uses it. See the next section.
+
+Travellers buy only the flights that have not left. A flight stops
+selling 45 minutes before departure. The carrier's availability messages
+name 4 classes of each flight every 30 seconds, and each other class of
+the day's flights when its status changes.
+
+Two faults in the seat control came out of this work. Both are fixed in
+jetway. A class that had sold past a limit which the controller then
+lowered was counted as having no limit, and it sold to the last seat of
+the cabin (v0.1.101). A carrier's node could not sell its own flight
+(v0.1.100).
 
 ## Channels and what a sale costs
 
-`internal/distribution` holds the cost of a sale in each channel. A
-traveller books in one of 4 channels: the carrier's own site, an online
-travel agency (OTA), a travel management company (TMC) or a travel
-agent.
+`internal/distribution` holds the sellers and the cost of a sale in each
+channel. A traveller books in one of 4 channels: the carrier's own site,
+an online travel agency (OTA), a travel management company (TMC) or a
+travel agent.
+
+### Sellers
+
+A world has 16 agencies: 6 OTAs, 3 TMCs and the travel agents of each
+of 7 regions. The agencies are invented, and their names belong to no
+company. Each agency has a number in the form of an IATA agency number
+and books through one distribution system. `GET /agencies.json` shows
+each agency with what it sold and what it earned.
+
+A booking takes one of 3 paths.
+
+- **The carrier's own site.** The booking is made on the carrier's own
+  node. The seat comes from the carrier's inventory at once, and no
+  message leaves the node. No distribution system is paid. jetway
+  v0.1.100 added this path: before it, a carrier's node could not sell
+  its own flight.
+- **An agency through its distribution system.** The system sends the
+  sell to the carrier. The record carries the agency's number. The
+  carrier pays the booking fee, and the system passes half of the fee to
+  the agency as an incentive.
+- **An agency over a direct connection.** 3 of the agencies have a
+  direct connection (NDC) to the carriers that offer one. Half of their
+  sales on those carriers go to the carrier's own node, with the
+  agency's number on the order. The share is Lufthansa Group's figure
+  for the middle of 2026, used for every carrier, and is an estimate.
+
+A carrier's own node sells the itineraries that are under its own code.
+An itinerary with another carrier's flight goes through a distribution
+system.
+
+An agency earns from 3 sources: the incentive from its distribution
+system, the commission or override from the carrier, and its own fee
+from the traveller. The large OTAs charge the traveller nothing, a
+regional OTA charges $5, and a travel agent charges $25. A TMC charges
+the traveller's employer $15 for each transaction. A US commission on
+travel distribution heard in 2002 that travellers paid agents' fees up
+to $25. The other fees are estimates.
+
+### Costs
 
 | Cost | Value | Source |
 | --- | --- | --- |
@@ -242,15 +292,17 @@ agent.
 | Booking fee for each segment elsewhere | $4.00 at home, $6.00 abroad | Estimates from Amadeus's revenue of 5.90 euros a booking in 2023 |
 | Card and payment cost | 2 % of the amount paid | IATA's figure for 2025 is 1.97 % |
 | A sale on the carrier's own site | $1.50 | Estimate |
+| An agency's sale over a direct connection | 15 % of the booking fee, and $2.00 to the agency | Farelogix charged about a tenth of Sabre's fee, and American paid agencies $2.00 from 2017. Both are in the record of United States v. Sabre |
+| Incentive that a distribution system pays the agency | 50 % of the booking fee | Sabre's cost of revenue was $2.93 to $3.11 a booking in 2022 to 2024. Amadeus's was 51 % of its air distribution revenue in 2023 |
 | Agency commission | None in North America, Europe and Oceania. 3 % elsewhere | Published range of 1 to 5 % |
 | Override paid by a network carrier | 2 % to a TMC, 1 % to an OTA | Estimates |
 
 The OTA does not keep a share of the fare in most markets. The
 distribution system collects the booking fee from the carrier and passes
 about half to the agency. In the test world, distribution costs a
-network carrier 2.9 % of its fares and card fees cost 2.0 %.
+network carrier 2.7 % of its fares and card fees cost 2.0 %.
 
-A carrier has a channel policy with 4 levers.
+A carrier has a channel policy. The action `channel` changes it.
 
 - **Leave a channel.** An ultra-low-cost carrier sells only on its own
   site. Of the travellers who shop elsewhere, 2 in 3 find the site and
@@ -261,6 +313,15 @@ A carrier has a channel policy with 4 levers.
   tried this in 2023 and reversed it in 2024.
 - **Pay an override.** A carrier that pays more appears higher on the
   agent's display.
+- **Offer a direct connection.** Network and low-cost carriers do by
+  default.
+- **Hold the last seats for the carrier's own channels.** The carrier
+  values a request from a distribution system at the fare less the
+  booking fee. It sells a class through a distribution system only
+  while the class below it is open, and it tells the distribution
+  systems that status. Its own site sells the class to the limit. A
+  full-content agreement forbids this, and a carrier that turns it on
+  gives the agreement up. Low-cost carriers do this by default.
 
 In the filled US test world 53 % of tickets are direct, 23 % come from
 OTAs, 16 % from TMCs and 8 % from agents. US carriers report direct
@@ -378,10 +439,13 @@ machines needs one world file for all of them. Write it with
 
 ## What is missing
 
-- **Channel-aware inventory.** A carrier's inventory does not value a
-  request by its channel. Every traveller in the simulator books through
-  a distribution system node, and the carrier cannot tell a direct sale
-  from an agency sale on the wire. jetway has the hook.
+- **Direct sales on several machines.** A sale on the carrier's own
+  site is made on the carrier's node only when the machine that takes
+  the traveller also runs the carrier. On other machines it goes through
+  a distribution system, and the carrier sees it as an agency sale.
+- **Agencies as players.** An agency has an account and no decisions. It
+  does not set its fee, choose a distribution system or bargain with a
+  carrier.
 - **Premium cabins.** The fleet table gives most narrow-body types one
   cabin. The traveller model has travellers who want a premium cabin,
   and most of them fly in economy.

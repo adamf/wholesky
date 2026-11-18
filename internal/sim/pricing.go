@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/adamf/wholesky/internal/airline"
+	"github.com/adamf/wholesky/internal/distribution"
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/pricing"
 	"github.com/adamf/wholesky/internal/tariff"
@@ -82,6 +83,14 @@ func (s *Sim) initPricing(m *world.Manifest) {
 		var b fareBody
 		if json.Unmarshal(ev.Body, &b) == nil {
 			s.setFare(ev.Carrier, ev.From, b.To, b.Mult)
+		}
+	}
+	s.eventHandlers[evPolicy] = func(_ context.Context, ev worldEvent) {
+		var pol distribution.Policy
+		if json.Unmarshal(ev.Body, &pol) == nil && ev.Carrier != "" {
+			s.commerce.mu.Lock()
+			s.commerce.policy[ev.Carrier] = pol
+			s.commerce.mu.Unlock()
 		}
 	}
 	s.eventHandlers[evFareAsk] = func(ctx context.Context, ev worldEvent) {

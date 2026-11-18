@@ -447,6 +447,9 @@ func (w seatWorld) Act(ctx context.Context, carrier string, a airline.Action) (s
 		pos, _ := w.Clock()
 		return s.applyPolicy(ctx, code, md, s.forecast(code, pos, md), pol), nil
 	}
+	if a.Kind == "channel" {
+		return s.setChannel(code, a.Choice, a.Unit, a.Count)
+	}
 	if a.Kind == "grow" {
 		return s.order(code, a.From, a.To, a.Policy, a.Count)
 	}
@@ -803,11 +806,13 @@ type LegFeed struct {
 	// Accounts is each carrier's sales: what its tickets earned, cost to
 	// sell and collected in taxes.
 	Accounts map[string]revenue.Account `json:"accounts,omitempty"`
+	// Agents is each agency's sales, by its number.
+	Agents map[string]revenue.Agent `json:"agents,omitempty"`
 }
 
 // RevenueByLeg is this machine's ledger as a feed.
 func (s *Sim) RevenueByLeg() LegFeed {
-	out := LegFeed{Revenue: map[string]int64{}, Seats: s.Ledger.SeatsByLeg(), Accounts: s.Ledger.Accounts()}
+	out := LegFeed{Revenue: map[string]int64{}, Seats: s.Ledger.SeatsByLeg(), Accounts: s.Ledger.Accounts(), Agents: s.Ledger.Agents()}
 	for _, fs := range s.Flights {
 		for _, f := range fs {
 			key := revenue.Key(f.Carrier, f.Number, f.From)
@@ -823,7 +828,7 @@ func (s *Sim) RevenueByLeg() LegFeed {
 // sold for, which the scorecards then read instead of the local ledger.
 func (s *Sim) SetRevenueFeed(f LegFeed) {
 	s.revenueMu.Lock()
-	s.revenueFeed, s.seatsFeed, s.accountFeed = f.Revenue, f.Seats, f.Accounts
+	s.revenueFeed, s.seatsFeed, s.accountFeed, s.agentFeed = f.Revenue, f.Seats, f.Accounts, f.Agents
 	s.revenueMu.Unlock()
 	s.scoreMu.Lock()
 	s.scoreAt = time.Time{}

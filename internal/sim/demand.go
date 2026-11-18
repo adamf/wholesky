@@ -1,17 +1,17 @@
 package sim
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
-	"net/http/httptest"
 	"strings"
 	"time"
 
 	"github.com/adamf/jetway/pkg/fare"
 	"github.com/adamf/jetway/pkg/gateway"
+	"github.com/adamf/jetway/pkg/store"
 
+	"github.com/adamf/wholesky/internal/distribution"
 	"github.com/adamf/wholesky/internal/market"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -182,7 +182,18 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 		return
 	}
 	t, _ := s.travellerFor(rng, o, d, km)
-	found := s.shop(rng, g, t, s.pathsFor(rng, o, d))
+	// A traveller who does not buy from the carrier buys from an agency:
+	// one of the world's, by where the trip starts.
+	var ag distribution.Agency
+	if t.Channel != market.Direct {
+		region := ""
+		if s.econ != nil {
+			region = s.econ.region[o]
+		}
+		ag, _ = distribution.Pick(rng, s.commerce.agencies, t.Channel, region)
+		g = s.nodeOf(ag, g)
+	}
+	found := s.shop(rng, g, t, ag, s.pathsFor(rng, o, d))
 	if len(found) == 0 {
 		s.DemNoOffer.Add(1)
 		return
@@ -200,12 +211,22 @@ func (s *Sim) placeDemand(ctx context.Context, g *GDSNode, rng *rand.Rand, carri
 	s.bookOffer(ctx, g, rng, t, found[pick], n)
 }
 
-// bookOffer books what a traveller chose, at the fare they were quoted.
+// bookOffer books what a traveller chose, at the fare they were quoted,
+// with whoever sells it: the carrier's own system, the traveller's
+// agency through its distribution system, or the agency over its direct
+// connection to the carrier.
 func (s *Sim) bookOffer(ctx context.Context, g *GDSNode, rng *rand.Rand, t market.Traveller, sh shopped, n int) {
 	surname := fmt.Sprintf("DEMAND%06d", n)
 	q := sh.quote
-	if fee := s.policyOf(sh.codes[0][0]).Surcharge[sh.channel]; fee > 0 {
-		q = withFee(q, fee)
+	seller := sh.codes[0][0]
+	pol := s.policyOf(seller)
+	extra := pol.Surcharge[sh.channel]
+	direct := sh.channel == market.Direct
+	if !direct && sh.agency.Kind != market.TMC {
+		extra += sh.agency.Fee
+	}
+	if extra > 0 {
+		q = withFee(q, extra)
 	}
 	legs := append(append(path{}, sh.out...), sh.back...)
 	classes := q.Passengers[0].Segments
@@ -215,21 +236,58 @@ func (s *Sim) bookOffer(ctx context.Context, g *GDSNode, rng *rand.Rand, t marke
 			interline = true
 		}
 	}
+	counted := func() {
+		s.DemBooked.Add(1)
+		if interline {
+			s.DemInterline.Add(1)
+		}
+		if len(sh.out) > 1 {
+			s.DemConnecting.Add(1)
+		}
+		if len(sh.back) > 0 {
+			s.DemRoundTrip.Add(1)
+		}
+		s.noteSale(t, sh, q)
+	}
+	// The carrier's own system, when this machine runs it, sells what is
+	// under its own code: its site's bookings, and the orders of an agency
+	// connected to it directly.
+	own := s.ownNode(seller)
+	if own != nil && !sh.ownCode(seller) {
+		own = nil
+	}
+	connected := !direct && own != nil && sh.agency.Connect && pol.Connect && rng.Float64() < sh.agency.ConnectShare
 
-	// A sale to one person of one flight one way, on a carrier's own site
-	// or an online agency, reaches the node as an NDC order one time in
-	// two: the HTTP surface a direct connection calls. The node prices an
-	// order itself, as of now, so only a fare whose advance purchase is
-	// met today goes this way, and an order the node refuses is booked
-	// the ordinary way.
-	if len(legs) == 1 && t.Party == 1 && (sh.channel == market.Direct || sh.channel == market.OTA) && rng.Intn(2) == 0 {
+	// One person on one flight one way can be an NDC order: the HTTP
+	// surface a carrier's site and a connected agency call. The node
+	// prices an order itself, as of now, so only a fare whose advance
+	// purchase is met today goes this way, and an order the node refuses
+	// is booked the ordinary way.
+	if len(legs) == 1 && t.Party == 1 && q == sh.quote && (connected || (direct && rng.Intn(2) == 0)) {
 		f := legs[0]
 		daysOut := int(time.Until(s.BookingDate.Add(time.Duration(f.DepMin)*time.Minute)).Hours() / 24)
-		if rule := q.Components[0].Fare.Rule; rule.AdvancePurchaseDays <= daysOut && len(rule.Sale.Channels) == 0 && q == sh.quote {
-			if err := s.bookNDC(g, sh.codes[0][0], sh.codes[0][1], f.From, f.To, f.DepMin, classes[0].Class, 0, surname); err == nil {
+		rule := q.Components[0].Fare.Rule
+		// A carrier's own node takes the order; where this machine does
+		// not run the carrier, a distribution system's does.
+		node, name, id := seller, seller+" WEB", "WEB"
+		if connected {
+			name, id = sh.agency.Name, sh.agency.Code
+		} else if own == nil {
+			node, name, id = "", "WHOLESKY OTA", "SKY00OTA"
+			if g != nil && len(rule.Sale.Channels) == 0 {
+				node = g.Designator
+			}
+		}
+		if node != "" && rule.AdvancePurchaseDays <= daysOut {
+			if err := s.orderAt(node, name, id, seller, sh.codes[0][1], f.From, f.To, f.DepMin, classes[0].Class, surname); err == nil {
 				s.DemNDC.Add(1)
-				s.DemBooked.Add(1)
-				s.noteSale(t, sh, q)
+				switch {
+				case connected:
+					s.DemConnected.Add(1)
+				case own != nil:
+					s.DemDirect.Add(1)
+				}
+				counted()
 				return
 			}
 		}
@@ -259,28 +317,55 @@ func (s *Sim) bookOffer(ctx context.Context, g *GDSNode, rng *rand.Rand, t marke
 	var ssrs []gateway.BookingSSR
 	if r := rng.Intn(100); r < 3 {
 		codes := []string{"WCHR", "WCHR", "UMNR", "MEDA", "BLND", "DEAF", "MAAS"}
-		ssrs = append(ssrs, gateway.BookingSSR{Code: codes[rng.Intn(len(codes))], Carrier: sh.codes[0][0]})
+		ssrs = append(ssrs, gateway.BookingSSR{Code: codes[rng.Intn(len(codes))], Carrier: seller})
 	}
-	res, err := g.GW.Book(ctx, &gateway.BookingRequest{
-		Passengers: pax, Segments: segs, SSRs: ssrs, Agent: "wholesky " + sh.channel, Channel: sh.channel,
+	req := &gateway.BookingRequest{
+		Passengers: pax, Segments: segs, SSRs: ssrs, Channel: sh.channel,
 		Country: s.airports[legs[0].From].Country, Account: t.Account, Quote: q,
-	})
+	}
+	switch {
+	case direct && own != nil:
+		// The carrier's own site, on the carrier's own system.
+		req.Agent, req.ReceivedFrom = "WEB", seller+" WEB"
+		locator, ok := s.atCarrier(ctx, own, req)
+		if !ok {
+			return
+		}
+		s.DemDirect.Add(1)
+		counted()
+		s.liveWith(ctx, own.Gateway, own.Store, rng, locator, t.Party)
+		return
+	case connected:
+		// The agency's direct connection, for what an order cannot carry.
+		req.Agent, req.ReceivedFrom, req.Channel = sh.agency.Code, sh.agency.Name, distribution.NDC
+		locator, ok := s.atCarrier(ctx, own, req)
+		if !ok {
+			return
+		}
+		s.DemConnected.Add(1)
+		counted()
+		s.liveWith(ctx, own.Gateway, own.Store, rng, locator, t.Party)
+		return
+	case direct:
+		// The carrier's site, where this machine does not run the
+		// carrier: through a distribution system, as before.
+		req.Agent = "wholesky direct"
+	default:
+		req.Agent, req.ReceivedFrom = sh.agency.Code, sh.agency.Name
+		if req.Agent == "" {
+			req.Agent = "wholesky " + sh.channel
+		}
+	}
+	if g == nil {
+		return
+	}
+	res, err := g.GW.Book(ctx, req)
 	if err != nil {
 		s.noteDemandFailure(err)
 		return
 	}
-	s.DemBooked.Add(1)
-	if interline {
-		s.DemInterline.Add(1)
-	}
-	if len(sh.out) > 1 {
-		s.DemConnecting.Add(1)
-	}
-	if len(sh.back) > 0 {
-		s.DemRoundTrip.Add(1)
-	}
-	s.noteSale(t, sh, q)
-	s.liveWith(ctx, g, rng, res.PNR.RecordLocator, t.Party)
+	counted()
+	s.liveWith(ctx, g.GW, g.Store, rng, res.PNR.RecordLocator, t.Party)
 }
 
 // noteSale counts what the travellers paid, for the instruments that say
@@ -319,10 +404,10 @@ func withFee(q *fare.Quote, cents int64) *fare.Quote {
 
 // liveWith is the rest of a booking's life: settle, then usually ticket,
 // sometimes cancel, occasionally divide.
-func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator string, party int) {
+func (s *Sim) liveWith(ctx context.Context, gw *gateway.Gateway, st store.Store, rng *rand.Rand, locator string, party int) {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		ok, err := settledIn(ctx, g.Store, locator)
+		ok, err := settledIn(ctx, st, locator)
 		if err != nil || time.Now().After(deadline) {
 			return
 		}
@@ -341,12 +426,12 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 	case roll < 8:
 		// A ticketed booking's money goes back before the seats do: the
 		// refund the settlement plan reports, then the cancellation.
-		if rec, err := g.Store.GetPNR(ctx, locator); err == nil && rec.Ticketed() {
-			if _, err := g.GW.Refund(ctx, locator, gateway.RefundOptions{By: "demand", Reason: "traveller cancelled"}); err == nil {
+		if rec, err := st.GetPNR(ctx, locator); err == nil && rec.Ticketed() {
+			if _, err := gw.Refund(ctx, locator, gateway.RefundOptions{By: "demand", Reason: "traveller cancelled"}); err == nil {
 				s.DemRefunded.Add(1)
 			}
 		}
-		if _, err := g.GW.Cancel(ctx, locator, gateway.CancelOptions{
+		if _, err := gw.Cancel(ctx, locator, gateway.CancelOptions{
 			By: "demand", Reason: "traveller cancelled",
 		}); err == nil {
 			s.DemCancelled.Add(1)
@@ -356,12 +441,12 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 		}
 		return
 	case roll < 63:
-		rec, err := g.Store.GetPNR(ctx, locator)
+		rec, err := st.GetPNR(ctx, locator)
 		if err != nil || len(rec.Segments) == 0 {
 			return
 		}
 		code := s.accountingCode(rec.Segments[0].Carrier)
-		if _, err := g.GW.IssueTickets(ctx, locator, gateway.IssueOptions{
+		if _, err := gw.IssueTickets(ctx, locator, gateway.IssueOptions{
 			AirlineCode: code, IssuedBy: "demand",
 		}); err == nil {
 			s.DemTicketed.Add(1)
@@ -371,7 +456,7 @@ func (s *Sim) liveWith(ctx context.Context, g *GDSNode, rng *rand.Rand, locator 
 	// A party sometimes divides -- somebody's plans changed -- which is the
 	// operation whose advisories and divergences the map draws.
 	if party >= 2 && rng.Intn(100) < 12 {
-		if _, err := g.GW.Split(ctx, gateway.SplitRequest{
+		if _, err := gw.Split(ctx, gateway.SplitRequest{
 			Locator: locator, Passengers: []int{party},
 			By: "demand", Reason: "traveller separated",
 		}); err == nil {
@@ -391,52 +476,6 @@ func (s *Sim) accountingCode(carrier string) string {
 		h = -h
 	}
 	return fmt.Sprintf("%03d", 100+h%900)
-}
-
-// bookNDC places an order through the GDS's NDC endpoint: the same HTTP
-// surface an OTA would call, XML and all.
-func (s *Sim) bookNDC(g *GDSNode, carrier, number, from, to string, depMin int, class string, day int, surname string) error {
-	date := s.BookingDate.AddDate(0, 0, day).Format("2006-01-02")
-	dep := fmt.Sprintf("%02d:%02d", (depMin/60)%24, depMin%60)
-	body := fmt.Sprintf(`<OrderCreateRQ xmlns="http://www.iata.org/IATA/EDIST">
-  <Document><MessageVersion>1.1</MessageVersion></Document>
-  <Party><Sender><TravelAgencySender>
-    <Name>WHOLESKY OTA</Name><AgencyID>SKY00OTA</AgencyID>
-  </TravelAgencySender></Sender></Party>
-  <Query>
-    <Passengers><Passenger ObjectKey="T1">
-      <PTC>ADT</PTC>
-      <Name><Surname>%s</Surname><Given>NDC</Given><Title>MR</Title></Name>
-    </Passenger></Passengers>
-    <OrderItems><OfferItem>
-      <OfferItemID Owner="%s">1</OfferItemID>
-      <OfferItemType><DetailedFlightItem refs="T1">
-        <OriginDestination><Flight>
-          <SegmentKey>%s%s</SegmentKey>
-          <Departure><AirportCode>%s</AirportCode><Date>%s</Date><Time>%s</Time></Departure>
-          <Arrival><AirportCode>%s</AirportCode></Arrival>
-          <MarketingCarrier><AirlineID>%s</AirlineID><FlightNumber>%s</FlightNumber></MarketingCarrier>
-          <ClassOfService><Code>%s</Code></ClassOfService>
-        </Flight></OriginDestination>
-      </DetailedFlightItem></OfferItemType>
-    </OfferItem></OrderItems>
-  </Query>
-</OrderCreateRQ>`, surname, carrier, carrier, number, from, date, dep, to, carrier, number, class)
-
-	s.consolesMu.Lock()
-	h := s.consoles[g.Designator]
-	s.consolesMu.Unlock()
-	if h == nil {
-		return fmt.Errorf("no gds console handler")
-	}
-	req := httptest.NewRequest("POST", "/ndc", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/xml")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code >= 300 {
-		return fmt.Errorf("ndc order refused: %d %s", rec.Code, rec.Body.String())
-	}
-	return nil
 }
 
 type worldFlight = world.Flight
