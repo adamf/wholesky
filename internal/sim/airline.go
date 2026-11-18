@@ -42,7 +42,6 @@ const (
 	costPerCancelledPax  = 30000 // cents per booked passenger, the reprotection estimate a decision quotes
 	costPerReserveCall   = 800000
 	costPerMishandledBag = 15000
-	slotImprovementMin   = 10
 	// refundShare is how many of a cancelled flight's passengers take the
 	// fare back rather than the next flight.
 	refundShare = 0.25
@@ -556,8 +555,10 @@ func (s *Sim) standbyCost(f world.Flight) int64 {
 	return day * 3 / 2
 }
 
-// readyForImprovement is the carrier's REA: the Network Manager improves
-// the slot when the regulation has room, which it does half the time.
+// readyForImprovement is the carrier's REA: the flight is ready and would
+// take an earlier slot at short notice. The Network Manager improves it
+// only when a slot ahead of it is free, which happens when a flight in
+// the regulation has been cancelled or has itself moved up.
 func (s *Sim) readyForImprovement(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time) (string, error) {
 	fate := s.fate.Of(f)
 	if s.ANSP == nil {
@@ -566,20 +567,18 @@ func (s *Sim) readyForImprovement(ctx context.Context, t *host.Tenant, f world.F
 	if err := s.ANSP.Ready(ctx, s.carriers[f.Carrier], f, day, fate); err != nil {
 		return "", err
 	}
-	if aogHash(f.Carrier+f.Number+f.From+"rea")%2 != 0 || fate.ATFM <= slotImprovementMin {
-		return "REA sent; no improvement available in " + fate.Regulation, nil
+	pos := int(s.clock.Pos(time.Now()))
+	changes := s.fate.Ready(s.Manifest, f, pos)
+	s.publish(worldEvent{Kind: evReady, Carrier: f.Carrier, Number: f.Number, From: f.From, Pos: pos})
+	s.slotsImproved(ctx, changes, f.Carrier+strings.TrimLeft(f.Number, "0")+" reported ready", pos)
+	now := s.fate.Of(f)
+	if now.ATFM >= fate.ATFM {
+		return "REA sent; no slot is free ahead of this one in " + fate.Regulation, nil
 	}
-	s.fate.Update(f, func(pf *dayplan.Flight) {
-		pf.ATFM -= slotImprovementMin
-		pf.CTOT -= slotImprovementMin
-		pf.DepDelay = max(pf.Own, pf.ATFM, pf.DepDelay-slotImprovementMin)
-		pf.ArrDelay = max(0, pf.ArrDelay-slotImprovementMin)
-	})
-	fate = s.fate.Of(f)
-	if err := s.ANSP.Revise(ctx, s.carriers[f.Carrier], f, day, fate); err != nil {
-		return "", err
+	if now.CTOT <= 0 {
+		return "REA sent; SLC: the flight is no longer held", nil
 	}
-	return fmt.Sprintf("REA sent; SRM: new CTOT %s", hhmm(fate.CTOT)), nil
+	return fmt.Sprintf("REA sent; SRM: new CTOT %s", hhmm(now.CTOT)), nil
 }
 
 // announceCancellation is everything a cancellation says on the wire: the
@@ -608,6 +607,10 @@ func (s *Sim) announceCancellation(ctx context.Context, t *host.Tenant, f world.
 			s.log.Debug("flight plan cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
 		}
 	}
+	// The flight plan is withdrawn, so the Network Manager knows: the
+	// flight's slots go back to the regulation and the flights behind it
+	// move up.
+	s.releaseSlots(ctx, f, reason)
 	if s.Airline != nil {
 		s.Airline.Emit(f.Carrier, "incident", f.Carrier+strings.TrimLeft(f.Number, "0")+" "+f.From+"-"+f.To+" cancelled: "+reason, nil)
 	}
@@ -688,7 +691,7 @@ func (s *Sim) askSlot(ctx context.Context, t *host.Tenant, f world.Flight, fate 
 	s.Airline.Emit(f.Carrier, "incident", fmt.Sprintf("%s%s %s-%s slotted: CTOT %s (+%d) under %s", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM, fate.Regulation), nil)
 	choice := s.Airline.Ask(ctx, airline.Decision{Carrier: f.Carrier, Department: "slots", Flight: f.Carrier + f.Number, Board: f.From,
 		Title:   fmt.Sprintf("%s%s %s-%s has a slot: CTOT %s (+%d)", f.Carrier, strings.TrimLeft(f.Number, "0"), f.From, f.To, hhmm(fate.CTOT), fate.ATFM),
-		Detail:  fmt.Sprintf("Regulation %s, cause %s. Take the slot, or send REA (ready) to ask the Network Manager for an earlier one. About half of the requests receive an improvement.", fate.Regulation, fate.Cause),
+		Detail:  fmt.Sprintf("Regulation %s, cause %s. Take the slot, or send REA (ready) to take an earlier one at short notice. An earlier slot exists only when a flight ahead in the regulation has been cancelled.", fate.Regulation, fate.Cause),
 		Options: []airline.Option{{Key: "accept", Label: "take the slot"}, {Key: "ready", Label: "send REA, ask for a better one"}}, Default: "accept"})
 	if choice == "ready" {
 		if res, err := s.readyForImprovement(ctx, t, f, s.BookingDate); err == nil {

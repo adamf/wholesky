@@ -23,7 +23,8 @@ type Options struct {
 	GroundStops []GroundStop
 	// Cancel are flights cancelled before the day runs, by Key, with the
 	// reason: an operations centre thinning the schedule ahead of a
-	// storm. A cancelled flight takes no slot, so the others get its.
+	// storm. A flight cancelled before the day takes no slot, so the
+	// flights that still fly wait less.
 	Cancel map[string]string
 	// Staff is the crew roster.
 	Staff Staff
@@ -115,9 +116,13 @@ func (p *Plan) groundStops(m *world.Manifest, stops []GroundStop, now int) {
 	if len(stops) == 0 {
 		return
 	}
-	icao := map[string]string{}
+	icao, country := map[string]string{}, map[string]string{}
 	for _, a := range m.Airports {
 		icao[a.IATA] = a.ICAO
+		country[a.IATA] = a.Country
+	}
+	if p.released == nil {
+		p.released = map[string]bool{}
 	}
 	for _, gs := range stops {
 		var held []world.Flight
@@ -157,33 +162,42 @@ func (p *Plan) groundStops(m *world.Manifest, stops []GroundStop, now int) {
 		if name == "" {
 			name = fmt.Sprintf("%sGS%02d", loc, p.Day.Day())
 		}
-		reg := Regulation{Name: name, Airport: gs.Airport, Start: gs.Start, End: gs.End, Rate: 0, NormalRate: normal, Cause: cause, CauseText: cause.String()}
-		interval := 60.0 / float64(normal)
-		for i, f := range held {
-			pf := p.Flights[Key(f)]
-			if now >= 0 && f.DepMin+pf.DepDelay <= now {
+		reg := Regulation{Name: name, Airport: gs.Airport, Start: gs.Start, End: gs.End, Rate: 0, NormalRate: normal, Cause: cause, CauseText: cause.String(), Mode: modeFor(country[gs.Airport])}
+		// The stop lifts at its end and the held departures leave in turn,
+		// one slot each at the airport's normal rate. The list is kept so
+		// that a held flight cancelled lets the ones behind it leave
+		// sooner.
+		book := newSlotBook(float64(gs.End), 60.0/float64(normal), true)
+		var placed []world.Flight
+		for _, f := range held {
+			key := Key(f)
+			pf := p.Flights[key]
+			if p.released[key] || (now >= 0 && f.DepMin+pf.DepDelay <= now) {
 				continue
 			}
-			release := float64(gs.End) + float64(i)*interval
-			delay := int(release) - f.DepMin
-			if delay <= pf.ATFM {
-				continue
+			at := book.take(f, float64(f.DepMin))
+			if d := int(at) - f.DepMin; d > 0 {
+				book.delay[key] = d
 			}
-			pf.ATFM = delay
-			pf.Regulation, pf.Cause = reg.Name, reg.Cause
-			pf.CTOT = f.DepMin + delay + TaxiMin
-			pf.DepDelay = max(pf.DepDelay, delay)
-			pf.ArrDelay = max(pf.ArrDelay, delay)
-			reg.Flights++
-			reg.DelayMin += delay
+			placed = append(placed, f)
 		}
-		if reg.Flights > 0 {
-			p.Regulations = append(p.Regulations, reg)
-			p.Summary.Regulations++
-			p.Summary.Slotted += reg.Flights
-			p.Summary.SlotDelayMin += reg.DelayMin
+		reg.book = book
+		reg.Flights, reg.DelayMin = book.counts()
+		if reg.Flights == 0 {
+			continue
+		}
+		p.Regulations = append(p.Regulations, reg)
+		p.Summary.Regulations++
+		for _, f := range placed {
+			if !p.settle(f) {
+				continue
+			}
+			pf := p.Flights[Key(f)]
+			pf.DepDelay = max(pf.DepDelay, pf.ATFM)
+			pf.ArrDelay = max(pf.ArrDelay, pf.ATFM)
 		}
 	}
+	p.recount()
 }
 
 // Picture is the day's weather, regulations and summary, copied under the
@@ -258,5 +272,6 @@ func (p *Plan) Rebuild(m *world.Manifest, own Own) {
 	fresh := BuildWith(m, p.Day, own, Options{Staff: p.Staff})
 	p.mu.Lock()
 	p.Flights, p.Weather, p.Regulations, p.Summary = fresh.Flights, fresh.Weather, fresh.Regulations, fresh.Summary
+	p.released, p.ready = fresh.released, fresh.ready
 	p.mu.Unlock()
 }

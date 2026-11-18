@@ -383,6 +383,18 @@ func (a *ANSP) Revise(ctx context.Context, c world.Carrier, f world.Flight, day 
 	return a.sendATFM(ctx, m, nmAddress, []string{dep + c.ICAO + "X", dep + "ZPZX"})
 }
 
+// Lift is the Network Manager's SLC: the flight is no longer held by any
+// regulation and may leave at its own time.
+func (a *ANSP) Lift(ctx context.Context, c world.Carrier, f world.Flight, day time.Time) error {
+	dep, dest := a.icao(f.From), a.icao(f.To)
+	if dep == "" || dest == "" {
+		return nil
+	}
+	m := &atfm.Message{Title: atfm.TitleSLC, ARCID: host.Callsign(c, f), IFPLID: fmt.Sprintf("AA%08d", aogHash(f.Carrier+f.Number+f.From+day.Format("0102"))%100000000),
+		ADEP: dep, ADES: dest, EOBD: day.Format("020106"), EOBT: hhmmOf(f.DepMin), REASON: "OUTREG", TAXITIME: fmt.Sprintf("%04d", dayplan.TaxiMin)}
+	return a.sendATFM(ctx, m, nmAddress, []string{dep + c.ICAO + "X", dep + "ZPZX"})
+}
+
 // sendATFM puts a flow message in an AFTN envelope and sends it.
 func (a *ANSP) sendATFM(ctx context.Context, m *atfm.Message, from string, addressees []string) error {
 	text, err := atfm.Build(m)

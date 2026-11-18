@@ -273,6 +273,18 @@ func BootCore(ctx context.Context, m *world.Manifest, opts Options, advertise st
 			}
 		}
 	}
+	// What one machine does to the day reaches every machine's copy of it.
+	s.onEvent = func(ev worldEvent) {
+		body, _ := json.Marshal(ev)
+		client := &http.Client{Timeout: 20 * time.Second}
+		for _, p := range c.livePeers() {
+			if resp, err := s.fedPost(client, p.URL+"/shard/event", body); err == nil {
+				resp.Body.Close()
+			} else {
+				s.log.Warn("peer did not take the event", "peer", p.Name, "kind", ev.Kind, "err", err)
+			}
+		}
+	}
 	// An event added to the day at the core reaches every machine's plan.
 	s.onInject = func(ev nocEvent) {
 		body, _ := json.Marshal(ev)
@@ -369,6 +381,7 @@ func (c *Core) Routes(mux *http.ServeMux) {
 	// region's saved seats with their tokens.
 	mux.HandleFunc("POST /federation/register", c.Sim.requireSecret(c.register))
 	mux.HandleFunc("POST /federation/token", c.Sim.requireSecret(c.token))
+	mux.HandleFunc("POST /federation/event", c.Sim.requireSecret(c.Sim.serveEvent))
 	mux.HandleFunc("/federation/state/{peer}", c.Sim.requireSecret(c.Sim.servePeerState))
 	mux.HandleFunc("PUT /federation/recording/{id}", c.Sim.requireSecret(c.Sim.servePutRecording))
 }
@@ -856,6 +869,7 @@ func shardRoutes(mux *http.ServeMux, s *Sim, bookings, revenue func() int64) {
 	mux.HandleFunc("/shard/revenue.json", s.serveRevenue)
 	mux.HandleFunc("/shard/revenue", s.serveRevenue)
 	mux.HandleFunc("POST /shard/world", s.requireSecret(s.serveShardWorld))
+	mux.HandleFunc("POST /shard/event", s.requireSecret(s.serveEvent))
 	mux.HandleFunc("GET /worlds.json", s.serveWorlds)
 	s.airlineSrv.Routes(mux)
 	mux.HandleFunc("GET /settlement/", s.serveHOT)
@@ -997,6 +1011,9 @@ func BootGDS(ctx context.Context, m *world.Manifest, opts Options,
 		s.Stop()
 		return nil, err
 	}
+	s.externalMu.Lock()
+	s.coreURL = coreURL
+	s.externalMu.Unlock()
 
 	g := &GDSNode{Designator: slot.Designator, Address: s.gdsAddr(*slot), Name: slot.Name}
 	s.GDSes = []*GDSNode{g}
@@ -1056,6 +1073,9 @@ func BootRegion(ctx context.Context, m *world.Manifest, opts Options,
 		s.Stop()
 		return nil, err
 	}
+	s.externalMu.Lock()
+	s.coreURL = coreURL
+	s.externalMu.Unlock()
 
 	capacity := opts.Capacity
 	if capacity <= 0 {

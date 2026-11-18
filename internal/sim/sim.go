@@ -429,6 +429,15 @@ type Sim struct {
 	// Demand's ledger, for the log line and the tests.
 	DemBooked, DemFailed, DemInterline                       atomic.Int64
 	DemTicketed, DemCancelled, DemRefunded, DemSplit, DemNDC atomic.Int64
+	// SlotsImproved counts the flights of this machine's carriers that
+	// took an earlier slot when one was given back.
+	SlotsImproved atomic.Int64
+	// events remembers the world events applied here; onEvent, on a core,
+	// relays one to every peer; eventHandlers apply the kinds other parts
+	// of the world register.
+	events        eventLog
+	onEvent       func(worldEvent)
+	eventHandlers map[string]func(context.Context, worldEvent)
 
 	// Eye is the world's observer and map, mounted on the switch console.
 	Eye *eye.Eye

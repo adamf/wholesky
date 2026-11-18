@@ -237,11 +237,18 @@ receives the slot through jetway's Ground seam, and the panel shows the
 CTOT. A late aircraft's delay passes to its next leg after the turn, as
 late aircraft, code 93. The day's delays therefore chain. On the recorded
 day, the record's NAS and weather minutes become the slots that explain
-them. The globe shows the weather cells in force. These parts are not
-done: the FAA's CDM messages and ground stops, the slot swapping and
-improvement dialogue, and en-route regulations. Weather that closes an
-area outright instead of slowing it is also not done. SMM, REA and SIP
-are parsed and built, but no component sends them yet.
+them. The globe shows the weather cells in force. Each regulation keeps
+its slot list. A cancelled flight gives its slot back when the
+cancellation is announced, and the flights behind it move up. In Europe
+the list is rationed again, first planned first served. Under a ground
+delay program in the United States and Canada the slot stays with its
+carrier, and compression moves another carrier's flight up only when
+the owner cannot use it. A flight that sends REA takes a free slot at 5
+minutes' notice instead of 30. These parts are not done: the FAA's CDM
+messages, slot swaps that a carrier asks for between two of its own
+flights, and en-route regulations. Weather that closes an area outright
+instead of slowing it is also not done. SMM and SIP are parsed and
+built, but no component sends them yet.
 
 **Airport systems.** These are common-use check-in (CUPPS), gate
 management, FIDS, stand allocation and de-icing. Today the airport is a

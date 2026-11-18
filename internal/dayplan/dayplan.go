@@ -75,9 +75,15 @@ type Regulation struct {
 	Rate       int         `json:"rate"`
 	NormalRate int         `json:"normal_rate"`
 	Cause      *atfm.Cause `json:"-"`
-	CauseText  string      `json:"cause"`
-	Flights    int         `json:"flights"`
-	DelayMin   int         `json:"delay_min"`
+	// Mode is the regime a slot given back is shared out under: ModeCASA
+	// or ModeGDP. See slots.go.
+	Mode      string `json:"mode,omitempty"`
+	CauseText string `json:"cause"`
+	Flights   int    `json:"flights"`
+	DelayMin  int    `json:"delay_min"`
+	// book is the regulation's slot list; nil on a recorded day, whose
+	// slots are read from the record and do not move.
+	book *slotBook
 }
 
 // Summary is the day's plan in numbers, for the instruments.
@@ -111,6 +117,16 @@ type Plan struct {
 	// change a flight's fate (call reserves, take a slot improvement) while
 	// the simulation reads it.
 	mu sync.RWMutex
+	// released are the flights whose cancellation the world has heard:
+	// they hold no slot. ready are the flights that have reported ready
+	// and may take an earlier slot at short notice.
+	released, ready map[string]bool
+	// rot caches the schedule's rotations for the manifest the plan was
+	// built from: a day with thousands of cancellations works thousands of
+	// tails again, and each must not cost a pass over every flight.
+	rotMu  sync.Mutex
+	rotOf  *world.Manifest
+	rotAll map[string][]world.Flight
 }
 
 // Update changes one flight's fate under the lock.
@@ -185,7 +201,7 @@ func Build(m *world.Manifest, day time.Time, own Own) *Plan {
 // BuildWith computes the day with a scenario's weather, ground stops and
 // cancellations in place of the drawn ones, and a crew roster.
 func BuildWith(m *world.Manifest, day time.Time, own Own, opts Options) *Plan {
-	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}, Staff: opts.Staff}
+	p := &Plan{Day: day, Replay: m.Replay != nil, Flights: map[string]*Flight{}, Staff: opts.Staff, released: map[string]bool{}, ready: map[string]bool{}}
 	for _, f := range m.Flights {
 		pf := &Flight{}
 		if f.Actual != nil {
@@ -200,6 +216,11 @@ func BuildWith(m *world.Manifest, day time.Time, own Own, opts Options) *Plan {
 		}
 		if reason, ok := opts.Cancel[Key(f)]; ok && !pf.Cancelled {
 			pf.Cancelled, pf.Code, pf.Reason = true, "A", reason
+		}
+		if pf.Cancelled {
+			// Cancelled before the day: the world already knows, and the
+			// flight takes no slot.
+			p.released[Key(f)] = true
 		}
 		p.Flights[Key(f)] = pf
 	}
@@ -306,23 +327,29 @@ func distKM(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 // regulate runs the flow management over every airport under the cells:
-// its arrivals in the window are held to the reduced rate, first come
-// first served by scheduled arrival, and each one held gets a slot -- a
-// CTOT that is its off-block plus the wait plus the taxi -- with the
-// weather cause. A cancelled flight takes no slot. A flight that has left
-// by the time `now` (minutes into the day; -1 before the day) keeps its
-// fate and still holds its place in the queue: a cell that develops in
-// the afternoon slots the arrivals still on the ground.
+// its arrivals in the window are held to the reduced rate. The regulation
+// is a list of slots, one every 60/rate minutes; each arrival takes the
+// first free slot at or after its scheduled time, first planned first
+// served, and one that has to wait gets a calculated take-off time -- its
+// off-block plus the wait plus the taxi -- with the weather cause. A
+// flight whose cancellation the world has heard takes no slot. A flight
+// that has left by `now` (minutes into the day; -1 before the day) keeps
+// its fate and holds the slot it will land in: a cell that develops in
+// the afternoon slots the arrivals still on the ground behind the ones in
+// the air. The slot lists are kept; see slots.go for what happens to a
+// slot that is given back.
 func (p *Plan) regulate(m *world.Manifest, cells []Cell, now int) {
-	icao := map[string]string{}
+	icao, country := map[string]string{}, map[string]string{}
 	for _, a := range m.Airports {
 		icao[a.IATA] = a.ICAO
+		country[a.IATA] = a.Country
 	}
-	byFlight := map[string]world.Flight{}
 	arrivalsAt := map[string][]world.Flight{}
 	for _, f := range m.Flights {
-		byFlight[Key(f)] = f
 		arrivalsAt[f.To] = append(arrivalsAt[f.To], f)
+	}
+	if p.released == nil {
+		p.released = map[string]bool{}
 	}
 	for _, c := range cells {
 		for _, ap := range c.Airports {
@@ -357,11 +384,12 @@ func (p *Plan) regulate(m *world.Manifest, cells []Cell, now int) {
 				loc = ap
 			}
 			reg := Regulation{Name: fmt.Sprintf("%sA%02d%s", loc, p.Day.Day(), period), Airport: ap, Start: c.Start, End: c.End,
-				Rate: rate, NormalRate: normal, Cause: atfm.NewCause(atfm.CauseWeather, 'A')}
+				Rate: rate, NormalRate: normal, Cause: atfm.NewCause(atfm.CauseWeather, 'A'), Mode: modeFor(country[ap])}
 			reg.CauseText = reg.Cause.String()
+			book := newSlotBook(float64(c.Start), 60.0/float64(rate), false)
 			var held []world.Flight
 			for _, f := range arr {
-				if f.Actual != nil {
+				if f.Actual != nil || p.released[Key(f)] || p.Flights[Key(f)] == nil {
 					continue
 				}
 				if f.ArrMin >= c.Start && f.ArrMin < c.End {
@@ -374,38 +402,39 @@ func (p *Plan) regulate(m *world.Manifest, cells []Cell, now int) {
 				}
 				return Key(held[i]) < Key(held[j])
 			})
-			interval := 60.0 / float64(rate)
-			next := float64(c.Start)
 			for _, f := range held {
-				slot := math.Max(float64(f.ArrMin), next)
-				next = slot + interval
-				delay := int(math.Round(slot - float64(f.ArrMin)))
-				if delay > MaxSlotDelay {
-					delay = MaxSlotDelay
+				key := Key(f)
+				pf := p.Flights[key]
+				if now >= 0 && f.DepMin+pf.DepDelay <= now {
+					// In the air already: it lands when it lands, and the
+					// flights behind it are rationed around it.
+					book.take(f, float64(f.ArrMin+pf.ArrDelay))
+					book.frozen[key] = true
+					continue
+				}
+				at := book.take(f, float64(f.ArrMin))
+				if d := book.wait(f, book.slot[key], float64(f.ArrMin)); d > 0 && at > float64(f.ArrMin) {
+					book.delay[key] = d
+				}
+			}
+			reg.book = book
+			reg.Flights, reg.DelayMin = book.counts()
+			if reg.Flights == 0 {
+				continue
+			}
+			p.Regulations = append(p.Regulations, reg)
+			p.Summary.Regulations++
+			for _, f := range held {
+				if !p.settle(f) {
+					continue
 				}
 				pf := p.Flights[Key(f)]
-				if delay <= 0 || pf == nil {
-					continue
-				}
-				if pf.ATFM >= delay {
-					continue
-				}
-				pf.ATFM = delay
-				pf.Regulation, pf.Cause = reg.Name, reg.Cause
-				pf.CTOT = f.DepMin + delay + TaxiMin
-				pf.DepDelay = max(pf.DepDelay, delay)
-				pf.ArrDelay = max(pf.ArrDelay, delay)
-				reg.Flights++
-				reg.DelayMin += delay
-			}
-			if reg.Flights > 0 {
-				p.Regulations = append(p.Regulations, reg)
-				p.Summary.Regulations++
-				p.Summary.Slotted += reg.Flights
-				p.Summary.SlotDelayMin += reg.DelayMin
+				pf.DepDelay = max(pf.DepDelay, pf.ATFM)
+				pf.ArrDelay = max(pf.ArrDelay, pf.ATFM)
 			}
 		}
 	}
+	p.recount()
 }
 
 // recordedSlots reads the record's causes back into slots: a flight the
@@ -477,7 +506,7 @@ func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
 	if p == nil || tail == "" {
 		return nil
 	}
-	legs := rotations(m)[carrier+"/"+tail]
+	legs := p.rotation(m, carrier, tail)
 	if len(legs) == 0 {
 		return nil
 	}
@@ -523,6 +552,17 @@ func (p *Plan) Replan(m *world.Manifest, carrier, tail string) []world.Flight {
 		}
 	}
 	return changed
+}
+
+// rotation is one tail's legs in departure order, from the cache when the
+// manifest is the one last asked about.
+func (p *Plan) rotation(m *world.Manifest, carrier, tail string) []world.Flight {
+	p.rotMu.Lock()
+	defer p.rotMu.Unlock()
+	if p.rotOf != m || p.rotAll == nil {
+		p.rotOf, p.rotAll = m, rotations(m)
+	}
+	return p.rotAll[carrier+"/"+tail]
 }
 
 // rotations groups a carrier's flights by tail in departure order.
