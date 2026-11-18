@@ -123,7 +123,7 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	in := world.Flight{Carrier: "ZZ", Number: "0100", From: "ORD", To: "DEN", DepMin: 350, ArrMin: 510}
 	day := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
 	late := 0
-	tn := &Tenant{flights: []world.Flight{in, out}, missed: map[string]int{},
+	tn := &Tenant{flights: []world.Flight{in, out}, missed: map[string]Missed{},
 		inboundDelay: func(world.Flight, time.Time) int { return late }}
 	parties := make([]party, 2000)
 	for i := range parties {
@@ -160,6 +160,16 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	run()
 	if tn.Misconnected() != missed {
 		t.Errorf("asked twice, the count went from %d to %d", missed, tn.Misconnected())
+	}
+	for _, m := range tn.Missed() {
+		if m.Flight.Number != out.Number || m.Inbound.Number != in.Number || m.Pax < 1 {
+			t.Fatalf("a missed connection %+v; want off %s onto %s", m, in.Number, out.Number)
+		}
+	}
+	// The count is a day's.
+	tn.NewDay()
+	if tn.Misconnected() != 0 {
+		t.Errorf("a new day began with %d missed connections", tn.Misconnected())
 	}
 	// A late departure waits for them without meaning to.
 	tn.departureDelay = func(world.Flight, time.Time) int { return 120 }

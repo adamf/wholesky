@@ -92,7 +92,12 @@ for each block hour flown.
   it meets the time. On the day, a passenger whose inbound flight is
   late misses the connection with a chance that rises as the delay
   uses up the time in hand. The curve is an estimate, shaped to the
-  3 connecting passengers in 100 that a 2007 study found.
+  3 connecting passengers in 100 that a 2007 study found. The carrier
+  owes the passenger for the wait until its next flight over the same
+  pair. Under Regulation 261 that is the delay at the final destination:
+  250 to 600 euros after 3 hours, with a meal, and a hotel when the next
+  flight is on the next day. Under United States law it is the meal and
+  the hotel.
 
 ### Slots on the day
 
@@ -518,10 +523,9 @@ that takes the `network` department decides for itself.
   calendar that rolls needs a book for each future date, filled to its
   place on the booking curve. The next date's book must then become the
   day's book. On the recorded day, each date is 1.4 million records.
-- **After a missed connection.** A passenger whose inbound flight is
-  late misses the connection by the curve in `internal/airport`, and the
-  scorecard counts them. Nobody rebooks them, and they cost the carrier
-  nothing.
+- **After a missed connection.** The scorecard counts a passenger who
+  misses a connection and charges what the law gives. Nobody rebooks
+  the passenger, and the seat on the next flight stays free.
 - **Ancillary revenue.** A ticket has a fare and taxes. Bags, seats and
   other fees are not sold. The fares are calibrated to a report that
   excludes fees. US carriers earned 4.6 % more than their fares from

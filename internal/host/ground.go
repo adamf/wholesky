@@ -406,7 +406,7 @@ func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut in
 		if missesConnection(h, gap-t.connectTime(inb, f), delay, held) {
 			// Misconnected: they are not on this flight.
 			t.missedMu.Lock()
-			t.missed[pt.key+f.Carrier+f.Number] = len(pt.pax)
+			t.missed[pt.key+f.Carrier+f.Number] = Missed{Flight: f, Inbound: inb, Pax: len(pt.pax)}
 			t.missedMu.Unlock()
 			return 0, nil, false
 		}
@@ -443,16 +443,45 @@ func missesConnection(h, slack, inbound, outbound int) bool {
 	return (float64((h/7)%1000)+0.5)/1000 < airport.Misconnect(slack, inbound, outbound)
 }
 
+// Missed is one party that missed a connection today: the departure it
+// was booked on, the arrival that brought it in late, and how many
+// passengers it is.
+type Missed struct {
+	Flight, Inbound world.Flight
+	Pax             int
+}
+
 // Misconnected is the passengers who missed a connection onto one of
 // this carrier's departures today because their inbound flight was late.
 func (t *Tenant) Misconnected() int {
-	t.missedMu.Lock()
-	defer t.missedMu.Unlock()
 	n := 0
-	for _, pax := range t.missed {
-		n += pax
+	for _, m := range t.Missed() {
+		n += m.Pax
 	}
 	return n
+}
+
+// Missed is the parties that missed a connection today.
+func (t *Tenant) Missed() []Missed {
+	t.missedMu.Lock()
+	defer t.missedMu.Unlock()
+	out := make([]Missed, 0, len(t.missed))
+	for _, m := range t.missed {
+		out = append(out, m)
+	}
+	return out
+}
+
+// NewDay starts the counts that are a day's over: the bag office's
+// files and the missed connections. The day that ended has been closed
+// into the carrier's book with them.
+func (t *Tenant) NewDay() {
+	t.groundMu.Lock()
+	t.tracing = Tracing{}
+	t.groundMu.Unlock()
+	t.missedMu.Lock()
+	t.missed = map[string]Missed{}
+	t.missedMu.Unlock()
 }
 
 // inboundFor picks one of the carrier's arrivals into f.From that a

@@ -141,7 +141,7 @@ type Tenant struct {
 	connect        func(in, out world.Flight) int
 	departureDelay func(world.Flight, time.Time) int
 	missedMu       sync.Mutex
-	missed         map[string]int
+	missed         map[string]Missed
 	// The operations desk: which day is being flown, the ICAO indicators
 	// of the airports, and the air traffic services messages received.
 	day     time.Time
@@ -434,7 +434,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		inboundDelay:   opts.InboundDelay,
 		connect:        opts.Connect,
 		departureDelay: opts.DepartureDelay,
-		missed:         map[string]int{},
+		missed:         map[string]Missed{},
 		icao:           opts.ICAO,
 	}
 	for _, f := range opts.Marketed {

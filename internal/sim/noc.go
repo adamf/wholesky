@@ -974,6 +974,11 @@ func (s *Sim) newDay() {
 		_, _, sum := s.fate.Picture()
 		s.log.Info("new day staffed", "duties", sum.Duties, "reserves", sum.Reserves, "crew cancellations", sum.TimedOut)
 	}
+	// The ground's counts are a day's: the bag office's files and the
+	// missed connections were closed into the books with the day.
+	for _, t := range s.Tenants {
+		t.NewDay()
+	}
 	s.announced.Clear()
 	s.noc.mu.Lock()
 	s.noc.asked = map[string]bool{}

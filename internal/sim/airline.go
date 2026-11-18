@@ -309,7 +309,11 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 		}
 	}
 	if t != nil {
-		sc.Misconnected = t.Misconnected()
+		missed := t.Missed()
+		for _, m := range missed {
+			sc.Misconnected += m.Pax
+		}
+		sc.Costs["passenger rights"] += w.s.misconnectCost(missed)
 		tr := t.Tracing()
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
@@ -368,6 +372,60 @@ func (s *Sim) owed(f world.Flight, fate dayplan.Flight, cancelled bool) rights.O
 		d.Rerouted, d.ArrDelay, d.DepDelay = true, 180, 180
 	}
 	return rights.For(d)
+}
+
+// misconnectCost is what a carrier owes the passengers who missed a
+// connection, in cents.
+func (s *Sim) misconnectCost(missed []host.Missed) int64 {
+	var cents int64
+	for _, m := range missed {
+		owed := s.owedMisconnect(m)
+		cents += int64(m.Pax) * (owed.Compensation + owed.Care)
+	}
+	return cents
+}
+
+// owedMisconnect is what the law owes a passenger who missed a
+// connection because the inbound flight was late. The journey began
+// where the inbound flight did and ends where the missed flight goes.
+// The passenger arrives there on the carrier's next flight over the
+// same pair, later that day or the next morning, and that wait is the
+// delay the law counts: under Regulation 261 the delay at the final
+// destination of one booking (Folkerts, C-11/11). The cause is the
+// inbound flight's.
+func (s *Sim) owedMisconnect(m host.Missed) rights.Owed {
+	f, in := m.Flight, m.Inbound
+	wait, first := 0, -1
+	for _, g := range s.Flights[f.Carrier] {
+		if g.From != f.From || g.To != f.To {
+			continue
+		}
+		if first < 0 || g.DepMin < first {
+			first = g.DepMin
+		}
+		if g.DepMin > f.DepMin && (wait == 0 || g.DepMin-f.DepMin < wait) {
+			wait = g.DepMin - f.DepMin
+		}
+	}
+	overnight := wait == 0
+	if overnight {
+		// No later flight today: the first one tomorrow.
+		if first < 0 {
+			first = f.DepMin
+		}
+		wait = 24*60 - f.DepMin + first
+	}
+	from, to := s.airports[in.From], s.airports[f.To]
+	reg := rights.Of(from.Country, to.Country, s.carriers[f.Carrier].Country)
+	intra := rights.Intra(reg, from.Country, to.Country)
+	km := in.KM + f.KM
+	if s.tariff != nil {
+		if d := s.tariff.Distance(in.From, f.To); d > 0 {
+			km = d
+		}
+	}
+	return rights.For(rights.Disruption{Regime: reg, KM: km, Intra: intra, Domestic: intra, Cause: causeOf(s.fate.Of(in)),
+		ArrDelay: wait, DepDelay: wait, Overnight: overnight})
 }
 
 // causeOf is why a flight was disrupted, as the law weighs it.

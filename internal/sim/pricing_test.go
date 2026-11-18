@@ -11,6 +11,7 @@ import (
 	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/airline"
+	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/partners"
 	"github.com/adamf/wholesky/internal/pricing"
 	"github.com/adamf/wholesky/internal/refdata"
@@ -278,5 +279,50 @@ func TestJointVenturePoolsItsRoutes(t *testing.T) {
 	}
 	if len(views) != 1 || views[0].Name != "Atlantic Plus-Plus" || views[0].Pool != 800_000_00 {
 		t.Errorf("the ventures: %+v", views)
+	}
+}
+
+// What a missed connection costs. Lufthansa brings a party of 2 from
+// Munich into Frankfurt too late for its flight to Madrid. The journey
+// is 1,720 km, which Regulation 261 puts in the 400 euro band. The next
+// Madrid flight leaves 4 hours later: each passenger is owed 400 euros,
+// which is 432 dollars, and a meal at 15 dollars. With a flight 2 hours
+// later nobody is owed anything. With no later flight they stay the
+// night, at 150 dollars more. An American passenger at Dallas is owed
+// the meal and no compensation.
+func TestWhatAMissedConnectionCosts(t *testing.T) {
+	fl := func(c, n, from, to string, dep, km int) world.Flight {
+		return world.Flight{Carrier: c, Number: n, From: from, To: to, DepMin: dep, ArrMin: dep + 120, KM: km}
+	}
+	in := fl("LH", "0100", "MUC", "FRA", 420, 300)
+	out := fl("LH", "1112", "FRA", "MAD", 600, 1420)
+	s := &Sim{Flights: map[string][]world.Flight{
+		"LH": {in, out, fl("LH", "1114", "FRA", "MAD", 840, 1420)},
+		"AA": {fl("AA", "0300", "ORD", "DFW", 420, 1290), fl("AA", "0400", "DFW", "AUS", 660, 300), fl("AA", "0402", "DFW", "AUS", 900, 300)},
+	}}
+	s.airports = map[string]world.Airport{"MUC": {Country: "Germany"}, "FRA": {Country: "Germany"}, "MAD": {Country: "Spain"},
+		"ORD": {Country: "United States"}, "DFW": {Country: "United States"}, "AUS": {Country: "United States"}}
+	s.carriers = map[string]world.Carrier{"LH": {Designator: "LH", Country: "Germany"}, "AA": {Designator: "AA", Country: "United States"}}
+	party := host.Missed{Flight: out, Inbound: in, Pax: 2}
+	if got := s.misconnectCost([]host.Missed{party}); got != 2*(43200+1500) {
+		t.Errorf("a party of 2 with 4 hours to the next flight is owed %d cents, want %d", got, 2*(43200+1500))
+	}
+	// The next flight 2 hours later.
+	s.Flights["LH"][2].DepMin = 720
+	if got := s.misconnectCost([]host.Missed{party}); got != 0 {
+		t.Errorf("2 hours to the next flight and the party is owed %d cents", got)
+	}
+	// No later flight: the first one tomorrow is the flight they missed.
+	s.Flights["LH"] = s.Flights["LH"][:2]
+	if got := s.misconnectCost([]host.Missed{party}); got != 2*(43200+1500+15000) {
+		t.Errorf("a night in Frankfurt for 2 is %d cents, want %d", got, 2*(43200+1500+15000))
+	}
+	// United States law: a meal after 3 hours, and no compensation.
+	us := host.Missed{Flight: s.Flights["AA"][1], Inbound: s.Flights["AA"][0], Pax: 1}
+	if got := s.misconnectCost([]host.Missed{us}); got != 1500 {
+		t.Errorf("a passenger at Dallas with 4 hours to wait is owed %d cents, want 1500", got)
+	}
+	if got := s.misconnectCost(nil); got != 0 {
+		t.Errorf("nobody missed and the cost is %d", got)
 	}
 }
