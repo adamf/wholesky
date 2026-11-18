@@ -17,11 +17,15 @@ today.
 
 **Fares and pricing (ATPCO, fare rules, taxes).** Done. Every booking is
 priced before the sell against a fare filing derived from the schedule
-(jetway `pkg/fare`). The filing has a ladder of classes per market with
-fare basis codes, advance-purchase and stay rules, change fees and
-refundability, and taxes shaped like a US domestic ticket. The Airline
-Tariff Publishing Company (ATPCO) filing itself is licensed, so the
-structure is the industry's and the amounts are synthetic.
+(jetway `pkg/fare`). The engine divides a journey into fare components
+and priceable units, applies each fare's rules, and returns the lowest
+price with a fare calculation line (jetway v0.1.97). The filing has a
+ladder of 14 classes per market, through fares over a carrier's own and
+its partners' connections, and fares limited to a channel or a corporate
+account. The Airline Tariff Publishing Company (ATPCO) filing itself is
+licensed. The amounts are therefore synthetic. They are calibrated to
+the US Department of Transportation's Consumer Airfare Report. See
+[business.md](business.md).
 
 **Ticketing and settlement (BSP/ARC, interline billing).** The Billing
 and Settlement Plan (BSP) side is done, in jetway v0.1.72 `pkg/bsp` and
@@ -43,12 +47,15 @@ carrier's older records are therefore evicted before the plan runs. Those
 records show as documents that the agent reported and that the carrier
 does not hold. The cause is eviction and not a wire fault. Interline
 billing is done as far as the method goes, in jetway v0.1.77
-`pkg/prorate` and wholesky `internal/interline`. Every ticketed coupon
-flown by one carrier on another carrier's document is prorated by mileage
-across the ticket's coupons. On the recorded day that is 7,000
-codeshares. The proration is straight rate, which is the arithmetic the
-prorate manuals begin from. The operating carrier invoices the ticketing
-carrier the coupon's share less a 9 per cent interline service charge.
+`pkg/prorate` and wholesky `internal/interline`. The plan bills every
+ticketed coupon that one carrier flies on another carrier's document,
+codeshare or not. On the recorded day that is 7,000 codeshares. A coupon
+is worth its part of its own fare component, which the pricing divides
+by miles. A record without that detail is prorated whole by miles. The
+operating carrier invoices the ticketing carrier the coupon's share less
+a service charge. The charge is 9 per cent between carriers with only an
+interline agreement, 6 per cent inside an alliance, 7 per cent on a
+codeshare and nothing inside a joint venture.
 There is 1 invoice per pair of carriers. The invoices are served at
 `/billing.json` and `/billing/<biller>-<billed>.json`, and merged across
 machines like the settlement. This is not IATA's IS-XML, because the
@@ -106,8 +113,13 @@ the booking curve's for the connecting paths sold. The duals of the leg
 capacities replace the ladders' displacement costs as bid prices. A leg
 the programme did not reach falls back to its ladder. The solver is a
 plain dense simplex. A connecting point is therefore bounded at 120 legs,
-and the most-booked paths are kept. A forecast learned from history, in
-place of the demand model's own mix, is still missing.
+and the most-booked paths are kept. The forecast's class mix is the mix
+that the traveller model buys in a filled world. A forecast learned from
+each flight's own history is still missing. A carrier's inventory also
+does not value a request by the channel that asked. jetway has the hook
+(`inventory.Controller.Value`, v0.1.97). Every traveller in the
+simulator books through a distribution system node, and a carrier cannot
+tell a direct sale from an agency sale on the wire.
 
 **Interline through check-in (IATCI).** IATCI is done (jetway v0.1.61-63,
 `pkg/iatci`). Of the connections, 1 in 4 crosses carriers. The first
@@ -321,20 +333,27 @@ order they should be done:
    crews. Every other change lands on the tape.
 3. ~~Joined worlds in operation.~~ Done. wholesky-mirror.fly.dev is
    trunked to the demo, and the gate joins a mirror to the small world.
-4. **More decisions.** Partly done. The pricing desk now receives the
-   competition's fare changes, with a match-or-hold decision and
-   travellers who shop. The tape carries weather, slots, crew timeouts and
-   aircraft going technical as incidents. The operations centre decides
-   how to meet forecast weather, with the projected cost of each choice.
-   Labour relations answer the unions. Events that anyone adds to the day
-   compound with the plan's own. There are still no schedule-planning
-   decisions and no seasons.
+4. **More decisions.** Partly done. Every carrier has a pricing desk
+   that answers the other carriers' fare changes 4 times a day. A seat
+   that prices by hand receives the desk's move as a decision. The tape
+   carries fare moves, weather, slots, crew timeouts and aircraft going
+   technical. The operations centre decides how to meet forecast
+   weather, with the projected cost of each choice. Labour relations
+   answer the unions. Events that anyone adds to the day compound with
+   the plan's own. A carrier can order a new service, and the service
+   is flown from the first start of the world after it comes due. A
+   running world does not change its schedule, and there are no
+   seasons.
 5. **Identity.** Anyone can take any free carrier. The token is the only
-   protection. There are no accounts, no history across days and no
-   season.
-6. **The scorecard's shape.** Costs are chosen constants, and the
-   composite is arbitrary. An external carrier's board lacks its own bags
-   and denied boardings.
+   protection. There are no accounts and no season. Each carrier has a
+   book that keeps its cash and its days, and the book belongs to the
+   carrier and not to the person in the seat.
+6. **The scorecard's shape.** Fuel, aircraft, maintenance, airports,
+   navigation, handling and selling now come from public data. See
+   [business.md](business.md). Crew cost without a roster and the delay
+   cost for each minute are chosen constants. The composite score is
+   arbitrary. An external carrier's board lacks its own bags and denied
+   boardings.
 7. **The external node's autopilot** accepts every passenger with 1 bag
    and closes the flight. It has no connections, no no-shows, no ADL and
    no IROPS on the player's side. The ops page does not show the weather
@@ -373,8 +392,10 @@ The recorded run found these bugs, which are not yet fixed:
 
 ## Order of work
 
-Fares, revenue management, IATCI and APIS are done. The next items, in
-order, are:
+Fares, revenue management, IATCI and APIS are done. So are the
+travellers who shop, the pricing desks, the cost of a sale, and the
+carrier's book across days. [business.md](business.md) lists what the
+business model still lacks. The next items, in order, are:
 
 1. Weather systems that close regions, not only airports, with the
    Network Manager's regulations that follow.

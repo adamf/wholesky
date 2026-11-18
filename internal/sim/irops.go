@@ -25,8 +25,10 @@ import (
 )
 
 // alternatives implements irops.Schedule from the manifest: flights over the
-// dead segment's city pair departing after it, the carrier's own first, the
-// same day and then the next, nearest first.
+// dead segment's city pair departing after it, the same day and then the
+// next, nearest first within each tier. The tiers are the carrier's own
+// flights, the flights it markets under its own code, its joint venture
+// partners, its codeshare partners, its alliance, and then anyone.
 func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candidate, error) {
 	sameNum := func(a, b string) bool { return strings.TrimLeft(a, "0") == strings.TrimLeft(b, "0") }
 	// The dead flight's own departure, whether the passenger held it under
@@ -74,13 +76,18 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 			// carrier's seat is another carrier's revenue. Its own code on a
 			// partner's aircraft -- a codeshare it markets -- comes next,
 			// sold under its own number so the booking stays its own.
+			// After that the partners, closest first: a joint venture
+			// partner's seat is revenue the two share, an alliance
+			// partner's costs a smaller service charge than a stranger's.
 			// Within each tier, the nearest departure.
-			carrier, number, tier := code, f.Number, 2
+			carrier, number, tier := code, f.Number, 5
 			switch {
 			case code == dead.Carrier:
 				tier = 0
 			case f.Marketing == dead.Carrier && f.MarketingNumber != "":
 				carrier, number, tier = f.Marketing, f.MarketingNumber, 1
+			case s.commerce != nil:
+				tier = 1 + s.commerce.partners.Rank(dead.Carrier, code)
 			}
 			if f.DepMin > deadDep {
 				out = append(out, cand{f: f, carrier: carrier, number: number, day: 0, sortBy: tier*10000 + f.DepMin})

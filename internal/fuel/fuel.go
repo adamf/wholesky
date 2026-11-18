@@ -6,7 +6,8 @@
 // published for every trading day since April 1990 (internal/refdata),
 // which follows IATA's world average within about three dollars a barrel.
 // A world whose calendar starts inside the record lives the record: start
-// it in January 2008 and fuel doubles by July and halves by December.
+// it in January 2008 and fuel goes from 2.75 dollars a gallon to 4.04 by
+// July, 4.81 in September, and 1.26 by Christmas.
 // Past the record's end the price is continued by a process fitted to
 // the record: the logarithm of the price reverts to a long-run level and
 // takes a random step and, some days, a jump. The fit is in this

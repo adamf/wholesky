@@ -7,7 +7,7 @@ bookings need, crossing TCP sockets.
 
 I built it to find out what breaks when the systems are separate and talk
 only by message. Every time the world got bigger, it found bugs in Jetway.
-Ninety-six Jetway releases came out of that.
+Ninety-nine Jetway releases came out of that.
 
 **Live demo:** https://wholesky-demo.fly.dev/eye shows the Eye, the view
 of the whole sky. The demo world has 518 carriers, 2,883 airports and
@@ -359,23 +359,25 @@ the size of its business cabin.
 costs.
 
 Every one of those records was sold at a fare. jetway's `pkg/fare` gives
-the structure of a fare filing: fare basis, rules for advance purchase,
-stay, season, change and refund, taxes by kind, and passenger types with
-their discounts. It contains no fares of its own, because ATPCO's fares
-are licensed. `internal/tariff` files a synthetic tariff from the
-distances in the schedule, with 14 booking classes per market and
-US-shaped taxes. Every booking prices against this tariff as of its
-purchase date.
+the structure of a fare filing and the engine that prices an itinerary
+against it: fare components, priceable units, rules by category, taxes
+by kind, and a fare calculation line. It contains no fares of its own,
+because ATPCO's fares are licensed. `internal/tariff` files a synthetic
+tariff with 14 booking classes per market. The level of the fares comes
+from the US Department of Transportation's Consumer Airfare Report.
+Every booking prices against this tariff as of its purchase date.
 
 The bar at the top of the globe shows what the aircraft in the air were
 sold for and what has been bought since boot. The ledger behind the bar
 is rebuilt from the books at every start.
 
-The recorded day comes to $719M across 29,967 legs. The average is $255 a
-passenger-leg, the median is $204, and taxes are 15%. Full-fare Y is
-around $341, business is $750 to $785, and the deep discount buckets are
-$93 to $160. These figures resemble those of a Thanksgiving Wednesday in
-the airline industry. Every cent is labelled synthetic.
+Filled to a load factor of 0.85, the recorded day comes to $631M across
+30,003 legs. The average fare is $197 a passenger-leg, the median is
+$168, and taxes are 13% of the total. Full-fare Y averages $425, and the
+4 cheapest classes average $112 to $153. One passenger in 10 pays full
+fare. Every cent is synthetic. The level is calibrated: a test fills a
+US world and holds what travellers paid within 3% of the report's
+average fare for each market.
 
 ![The priced sky: the recorded day's evening banks, with what the aircraft in the air were sold for and what has been bought since boot](docs/the-priced-sky.jpg)
 
@@ -398,6 +400,38 @@ passengers in 32 seats. The filler had drawn booking classes without
 regard to the aircraft. The in-process suite
 (`internal/sim/invariants_test.go`) checks the invariants that need a
 quiet wire: message conservation and interline convergence.
+
+## The business
+
+A world has an economy. [docs/business.md](docs/business.md) describes
+it and names the source of each number.
+
+- **Fuel.** The price of jet fuel is the Energy Information
+  Administration's recorded Gulf Coast price for each day from April
+  1990. A fitted process continues it after the record ends. A carrier
+  can hedge with a swap, a cap or a collar.
+- **Aircraft and airports.** Each tail has an age, an owner, a rent and
+  a maintenance rate. Each flight pays airport charges, navigation
+  charges and ground handling. A turnaround takes the time of its
+  slowest task.
+- **Travellers.** A traveller compares every carrier's nonstop flights
+  and connections in a market and takes the offer that costs least. The
+  model and its constants are those of the MIT Passenger Origin
+  Destination Simulator. A carrier that cuts its fares 20% goes from 308
+  sales to 377 in the test world.
+- **Pricing desks.** Fares are filed 4 times a day. A carrier matches a
+  cut by a carrier of its own kind, follows or refuses an increase, and
+  answers an attack on its hub in the attacker's markets.
+- **Channels.** A traveller books on the carrier's site, through an
+  online travel agency, a travel management company or an agent. Each
+  sale costs booking fees, commission and card fees. Together they come
+  to about 5% of a network carrier's fares.
+- **Partners.** Star Alliance, oneworld and SkyTeam are in the world
+  with their joint ventures. A coupon that a partner flies is billed by
+  its fare component, less a service charge of 0% to 9%.
+- **Growth.** Each carrier has a book that keeps its cash across days.
+  A carrier can ask what a new service would carry, earn and cost, and
+  order it.
 
 ## Building it
 
@@ -455,11 +489,11 @@ deadline, the simulator applies the default. Examples of decisions are:
 - Accept the union's proposal, counter it, or refuse it.
 
 The levers are cancel, retime, substitute, close a class, move the fares,
-REA, reserves, standby crews, the operations centre's policy, and the
-answer to a union. Each lever goes out on the wire as the message that the
+hedge fuel, order a new service, REA, reserves, standby crews, the
+operations centre's policy, and the answer to a union. Each lever goes out on the wire as the message that the
 airline industry uses. The scorecard uses the same formula for every
-carrier. It counts revenue, costs on the world's cost structure, on-time
-performance and cancellations. The autopilot's score is therefore the
+carrier. It counts revenue, costs from public data on fuel, aircraft,
+airports and selling, on-time performance and cancellations. The autopilot's score is therefore the
 baseline.
 
 The lobby answers at once from a cache that is rebuilt in the background.
@@ -547,9 +581,16 @@ Here is what works. `go test ./...` proves it on every run.
   Interchange Standards (PADIS) over EDIFACT. Bookings also settle over
   MATIP for the share of the teletype carriers that connect on that
   airline transport.
-- The demand model follows its bookings after the sell. It handles
-  connections, interline, parties, ticketing, cancellations and divides.
-  A share of the demand arrives as NDC orders.
+- The demand is a market. A traveller compares every carrier's nonstop
+  flights and the connections that meet the minimum connecting time, and
+  takes the offer that costs least. The model follows its bookings after
+  the sell. It handles interline, parties, ticketing, cancellations and
+  divides. A share of the demand arrives as NDC orders.
+- Every carrier's pricing desk answers the other carriers' fare changes
+  at 4 filings a day. Each filed fare reaches every machine of the world.
+- The scorecard charges each flight its fuel, maintenance, airport and
+  navigation charges, and each ticket its cost of sale. A carrier's book
+  keeps its cash and its days across restarts.
 - Every departure runs the whole ground process:
   1. Reservations sends the name list at T−180.
   2. Departure control (Jetway's `pkg/dcs`) opens the flight.
@@ -588,11 +629,12 @@ Here is what works. `go test ./...` proves it on every run.
 - Every booking prices against a fare filing before it sells (jetway's
   `pkg/fare`). The filing is derived from the schedule. It has a ladder of
   classes per market with basis codes, advance-purchase and stay rules,
-  change fees and refundability. Its taxes are shaped like a US domestic
-  ticket. A same-day sell therefore pays full fare, and a cheap class that
+  change fees and refundability, through fares over connections, and
+  fares for one channel or one corporate account. US taxes follow the 2026
+  rates. A same-day sell therefore pays full fare, and a cheap class that
   the rules will not sell is refused with the rule named. The money is on
   the record and on the ticket coupons. The fares are synthetic and
-  labelled, and the structure is the industry's.
+  labelled, and their level is calibrated to public data.
 - The world has 2 other networks beside the airline network:
   - Each machine runs a datalink service provider beside the airlines. An
     aircraft reports OUT and OFF over its datalink. The provider forwards
@@ -617,7 +659,8 @@ Here is what works. `go test ./...` proves it on every run.
   record, the engines work the schedule-change queue as a desk does:
   - They try the next flights over the same city pair: own metal first,
     then the codeshares that the carrier markets under its own number,
-    then interline.
+    then joint venture partners, codeshare partners, the alliance, and
+    last any other carrier.
   - They use free sale where the cache offers it and send a request to the
     carrier where it does not. They wait for each request until the
     carrier answers.

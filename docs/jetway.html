@@ -107,7 +107,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <div class="cta">
       <a class="btn primary" href="https://github.com/adamf/jetway">github.com/adamf/jetway →</a>
       <a class="btn" href="https://jetway-demo.fly.dev">the hosted gateway demo</a>
-      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.96</a>
+      <a class="btn" href="https://github.com/adamf/jetway/blob/main/CHANGELOG.md">changelog · v0.1.99</a>
       <a class="btn" href="index.html">← wholesky</a>
     </div>
     <div class="toc">
@@ -152,7 +152,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <ul>
           <li><b>Booking</b> spans carriers and dialects in one record. The gateway <b>free-sells</b> from the availability cache. Otherwise it sends a <b>request</b> and waits for the answer.</li>
           <li><b>Segment statuses</b> are the codes the industry uses: <span class="mono">NN SS HK HL HN HX KK KL UC UN US UU TK TL NO XX</span>.</li>
-          <li><b>Pricing</b> happens at booking under filed rules and taxes. The record carries the fare basis and the amounts.</li>
+          <li><b>Pricing</b> happens at booking under filed rules and taxes. The record carries the fare basis, the fare components, the fare calculation line and the amounts. A node that trusts its seller can store the seller's own quote and not price again.</li>
           <li><b>Ticketing</b> issues tickets with coupons and check digits. The gateway <b>issues electronic miscellaneous documents</b> (EMDs). It exchanges <b>ticket control</b> with the operating carrier.</li>
           <li><b>Divide</b> splits a booking into two records. <b>Cancel</b> ends a booking and advises every holder. The gateway can <b>add and drop segments</b>. A sweeper enforces <b>ticketing time limits</b>.</li>
           <li>A <b>refund</b> of a document returns the open coupons to the purchaser. Used coupons stay used. The settlement plan reports the refund with the amounts reversed. The gateway sends every carrier its ticket numbers, over EDIFACT ticket control or on a teletype link as the special service request (SSR) TKNE.</li>
@@ -260,7 +260,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
           <li>A <b>sell</b> covers one or many segments across carriers in either dialect. It carries SSRs, contacts, received-from and channel. The record holds every carrier's locator for the same booking.</li>
           <li><b>Answers</b> record the carriers' replies. HK means held and HL means waitlisted. UC means refused, and the gateway cancels the record behind it. UN means the requester's schedule is wrong.</li>
           <li><b>Locators</b> come from a keyed permutation per system. Filled and live records cannot collide.</li>
-          <li><b>Pricing</b> runs at booking time against the gateway's tariff. It puts a fare basis on each segment and the amounts on the record.</li>
+          <li><b>Pricing</b> runs at booking time against the gateway's tariff, for the seller's country, channel and corporate account. It puts a fare basis on each segment and the amounts on the record.</li>
         </ul>
       </div>
       <div class="card">
@@ -298,14 +298,21 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
     <h2>Fares, operations and seat control</h2>
     <div class="grid">
       <div class="card">
-        <h3>pkg/fare <span class="tag inf">structure inferred · data none</span></h3>
-        <p>The package has the structure of a fare filing and carries no fares. ATPCO fares are licensed. Callers supply a tariff.</p>
+        <h3>pkg/fare <span class="tag inf">method public · data none</span></h3>
+        <p>The package prices an itinerary against a fare filing. It carries no fares. ATPCO fares are licensed, and callers supply a tariff. The method follows Carl de Marcken's "Computational Complexity of Air Travel Planning", and the tests use the paper's examples.</p>
         <ul>
-          <li><b>Filings</b> are per market and class, each with a fare basis. <b>Rules</b> cover advance purchase, minimum and maximum stay, seasons, and change and refund fees.</li>
-          <li><b>Taxes</b> have a kind. A tax is a percentage, per segment, per ticket or per enplanement.</li>
+          <li><b>Fare components and priceable units.</b> A journey divides into fare components. Components group into one-way, round-trip, open-jaw and circle-trip units. The engine searches the divisions and returns the lowest price.</li>
+          <li><b>Rules</b> cover advance purchase, minimum and maximum stay, a Saturday night, seasons and blackout dates, days of the week, stopovers, combinations, and change and refund fees. Some rules apply to one fare, and some to the whole unit.</li>
+          <li><b>Routings</b> name the points a fare can connect over and a mileage limit. <b>Sales restrictions</b> limit a fare to a country, a channel, an agency or a corporate account.</li>
+          <li><b>Taxes</b> have a kind. A tax is a percentage, per segment, per ticket or per enplanement, and a tariff can compute taxes from the whole itinerary. Carrier-imposed fees are kept apart from government taxes.</li>
           <li><b>Passenger types</b> ADT, CHD and INF each have a discount.</li>
-          <li><b>Pricing</b> sells each segment under the cheapest fare whose rules the trip meets on the purchase date. When no fare fits, pricing reports the reason.</li>
+          <li><b>Lowest fare search.</b> With an availability function, pricing chooses each segment's booking class from the classes that are open.</li>
+          <li>When no fare fits, pricing names the rule that came closest. The quote carries a <b>fare calculation line</b>.</li>
         </ul>
+      </div>
+      <div class="card">
+        <h3>pkg/mct <span class="tag spec">SSIM chapter 8 specified</span></h3>
+        <p>The package holds minimum connecting times. It reads and writes the 200-byte record of IATA's public SSIM chapter 8. A lookup returns the record that applies to a connection by the chapter's hierarchy of 31 elements, from a flight number range down to the global default. It applies the codeshare rules and the suppression records, and it checks a connection built from two flights. Tests place the chapter's sample records byte by byte and reproduce its worked examples. The data is licensed, and the operator supplies the file.</p>
       </div>
       <div class="card">
         <h3>pkg/ops <span class="tag inf">practice</span></h3>
@@ -326,7 +333,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       </div>
       <div class="card">
         <h3>pkg/prorate <span class="tag inf">method public · provisos not</span></h3>
-        <p>The package holds the arithmetic of interline billing. It divides a through fare between the coupons of an itinerary by mileage. This method is straight rate proration. It rounds on the last coupon, and the shares add up to the fare. It computes the interline service charge that the carrier that flew keeps back. The Prorate Manual's minima, factors and special agreements are sold, and the package does not reproduce them.</p>
+        <p>The package holds the arithmetic of interline billing. It divides a through fare between the coupons of an itinerary by mileage. This method is straight rate proration. It rounds on the last coupon, and the shares add up to the fare. It computes the interline service charge that the ticketing carrier keeps. <code>Divide</code> applies the terms that two carriers have agreed: a fixed amount, a percentage of the fare or of the local fare, and their own service charge. The Prorate Manual's minima and factors are sold, and the package does not reproduce them.</p>
       </div>
       <div class="card">
         <h3>pkg/inventory <span class="tag spec">method specified</span></h3>
@@ -334,7 +341,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
         <ul>
           <li><b>Cabins per leg</b> are keyed by carrier, flight, date, boarding point and compartment. Booking classes map onto the cabins the aircraft has.</li>
           <li><b>Nested class authorisations</b> control the sale. A full cabin waitlists the request. A closed class refuses the request when the cabin still has seats. The last seats sell at the higher fares.</li>
-          <li><b>Revenue management</b> uses an EMSR-b controller. The controller sets the authorisations from a demand forecast by class, with a fare, a mean and a spread for each class. It pools the classes above each discount and protects seats until the marginal seat's value falls below the discount in hand. It re-optimises on every question and receives what each class has sold. A forecaster that reads the booking curve can therefore move the ladder through the day. Tests check the controller against the normal table rather than the code. <b>Network control</b> requires a connecting itinerary to cover the sum of its legs' bid prices. The bid prices are the ladders' displacement costs, or the duals of the deterministic network programme when the caller supplies them. The programme is a plain simplex over legs, itineraries and demand.</li>
+          <li><b>Revenue management</b> uses an EMSR-b controller. The controller sets the authorisations from a demand forecast by class, with a fare, a mean and a spread for each class. It pools the classes above each discount and protects seats until the marginal seat's value falls below the discount in hand. It re-optimises on every question and receives what each class has sold. A forecaster that reads the booking curve can therefore move the ladder through the day. Tests check the controller against the normal table rather than the code. <b>Channel value.</b> A carrier can value a request net of the cost of the channel that asked. A request for one leg is then nested by its net value, and a seat stays on sale in the carrier's own channel after it has closed in a dearer one. <b>Network control</b> requires a connecting itinerary to cover the sum of its legs' bid prices. The bid prices are the ladders' displacement costs, or the duals of the deterministic network programme when the caller supplies them. The programme is a plain simplex over legs, itineraries and demand.</li>
           <li><b>Waitlists</b> are a tenth of the cabin deep, with a minimum of 2. Each class can override the depth.</li>
           <li>The package is <b>rebuilt from the book of record</b> at boot. A system that keeps sold seats only in memory oversells after a restart. The package publishes per-carrier sold, waitlisted and full-cabin gauges, and it counts every answer by status.</li>
         </ul>
@@ -466,7 +473,8 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between}
       <tr><td class="mono">dcs load control</td><td><span class="tag spec">method specified</span></td><td>AHM 560/565 arithmetic and representative fleet data</td></tr>
       <tr><td class="mono">mvt · acars · PSM PTM LDM CPM</td><td><span class="tag inf">inferred, closely</span></td><td>OAG tables, verbatim examples and airports' reproductions of the practices</td></tr>
       <tr><td class="mono">airimp · avs · ssim · PFS · ETL</td><td><span class="tag inf">inferred</span></td><td>profiles without conformance, because AIRIMP and SSIM are paywalled</td></tr>
-      <tr><td class="mono">fare</td><td><span class="tag none">structure only</span></td><td>the structure of ATPCO filings and tickets. The filings are licensed and the package carries none</td></tr>
+      <tr><td class="mono">mct</td><td><span class="tag spec">specified</span></td><td>IATA's public SSIM chapter 8. The connecting times themselves are licensed and the package carries none</td></tr>
+      <tr><td class="mono">fare</td><td><span class="tag inf">method public</span></td><td>the pricing method of de Marcken's paper and the structure of ATPCO filings. The filings are licensed and the package carries none</td></tr>
     </table></div>
     <p class="prose muted" style="margin-top:18px">The roadmap names each paid document and the cost of its absence. The documents therefore form one procurement decision. The AIRIMP divide message is the most expensive single absence. Without it, the gateway cannot advise a split booking to its carriers.</p>
   </div>

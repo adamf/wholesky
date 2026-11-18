@@ -53,7 +53,7 @@ system must handle.
 | **ops** (operations control) | When a flight runs 46 minutes late or more, the autopilot announces the delay 2 hours before departure. The announcement is an ad hoc schedule message (ASM) of type TIM. When an aircraft goes technical after check-in, the autopilot substitutes a smaller type. | *Announce the delay, or hold it.* An announced delay moves the sold segments to TK. With a held delay, the passengers learn of it at the airport. *Substitute a smaller aircraft, or cancel.* |
 | **crew** | The roster staffs every duty by name (see [noc.md](noc.md)). A crew that times out under 14 CFR 117, a pilot pushed over a cumulative limit, or a pilot who calls in sick at report needs a reserve on call at a crew base. Without one, the flight is cancelled (code A). | *Cancel, or bring in a standby crew.* A standby crew adds 90 minutes and is paid half again. The simulator sends this decision at T-150, before the cancellation would be announced. Away from a crew base, the only option is to cancel. |
 | **slots** (flow management) | The autopilot accepts the slot allocation message (SAM) from the Network Manager. | *Take the slot, or send a ready message (REA)* to take an earlier one at short notice. The Network Manager answers with a slot revision message (SRM) only when a flight ahead in the regulation has been cancelled and its slot is free. |
-| **pricing** | The autopilot sells the tariff as filed, with EMSR-b ladders and network bid prices. It does not change its fares. | About once an hour of the day: *a rival has cut fares on one of your markets. Match, or hold.* Matching lowers the multiplier of that market. Travellers compare fares. Fares above the filing lose buyers. The elasticity is 1.5, a parameter of the world. Fares below the filing sell every seat that they can. |
+| **pricing** | Each carrier has a pricing desk. Fares are filed 4 times a day, at 10:00, 13:00, 16:00 and 20:00. At each filing the desk answers the fare changes that other carriers made. It matches a cut by a carrier of its own kind, follows or refuses an increase, and restores its fares when a cut is withdrawn. [business.md](business.md) gives the rules. | When another carrier moves a fare in one of your markets: *do what the desk would do, or hold your fares.* The decision names the carrier, its share of the seats, and the desk's move. The default is the desk's move. Travellers compare every carrier in a market. |
 | **ground** (baggage) | The autopilot rushes short-shipped bags on the next flight over the sector. | *Rush the bags, or hold them for tomorrow.* If the bags are held, the carrier pays the claims. |
 | **noc** (network operations centre) | The autopilot flies the schedule into forecast weather. With `skyd -noc-autopilot`, it projects the weather and takes the cheapest policy. | Three hours before a weather system reaches the carrier's stations: *absorb, thin 15%, thin 30%, or bring in standby crews*, each with its projected expected cost and 95th percentile. The default is the cheapest. |
 | **labour** (labour relations) | At 06:00 the autopilot counters a union's open proposal at half the ask. | *Accept, counter or refuse.* Accepting raises the scale. Refusing breaks off the talks, stops day-off assignments and more than doubles sick calls. |
@@ -66,7 +66,9 @@ system must handle.
 | `retime` by N minutes | The carrier sends ASM TIM. The systems that sold the flight move their segments to TK. The flight departs at the new time. |
 | `substitute` the aircraft | The carrier rebuilds the cabin to a smaller type and re-seats or denies passengers. It sends ASM EQT to the distribution systems. |
 | `class` closed or reopened on a flight | The carrier overrides the inventory. It sends availability status (AVS) messages as the availability changes. |
-| `fares` multiplier, optionally a market (`from`, `to`) | From now on, the multiplier scales every fare that the carrier files, in the pricing of every distribution system. With a market, it scales only the fares of that market. Above the filing, fewer travellers buy. |
+| `fares` multiplier, optionally a market (`from`, `to`) | From now on, the multiplier scales every fare that the carrier files, in the pricing of every distribution system on every machine. With a market, it scales only the fares of that market, in both directions. The other carriers' desks see the change at the next filing. |
+| `hedge` (`policy`, `count`, `minutes`) | The carrier fixes the price of a share of its fuel. The policy is `swap`, `cap` or `collar`. The count is the per cent of the fuel, and the minutes are the days that the hedge runs. |
+| `grow` (`from`, `to`, `policy`, `count`) | The carrier orders a new service: `count` daily round trips on the aircraft type that `policy` names. The lessors' deposits and the price of any slots leave the carrier's cash at once. The service is flown from the first start of the world after it comes due. |
 | `ready` | The carrier sends REA to the Network Manager. When a slot ahead of the flight is free, the Network Manager answers with an SRM that has an earlier calculated take-off time (CTOT), or with an SLC when no wait is left. |
 | `reserves` | If the cancellation has not been announced and the flight leaves a crew base, a standby crew comes in. The cancellation for crew becomes a 90-minute delay. |
 | `standby` at a base (`board`, `count`) | Standby crews come in at a crew base for the rest of the day. The roster staffs every pending crew cancellation again. |
@@ -78,15 +80,20 @@ system must handle.
 The simulator computes the scorecard per carrier, over the whole day, on
 demand:
 
-- **Revenue**: the sale value of the bookings of the day on the legs of the
-  carrier. The source is the revenue ledger, per leg, from the priced records.
-- **Costs**: block hours by aircraft size, delay minutes past 15, the crews
-  under their agreements (pay, premiums, per diem, hotels, reserves,
-  grievances), ground staff overtime, what passengers are owed under the law
-  that covers their flight, refunds, and mishandled bags. The cost rates are
-  a cost base chosen for the world, and `internal/sim/airline.go` labels them
-  as such. They are the same for every carrier. [noc.md](noc.md) describes
-  the crew and passenger costs.
+- **Revenue**: the fares and the carrier's own fees on the legs that the
+  carrier flies, from the revenue ledger. Taxes are counted apart and are
+  not revenue. A coupon that the carrier flies on another carrier's ticket
+  counts less the service charge. A cancelled booking leaves the ledger.
+- **Costs**: fuel, maintenance, airport charges, navigation, ground
+  handling, aircraft rent and ownership, and the result of the fuel hedges.
+  Then distribution and card fees for each ticket sold. Then delay minutes
+  past 15, the crews under their agreements (pay, premiums, per diem,
+  hotels, reserves, grievances), ground staff overtime, what passengers are
+  owed under the law that covers their flight, refunds, and mishandled
+  bags. [business.md](business.md) gives the source of each rate, and
+  [noc.md](noc.md) describes the crew and passenger costs.
+- **Sales**: tickets by channel, what the carrier kept on coupons that
+  partners flew, what it paid partners, and the taxes it collected.
 - **Punctuality**: departures within 15 minutes (D15) as a fraction of flights
   flown, completion, and delay minutes.
 - **Score** = 100 × margin + 50 × on-time fraction − 2 × cancellations. The
@@ -119,6 +126,13 @@ GET  /carrier/{XX}/tape                  the recent events
 GET  /dayplan.json                       the weather and the regulations
 GET  /carrier/{XX}/crew                  the roster, the agreements, the pilots nearest a limit
 GET  /carrier/{XX}/crew/{id}             one crew member's record
+GET  /carrier/{XX}/economy               fuel prices, hedges, the fleet, the lessors' offers
+GET  /carrier/{XX}/turn?flight=&board=   the turnaround before a departure, task by task
+GET  /carrier/{XX}/finance               cash, each closed day, the trend, the orders
+GET  /carrier/{XX}/growth?from=&to=&type=&daily=   what a new service would do
+GET  /economy.json                       the world's date and the price of fuel
+GET  /fares.json                         the fare multipliers in force and the desks' open moves
+GET  /billing.json                       what the carriers bill each other
 GET  /carrier/{XX}/noc                   the operations centre's signals and last projection
 POST /carrier/{XX}/noc/project           {"trials", "method", "policies", "sensitivity", "scenario" | "taf" | "events"}
 POST /noc/inject                         {"kind", "airport", "in", "duration", "factor", "carrier", "rate", "flight"}
@@ -126,8 +140,8 @@ POST /noc/inject                         {"kind", "airport", "in", "duration", "
 
 **MCP**: `cmd/skyagent` wraps that API as MCP tools over stdio. The tools are
 `lobby`, `take_seat`, `carrier_state`, `inbox`, `set_department`, `decide`,
-`act`, `tape`, `weather`, `crew`, `crew_member`, `noc`, `project`, `inject`
-and `release_seat`. Claude Code or Claude Desktop can
+`act`, `tape`, `weather`, `crew`, `crew_member`, `economy`, `turnaround`,
+`finance`, `growth`, `noc`, `project`, `inject` and `release_seat`. Claude Code or Claude Desktop can
 then run a carrier with no code:
 
 ```json

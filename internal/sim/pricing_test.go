@@ -8,8 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adamf/jetway/pkg/pnr"
+
 	"github.com/adamf/wholesky/internal/airline"
+	"github.com/adamf/wholesky/internal/partners"
 	"github.com/adamf/wholesky/internal/pricing"
+	"github.com/adamf/wholesky/internal/world"
 )
 
 // rivalsIn is the carriers that fly a market, largest first.
@@ -207,5 +211,32 @@ func TestTheDearerCarrierIsConsideredLess(t *testing.T) {
 	s.setFare(alone.Carrier, alone.From, alone.To, 1.25)
 	if got := s.shareOf(*alone); got != 1 {
 		t.Errorf("alone in its market and dearer: %.3f; there is nobody to lose travellers to", got)
+	}
+}
+
+// A stranded passenger goes to the carrier's own next flight however
+// late, then to a joint venture partner, then to the alliance, and to a
+// stranger last, whatever the hour each leaves.
+func TestStrandedPassengersGoToPartnersFirst(t *testing.T) {
+	fl := func(c, n string, dep int) world.Flight {
+		return world.Flight{Carrier: c, Number: n, From: "ORD", To: "FRA", DepMin: dep, ArrMin: dep + 500}
+	}
+	s := &Sim{Flights: map[string][]world.Flight{
+		"UA": {fl("UA", "0906", 600), fl("UA", "0944", 1300)},
+		"AA": {fl("AA", "0080", 620)},
+		"TP": {fl("TP", "0220", 650)},
+		"LH": {fl("LH", "0431", 700)},
+	}}
+	s.commerce = &commerce{partners: partners.New([]string{"UA", "AA", "TP", "LH"}, nil)}
+	got, err := s.alternatives(context.Background(), pnr.Segment{Carrier: "UA", FlightNum: "0906", Board: "ORD", Off: "FRA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, c := range got {
+		order = append(order, c.Carrier+c.FlightNum)
+	}
+	if strings.Join(order, " ") != "UA0944 LH0431 TP0220 AA0080" {
+		t.Errorf("rebooking order %v", order)
 	}
 }

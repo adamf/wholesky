@@ -75,6 +75,12 @@ td.mono{font-family:var(--mono);font-size:.82rem}
 .chips a:hover{border-color:var(--amber);text-decoration:none}
 .chips a.primary{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
 .chips .k{font-size:.68rem;color:var(--dim);font-weight:400;letter-spacing:.06em}
+.repos{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.repos .lbl{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.repos a{display:inline-flex;align-items:center;gap:.45rem;padding:.42rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font-weight:700;font-size:.84rem;font-family:var(--mono)}
+.repos a:hover{border-color:var(--cyan);text-decoration:none}
+.repos svg{width:16px;height:16px;fill:currentColor;flex:none}
+.repos a span{color:var(--muted);font-weight:400;font-family:inherit}
 .chips a.primary .k{color:#6b4d0a}
 .syscard{background:var(--ink);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
 .syshead{display:flex;justify-content:space-between;gap:1rem;padding:.6rem .9rem .3rem;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
@@ -185,6 +191,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
     <a class="brand" href="#top">WHOLESKY</a>
     <a href="#ways">ways in</a>
     <a href="#system">the system</a>
+    <a href="#business">the business</a>
     <a href="#run">run a carrier</a>
     <a href="#play">multiplayer</a>
     <a href="#deploy">deploy</a>
@@ -210,6 +217,11 @@ td.mono{font-family:var(--mono);font-size:.82rem}
         <a href="#ways/agent"><span class="k">03</span>Point an agent at it</a>
         <a href="#ways/own"><span class="k">04</span>Run your own world</a>
       </nav>
+      <nav class="repos" aria-label="The source code">
+        <span class="lbl">Source</span>
+        <a href="https://github.com/adamf/wholesky"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>github.com/adamf/wholesky <span>the simulator</span></a>
+        <a href="https://github.com/adamf/jetway"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>github.com/adamf/jetway <span>the gateway</span></a>
+      </nav>
     </div>
 
     <div class="syscard">
@@ -231,7 +243,7 @@ td.mono{font-family:var(--mono);font-size:.82rem}
     <div class="tile"><span class="ife">Recorded flights</span><b>22,889</b><span class="lbl">US flights on Thanksgiving eve 2025</span><span class="fn">from the BTS record, flown at real time</span></div>
     <div class="tile"><span class="ife">jetway nodes</span><b>522</b><span class="lbl">on the demo</span><span class="fn">518 carriers, three distribution systems, one switch, across six machines when deployed</span></div>
     <div class="tile"><span class="ife">Pre-sold bookings</span><b>1.4M</b><span class="lbl">before the recorded day starts</span><span class="fn">in Postgres, each with a ticket and a fare</span></div>
-    <div class="tile"><span class="ife">Recorded day's sales</span><b>$719M</b><span class="lbl">priced at a synthetic tariff</span><span class="fn">the fares are synthetic and labelled as synthetic</span></div>
+    <div class="tile"><span class="ife">Recorded day's sales</span><b>$631M</b><span class="lbl">priced at a synthetic tariff</span><span class="fn">synthetic fares, calibrated to the US government's fare report</span></div>
   </section>
 
   <!-- ways in -->
@@ -307,7 +319,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <button class="cat" id="carrier" aria-expanded="false" aria-controls="p-carrier"><span class="n">518 nodes</span><span class="t">Carriers</span><span class="s">Reservations and departure control, each.</span></button>
       <button class="cat" id="gds" aria-expanded="false" aria-controls="p-gds"><span class="n">3 nodes</span><span class="t">Distribution</span><span class="s">1G, 1S and 1A sell into the carriers.</span></button>
       <button class="cat" id="switch" aria-expanded="false" aria-controls="p-switch"><span class="n">1 node</span><span class="t">The switch</span><span class="s">Every message crosses it.</span></button>
-      <button class="cat" id="fares" aria-expanded="false" aria-controls="p-fares"><span class="n">Per carrier</span><span class="t">Fares and inventory</span><span class="s">A synthetic tariff, leg-based seat control.</span></button>
+      <button class="cat" id="fares" aria-expanded="false" aria-controls="p-fares"><span class="n">Per carrier</span><span class="t">Fares and inventory</span><span class="s">A calibrated synthetic tariff, leg-based seat control.</span></button>
       <button class="cat" id="ops" aria-expanded="false" aria-controls="p-ops"><span class="n">The wire to the aircraft</span><span class="t">Operations</span><span class="s">Datalink, the AFTN, irregular operations.</span></button>
       <button class="cat" id="fill" aria-expanded="false" aria-controls="p-fill"><span class="n">Before the day</span><span class="t">The filler and the demand</span><span class="s">The weeks of sales, then the day's bookings.</span></button>
       <button class="cat" id="audit" aria-expanded="false" aria-controls="p-audit"><span class="n">Release gate</span><span class="t">The audit</span><span class="s">No oversell, message conservation, convergence.</span></button>
@@ -369,17 +381,18 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
     <div class="panel" id="p-fares" role="region" aria-labelledby="fares">
       <div>
         <h3>Fares and inventory</h3>
-        <p>jetway's <code>pkg/fare</code> holds the structure of a fare filing. It has fare basis codes, rules for advance purchase, stay, season, change and refund, taxes by kind, and passenger types with their discounts. Every booking passes through its pricing step. It carries no fares of its own, because ATPCO fares are licensed. wholesky files a synthetic tariff from the schedule's distances, with 14 booking classes per market and US-shaped taxes. It prices every booking as of its purchase date.</p>
+        <p>jetway's <code>pkg/fare</code> prices an itinerary against a fare filing. It divides the journey into fare components and priceable units, applies each fare's rules, and returns the lowest price with a fare calculation line. The method follows Carl de Marcken's paper on the complexity of air travel planning, and the tests use the paper's examples. The package carries no fares of its own, because ATPCO fares are licensed. wholesky files a synthetic tariff with 14 booking classes per market and prices every booking as of its purchase date.</p>
+        <p>The level of the fares comes from public data. The US Department of Transportation's Consumer Airfare Report gives the average fare in each of the 1,000 largest US city pairs. A test fills a US world of 12,237 flights and holds what travellers paid within 3% of that average.</p>
         <p><code>pkg/inventory</code> provides leg-based seat control. It has cabins per leg, serial nested class authorisations, and waitlists one tenth of the cabin deep. A full cabin waitlists a sell. A closed class refuses a sell even when the cabin has seats. The last seats sell at the higher fares. Each carrier rebuilds its inventory from the book of record at every boot, because an in-memory count of sold seats oversells after a restart.</p>
         <div class="table-wrap"><table>
-          <tr><th>the recorded day</th><th>value</th></tr>
-          <tr><td>whole day, 29,967 legs</td><td class="mono">$719M</td></tr>
-          <tr><td>average per passenger-leg</td><td class="mono">$255</td></tr>
-          <tr><td>median per passenger</td><td class="mono">$204</td></tr>
-          <tr><td>full-fare Y · business · deep discount</td><td class="mono">$341 · $750–785 · $93–160</td></tr>
-          <tr><td>taxes</td><td class="mono">15%</td></tr>
+          <tr><th>the recorded day, filled to 0.85</th><th>value</th></tr>
+          <tr><td>whole day, 30,003 legs</td><td class="mono">$631M</td></tr>
+          <tr><td>average fare per passenger-leg</td><td class="mono">$197</td></tr>
+          <tr><td>median fare per passenger-leg</td><td class="mono">$168</td></tr>
+          <tr><td>full-fare Y · the 4 cheapest classes</td><td class="mono">$425 · $112–153</td></tr>
+          <tr><td>taxes, as a share of the total</td><td class="mono">13%</td></tr>
         </table></div>
-        <p class="small">These fares are synthetic and labelled as synthetic. They follow the shape of a Thanksgiving Wednesday tariff and copy no carrier's filing.</p>
+        <p class="small">These fares are synthetic and labelled as synthetic. They copy no carrier's filing. <a href="#business/fares-level">The business</a> gives the calibration.</p>
       </div>
       <figure><img src="the-stats.jpg" alt="The instrument panel, showing messages, wire formats, traffic classes, bookings, airborne, movements, undeliverable and queues"><figcaption>The instrument panel, with the undeliverable count that should read zero.</figcaption></figure>
     </div>
@@ -400,7 +413,8 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
       <div>
         <h3>The filler and the demand</h3>
         <p><code>internal/fill</code> simulates the weeks of sales before the day. It reads the schedule and writes each carrier's book of record before the day runs. Party sizes follow the pattern of holiday travel. Itineraries connect only on legs with a valid connection, and booking classes go into cabins with room on every leg. Records include children, infants and special service requests at industry rates. Each record has a ticket per name, the carrier's locator and the selling channel's locator, a purchase date in the months before, and a price as of that date. The filler is deterministic from a seed and writes to Postgres with <code>COPY</code>. Southwest's day alone is 260,000 records, written in 24 seconds. One party in 3,000 has a cello, and the cello has a seat.</p>
-        <p>The demand generator then adds the day-of-travel bookings on top. These arrive at hundreds of bookings a minute, with connections, interline, ticketing, cancellations, divides, and a share arriving as NDC orders.</p>
+        <p>The filler sells each flight to a pool of travellers from the same model as the live demand. The travellers buy in the order of their booking dates, inside nested class limits. The early leisure travellers take the deep discounts. The travellers who book in the last week pay the fares that the rules still sell.</p>
+        <p>The demand generator then adds the day-of-travel bookings on top. Each traveller compares every carrier's nonstop flights and connections and takes the offer that costs least. The bookings arrive at hundreds a minute, with interline, ticketing, cancellations, divides, and a share arriving as NDC orders.</p>
         <dl class="kv">
           <dt>holiday load</dt><dd>0.85: 1,400,987 records, 3.1 million seats held before the first flight, 3.5 GB</dd>
           <dt>what it found</dt><dd>a Type B line folded by the first family of four, the 60-line envelope overrun by a filled 737, and a link deadlocked by both ends answering from inside their read loops. Each fix is in jetway with a regression test.</dd>
@@ -426,6 +440,191 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
   </section>
 
   <!-- run a carrier -->
+  <!-- the business -->
+  <section class="row" id="business" aria-labelledby="business-h">
+    <h2 id="business-h">The business <span>what a flight costs, what a ticket sells for, who buys it and who is paid, each number with its source</span></h2>
+    <div class="tabs n8" role="tablist">
+      <button class="cat" id="fuel" aria-expanded="false" aria-controls="p-fuel"><span class="n">Recorded since 1990</span><span class="t">Fuel</span><span class="s">The recorded price, hedges, surcharges.</span></button>
+      <button class="cat" id="assets" aria-expanded="false" aria-controls="p-assets"><span class="n">Per tail, per station</span><span class="t">Aircraft and airports</span><span class="s">Leases, maintenance, charges, slots.</span></button>
+      <button class="cat" id="ground" aria-expanded="false" aria-controls="p-ground"><span class="n">On the ground</span><span class="t">Turnarounds and connections</span><span class="s">Task by task, and the minimum connecting time.</span></button>
+      <button class="cat" id="fares-level" aria-expanded="false" aria-controls="p-fares-level"><span class="n">Calibrated</span><span class="t">Fares and travellers</span><span class="s">Who buys which fare, held to public data.</span></button>
+      <button class="cat" id="desks" aria-expanded="false" aria-controls="p-desks"><span class="n">4 filings a day</span><span class="t">Fare competition</span><span class="s">Carriers answer each other's fares.</span></button>
+      <button class="cat" id="channels" aria-expanded="false" aria-controls="p-channels"><span class="n">Per ticket</span><span class="t">Channels</span><span class="s">Direct, online agencies, managed travel.</span></button>
+      <button class="cat" id="partners" aria-expanded="false" aria-controls="p-partners"><span class="n">Per coupon</span><span class="t">Alliances and codeshares</span><span class="s">Which carrier gets what.</span></button>
+      <button class="cat" id="growth" aria-expanded="false" aria-controls="p-growth"><span class="n">Across days</span><span class="t">Growth</span><span class="s">Cash, a projection, an order.</span></button>
+    </div>
+
+    <div class="panel" id="p-fuel" role="region" aria-labelledby="fuel">
+      <div>
+        <h3>Fuel: the recorded price for each day since 1990</h3>
+        <p>The price of jet fuel is the US Gulf Coast spot price that the Energy Information Administration publishes for each trading day from April 1990. A world that starts inside the record uses the recorded prices. Start a world on 2 January 2008, and fuel goes from $2.75 a gallon to $4.04 by July and to $1.26 by late December.</p>
+        <p>After the record ends, a process fitted to the record continues the price. A test fits its parameters again from the data. A station pays the 60-day average, a regional differential and an into-plane charge. A flight burns what EUROCONTROL's emissions calculator gives for its aircraft type and distance.</p>
+        <p>A carrier can hedge with a swap, a cap or a collar. A network carrier adds a fuel surcharge to long international tickets when the average price is above $2.00 a gallon.</p>
+        <div class="tags"><span class="tag spec">price · EIA daily series</span><span class="tag spec">burn · EMEP/EEA guidebook 2023</span><span class="tag inf">differentials outside the US · estimates</span></div>
+        <p class="small"><a href="https://github.com/adamf/wholesky/blob/main/docs/business.md#fuel">docs/business.md</a> gives the fitted values and the sources.</p>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>a world started on 2 January 2008</th><th>a gallon</th></tr>
+          <tr><td>2 January 2008</td><td class="mono">$2.75</td></tr>
+          <tr><td>1 July 2008</td><td class="mono">$4.04</td></tr>
+          <tr><td>12 September 2008, the year's high</td><td class="mono">$4.81</td></tr>
+          <tr><td>24 December 2008</td><td class="mono">$1.26</td></tr>
+        </table></div>
+        <div class="table-wrap"><table>
+          <tr><th>after the record ends</th><th>fitted value</th></tr>
+          <tr><td>level that the price reverts to</td><td class="mono">$2.27</td></tr>
+          <tr><td>rate of reversion, a year</td><td class="mono">0.81</td></tr>
+          <tr><td>volatility, a year</td><td class="mono">36%</td></tr>
+          <tr><td>jumps a year, each about 13.5%</td><td class="mono">4</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-assets" role="region" aria-labelledby="assets">
+      <div>
+        <h3>Aircraft and airports: what the fleet and the stations cost</h3>
+        <p>Each tail has an age, an owner, a rent and a maintenance rate. The values and rents by type come from appraisers' figures in the trade press. About half of the world's fleet is leased. A lessee pays a deposit of 2 months of rent and maintenance reserves for each flight hour.</p>
+        <p>Each flight pays airport charges from the Jacobs review of 50 airports for 2024, and en-route charges by EUROCONTROL's formula. A coordinated airport has a slot value that follows recorded trades.</p>
+        <p>When a regulation limits arrivals, each flight gets a slot. A cancelled flight now gives its slot back. In Europe the flights behind it move up in the order of their planned times, as EUROCONTROL's slot allocation does. In the United States the carrier that cancelled uses the slot for its own flights first, as in a ground delay program.</p>
+        <div class="tags"><span class="tag spec">charges · Jacobs 2024</span><span class="tag spec">slots · ATFCM Users Manual</span><span class="tag inf">maintenance by type · estimate</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>slot pair</th><th>recorded trades</th></tr>
+          <tr><td>London Heathrow</td><td class="mono">$60M–75M</td></tr>
+          <tr><td>Washington National</td><td class="mono">$5M–6M</td></tr>
+          <tr><td>New York LaGuardia</td><td class="mono">$2M–4M</td></tr>
+          <tr><td>Newark</td><td class="mono">$1.2M</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-ground" role="region" aria-labelledby="ground">
+      <div>
+        <h3>Turnarounds and connections</h3>
+        <p>An aircraft that lands at San Francisco and flies on to San Diego stands at the gate for the time of its slowest task. Passengers leave, the cabin is cleaned, and passengers board. Bags come off and go on. Fuel goes in. The task rates come from the terminal servicing charts in the manufacturers' airport planning documents.</p>
+        <p>A late inbound aircraft delays the next departure only when the delay is longer than the slack in the turnaround. <code>/carrier/XX/turn</code> shows each task with its start and end.</p>
+        <p>A connection needs the station's minimum connecting time. jetway's <code>pkg/mct</code> reads the industry's 200-byte record format from IATA's public SSIM chapter 8, with the 31-element hierarchy that decides which record applies. A traveller in the simulator is offered only the connections that meet the time.</p>
+        <div class="tags"><span class="tag spec">MCT format · SSIM chapter 8</span><span class="tag spec">turnaround charts · Airbus, Boeing, Embraer</span><span class="tag inf">station times · public reproductions</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>turnaround</th><th>minutes</th></tr>
+          <tr><td>737-800, 162 passengers, one door, full service (Boeing's chart)</td><td class="mono">37.5</td></tr>
+          <tr><td>A320, 180 passengers, 2 stairs, no fuel (Airbus's chart)</td><td class="mono">22</td></tr>
+          <tr><td>777-300ER on a long flight, at the minimum</td><td class="mono">62</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-fares-level" role="region" aria-labelledby="fares-level">
+      <div>
+        <h3>Fares and travellers: who buys which fare</h3>
+        <p>A traveller is on business or on leisure. Each has a maximum price and a cost for each fare restriction, for a connection, for the hour of departure and for the channel. A traveller takes the offer that costs least in total. The model and its constants are those of the Passenger Origin Destination Simulator, which Boeing built and MIT uses to compare revenue management systems.</p>
+        <p>The fare level comes from the US Department of Transportation's Consumer Airfare Report: $153.00 plus 7.74 cents a mile. A test fills a US world and compares the result with the report.</p>
+        <p>Each carrier's inventory nests its booking classes under an EMSR-b controller. The early leisure travellers take the deep discounts until those close. One traveller in 9 pays full fare.</p>
+        <div class="tags"><span class="tag spec">fare level · DOT Consumer Airfare Report</span><span class="tag spec">choice model · PODS, published constants</span><span class="tag inf">business share, loyalty · estimates</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>measure</th><th>target</th><th>result</th></tr>
+          <tr><td>load factor</td><td class="mono">0.82</td><td class="mono">0.821</td></tr>
+          <tr><td>fare paid, as a share of the report's average</td><td class="mono">1.00</td><td class="mono">1.003</td></tr>
+          <tr><td>ultra-low-cost carriers, as a share of their markets</td><td class="mono">0.749</td><td class="mono">0.79</td></tr>
+          <tr><td>a carrier that cuts its fares 20%, sales in the test world</td><td class="mono"></td><td class="mono">308 → 377</td></tr>
+          <tr><td>a carrier that raises its fares 25%</td><td class="mono"></td><td class="mono">308 → 235</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-desks" role="region" aria-labelledby="desks">
+      <div>
+        <h3>Fare competition: carriers answer each other</h3>
+        <p>Each carrier has a pricing desk. Fares are filed 4 times a day, and at each filing every desk sees what the other carriers changed. Before this work a carrier on autopilot never changed a fare.</p>
+        <ul>
+          <li>A carrier matches a cut by a carrier of its own kind and does not undercut.</li>
+          <li>A network carrier ignores a low-cost carrier with under 10% of the seats, and matches one with 25% or more.</li>
+          <li>An increase holds when the carriers that matter follow it inside 2 days. It comes back down when one refuses. About half of all increases held from 2007 to 2015.</li>
+          <li>A network carrier attacked at its hub also cuts in the attacker's hub markets. It withdraws those cuts when the attacker withdraws.</li>
+        </ul>
+        <p>A carrier that a person prices by hand receives the desk's move as a decision. Each filed fare reaches every machine of the world.</p>
+        <div class="tags"><span class="tag spec">filing cycle · United States v. Airline Tariff Publishing Co.</span><span class="tag spec">entry cases · Spirit v. Northwest, United States v. AMR</span><span class="tag inf">match and follow rates · estimates</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>rule</th><th>value</th></tr>
+          <tr><td>a carrier matches a cut by a carrier of its own kind</td><td class="mono">95%</td></tr>
+          <tr><td>a network carrier ignores a low-cost carrier with fewer seats than</td><td class="mono">10%</td></tr>
+          <tr><td>a network carrier follows an increase</td><td class="mono">85%</td></tr>
+          <tr><td>a low-cost carrier follows an increase</td><td class="mono">45%</td></tr>
+          <tr><td>an ultra-low-cost carrier follows an increase</td><td class="mono">10%</td></tr>
+          <tr><td>filings before an increase that was refused comes back down</td><td class="mono">8</td></tr>
+          <tr><td>markets a carrier cuts in when it is attacked at its hub</td><td class="mono">3</td></tr>
+        </table></div>
+        <p class="small">The rates are estimates. The order between the kinds of carrier follows the record.</p>
+      </div>
+    </div>
+
+    <div class="panel" id="p-channels" role="region" aria-labelledby="channels">
+      <div>
+        <h3>Channels: what a sale costs</h3>
+        <p>A traveller books on the carrier's own site, through an online travel agency, through a travel management company or through an agent. An online agency does not keep a share of the fare in most markets. The distribution system charges the carrier a booking fee for each segment and passes about half to the agency.</p>
+        <p>In the test world, distribution costs a network carrier 2.9% of its fares and card fees cost 2.0%. A carrier can leave a channel, add a surcharge to it, keep its lowest fares for its own site, or pay an override for a better place on the agent's display.</p>
+        <div class="tags"><span class="tag spec">fees · US court findings</span><span class="tag inf">overrides, fees outside the US · estimates</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>cost</th><th>value</th><th>source</th></tr>
+          <tr><td>booking fee for each segment, North America, with a full-content agreement</td><td class="mono">$2.30</td><td>United States v. Sabre</td></tr>
+          <tr><td>the same without the agreement</td><td class="mono">$3.40</td><td>US Airways v. Sabre</td></tr>
+          <tr><td>card and payment cost</td><td class="mono">2%</td><td>IATA, 2025</td></tr>
+          <tr><td>a sale on the carrier's own site</td><td class="mono">$1.50</td><td>estimate</td></tr>
+          <tr><td>agency commission outside North America, Europe and Oceania</td><td class="mono">3%</td><td>published range of 1 to 5%</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-partners" role="region" aria-labelledby="partners">
+      <div>
+        <h3>Alliances and codeshares: which carrier gets what</h3>
+        <p>Star Alliance, oneworld and SkyTeam are in the world with their joint ventures. When one carrier flies a coupon on another carrier's ticket, the fare engine first divides each through fare between its segments by their miles. The carrier that flew the coupon then bills the ticketing carrier for the coupon's share, less a service charge.</p>
+        <p>An example from the tests: United tickets Chicago to Athens on a through fare of $880 and flies 7,000 km of it. Lufthansa flies the other 1,800 km. The fare divides into $700 and $180. Lufthansa is in a joint venture with United and bills $180. A carrier with only an interline agreement bills $163.80.</p>
+        <p>Partners also file through fares over each other's flights. A cancelled passenger moves first to the carrier's own flights, then to a joint venture partner, a codeshare partner, the alliance, and last to any carrier.</p>
+        <div class="tags"><span class="tag spec">proration · straight rate by mileage</span><span class="tag inf">alliance and codeshare charges · estimates</span></div>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>the two carriers have</th><th>service charge</th></tr>
+          <tr><td>an interline agreement only</td><td class="mono">9%</td></tr>
+          <tr><td>the same alliance</td><td class="mono">6%</td></tr>
+          <tr><td>a codeshare</td><td class="mono">7%</td></tr>
+          <tr><td>a joint venture</td><td class="mono">0%</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-growth" role="region" aria-labelledby="growth">
+      <div>
+        <h3>Growth: cash across days, a projection, an order</h3>
+        <p>When a day ends, the simulator closes each carrier's scorecard into its book. Profit goes to cash. The book reports margin, load factor, revenue and cost for each seat-kilometre, and the days of cash left.</p>
+        <p><code>/carrier/XX/growth</code> projects a new service of daily round trips on one aircraft type.</p>
+        <p>The projection returns the load factor at maturity, the break-even load factor, the cash to start and the days to pay it back. The order takes the lessors' deposits and the price of any slots from the carrier's cash. The service is flown from the first start of the world after it comes due.</p>
+        <p class="small">In the test world, 3 daily A320 round trips from Lyon to Brest reach a load factor of 0.50 against a break-even of 0.56. The projection says the service never pays back.</p>
+      </div>
+      <div>
+        <div class="table-wrap"><table>
+          <tr><th>step</th><th>value</th><th>source</th></tr>
+          <tr><td>share of the market from share of flights</td><td class="mono">power 1.2</td><td>Wei and Hansen, 2005</td></tr>
+          <tr><td>a low-cost entrant enlarges the market</td><td class="mono">28%</td><td>Beckenstein and Campbell, 2017</td></tr>
+          <tr><td>network carriers cut fares at entry</td><td class="mono">21%</td><td>Goolsbee and Syverson, 2008</td></tr>
+          <tr><td>a new route fills over</td><td class="mono">180 days</td><td>Spirit v. Northwest</td></tr>
+          <tr><td>block hours a day, network narrow-body</td><td class="mono">10.8</td><td>Form 41, 2019</td></tr>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
   <section class="row" id="run" aria-labelledby="run-h">
     <h2 id="run-h">Run a carrier <span>one of 518, against the autopilot</span></h2>
     <div class="tabs" role="tablist">
@@ -751,7 +950,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
     <a href="https://github.com/adamf/jetway">jetway on GitHub</a>
     <a href="replay/day.html">a recorded run</a>
     <span class="spacer"></span>
-    <span class="fine">Data sources: OpenFlights (ODbL), BTS on-time performance (public domain), Natural Earth coastlines.</span>
+    <span class="fine">Data sources: OpenFlights (ODbL), BTS on-time performance, EIA jet fuel prices and the DOT Consumer Airfare Report (public domain), Natural Earth coastlines.</span>
   </footer>
 
 </div>

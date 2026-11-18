@@ -61,8 +61,17 @@ in its comments. The main ones are:
 | `internal/fuel` | Mean reversion and volatility of the price process | Fitted to the EIA series above. A test fits them again from the embedded data. |
 | `internal/fuel` | Regional differentials | IATA's weekly jet fuel price monitor for 3 weeks of 2026, against the Gulf Coast price for the same weeks. Estimates outside the United States. |
 | `internal/market` | Willingness to pay and the disutility of each fare restriction | The passenger choice model of the MIT PODS simulator, from Peter Belobaba's lectures for MIT course 16.75J (2006). |
-| `internal/market` | Price elasticity by region | InterVISTAS for IATA, Estimating Air Travel Demand Elasticities (2007). |
+| `internal/tariff` | The level of fares by distance | A straight line fitted to the Consumer Airfare Report files above: 153.00 dollars plus 7.74 cents a mile. A test in `internal/fill` fills a US world and holds what travellers paid within 3 per cent of it. |
+| `internal/tariff` | Full fare over the lowest regular fare | 3.6, inside the range of 3.3 to 4.1 in Belobaba's lectures. |
+| `internal/sim`, `internal/growth` | How a carrier's share answers to its fares against its rivals' | 0.8, an estimate between the route and national elasticities in InterVISTAS for IATA, Estimating Air Travel Demand Elasticities (2007). |
 | `internal/pricing` | How fast and how far a carrier matches a fare change | Borenstein's account of the ATPCO case, FareCompare's counts of attempted fare increases 2007 to 2014, and the court records of United States v. AMR and Spirit v. Northwest. |
 | `internal/distribution` | Booking fees and commissions | US court findings in US Airways v. Sabre and United States v. Sabre, GAO-03-749, Amadeus and Sabre annual reports, IATA's payment figures for 2025. |
+| `internal/partners` | Service charges between carriers | 9 per cent is the default of the multilateral interline agreement, from one vendor's glossary. 6 per cent inside an alliance is inside the usual 5 to 7 per cent of a special prorate agreement. 7 per cent on a codeshare is an estimate. |
+| `internal/partners` | Joint ventures | The US Department of Transportation's immunity orders and the European Commission's decisions, recalled. |
+| `internal/growth` | Share of a market from share of flights | Wei and Hansen, Transportation Research Part E (2005). Button and Drexler (2005) found a weaker curve. The exponent 1.2 is an estimate between them. |
+| `internal/growth` | Stimulation and incumbents' response at entry | Beckenstein and Campbell (2017): demand up 28 per cent in 109 markets. Goolsbee and Syverson, Quarterly Journal of Economics (2008): fares down 21 per cent at entry. Brueckner, Lee and Singer (2013). |
+| `internal/growth` | Time for a new route to fill | Spirit Airlines v. Northwest Airlines (6th Cir. 2005): a load factor of 64 per cent in January 1996 and 88.5 in June. |
+| `internal/growth` | Block hours a day by kind of carrier | US Form 41 for 2019 through the MIT Airline Data Project. |
+| `internal/sim` | Opening cash | 18 per cent of a year's revenue. The annual reports of the 4 largest US carriers for 2019 give 13 to 23 per cent, recalled. An estimate. |
 | `internal/dayplan` | Notice a flight needs to take an earlier slot | EUROCONTROL's ATFCM Users Manual. |
 | `internal/airport` | En-route charge formula and unit rates | EUROCONTROL's Central Route Charges Office. |
