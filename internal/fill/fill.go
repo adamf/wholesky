@@ -108,6 +108,10 @@ type Options struct {
 	// Offered reports whether a carrier is sold in a channel. Nil is
 	// everywhere.
 	Offered func(carrier, channel string) bool
+	// Connect is the least time a passenger needs between two flights at
+	// the station where the first lands, in minutes: the minimum
+	// connecting time. Nil is 45 minutes everywhere.
+	Connect func(in, out world.Flight) int
 	// Share scales a flight's pool of travellers: over one for a carrier
 	// priced under the others in its market, under one for a carrier priced
 	// over them. Nil is one.
@@ -278,16 +282,22 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	plan.Flights = len(flights)
 
 	// onward finds a later leg of this carrier out of where f lands that a
-	// party of n can still be put on: forty-five minutes to five hours after
-	// arrival, the way a connection is built.
+	// party of n can still be put on: from the station's minimum connecting
+	// time to five hours after arrival, the way a connection is built.
 	onward := func(i, n int) int {
 		f := flights[i]
 		cands := byFrom[f.To]
 		lo, hi := f.ArrMin+45, f.ArrMin+300
+		if opts.Connect != nil {
+			lo = f.ArrMin + 20 // no station connects faster
+		}
 		start := sort.Search(len(cands), func(k int) bool { return flights[cands[k]].DepMin >= lo })
 		var fit []int
 		for k := start; k < len(cands) && flights[cands[k]].DepMin <= hi; k++ {
 			j := cands[k]
+			if opts.Connect != nil && flights[j].DepMin < f.ArrMin+opts.Connect(f, flights[j]) {
+				continue
+			}
 			if j != i && assigned[j]+n <= target[j] && flights[j].To != f.From {
 				fit = append(fit, j)
 				if len(fit) == 4 {

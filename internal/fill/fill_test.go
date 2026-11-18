@@ -212,3 +212,52 @@ func TestACelloGetsASeat(t *testing.T) {
 		t.Errorf("the cello is ticketed like everyone else: %d tickets, %d names", len(r.Tickets), len(r.Passengers))
 	}
 }
+
+// A connection sold in advance makes the station's minimum connecting
+// time. WN0100 lands at MDW and two flights leave there afterwards: with
+// the station at 45 minutes the filler connects onto the first, and with
+// the station at three hours it connects onto nothing that leaves sooner.
+func TestFillConnectsOnTheStationsTime(t *testing.T) {
+	ctx := context.Background()
+	m := smallDay()
+	var in world.Flight
+	for _, f := range m.Flights {
+		if f.Carrier == "WN" && f.Number == "0100" {
+			in = f
+		}
+	}
+	gaps := func(connect int) (n, shortest int) {
+		shortest = 1 << 30
+		dep := map[string]int{}
+		for _, f := range m.Flights {
+			dep[f.Carrier+f.Number] = f.DepMin
+		}
+		sink := func(ctx context.Context, carrier string, recs []*pnr.PNR) error {
+			for _, r := range recs {
+				if len(r.Segments) == 2 && r.Segments[0].Carrier+r.Segments[0].FlightNum == "WN0100" {
+					n++
+					if gap := dep[r.Segments[1].Carrier+r.Segments[1].FlightNum] - in.ArrMin; gap < shortest {
+						shortest = gap
+					}
+				}
+			}
+			return nil
+		}
+		opts := Options{LoadFactor: 0.85, Seed: 7, Day: time.Date(2025, 11, 26, 0, 0, 0, 0, time.UTC), Connecting: 0.6,
+			Connect: func(a, b world.Flight) int { return connect }}
+		if _, err := Day(ctx, m, opts, sink); err != nil {
+			t.Fatal(err)
+		}
+		return n, shortest
+	}
+	n, shortest := gaps(45)
+	if n == 0 || shortest < 45 {
+		t.Fatalf("at 45 minutes: %d connections, the shortest %d minutes", n, shortest)
+	}
+	if long, least := gaps(shortest + 30); long > 0 && least < shortest+30 {
+		t.Errorf("with the station at %d minutes a passenger was connected in %d", shortest+30, least)
+	}
+	if none, _ := gaps(400); none != 0 {
+		t.Errorf("no connection is longer than five hours, and %d were sold at a minimum of 400 minutes", none)
+	}
+}

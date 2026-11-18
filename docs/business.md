@@ -388,6 +388,10 @@ machines needs one world file for all of them. Write it with
 - **A rolling calendar.** The world flies one date. A traveller's
   booking date is a property of the traveller, and a return flight is on
   a later date that the world never flies.
+- **Misconnections.** `internal/airport` has a curve for the chance that
+  a passenger misses a connection, by the slack over the minimum
+  connecting time. The day does not use it. A passenger on a late
+  inbound flight keeps the onward seat.
 - **Ancillary revenue.** A ticket has a fare and taxes. Bags, seats and
   other fees are not sold.
 - **Schedule change in a running world.** An order takes effect at a

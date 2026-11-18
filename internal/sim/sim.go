@@ -1262,6 +1262,9 @@ func (s *Sim) fillDay(ctx context.Context) {
 		Mix:     s.mixFor,
 		Offered: func(carrier, channel string) bool { return s.policyOf(carrier).Offered(channel) },
 		Share:   s.shareOf,
+		// A connection sold in advance makes the station's minimum
+		// connecting time, as one sold on the day does.
+		Connect: s.connectTime,
 	}, sink)
 	if err != nil {
 		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
