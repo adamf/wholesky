@@ -113,9 +113,15 @@ the booking curve's for the connecting paths sold. The duals of the leg
 capacities replace the ladders' displacement costs as bid prices. A leg
 the programme did not reach falls back to its ladder. The solver is a
 plain dense simplex. A connecting point is therefore bounded at 120 legs,
-and the most-booked paths are kept. The forecast's class mix is the mix
-that the traveller model buys in a filled world. A forecast learned from
-each flight's own history is still missing. A carrier that holds its
+and the most-booked paths are kept. Each carrier now learns the forecast
+from its own flights (jetway v0.1.105). `inventory.History` holds a
+flight's booking record by time frame and by the lowest class on sale.
+It divides the bookings by the time on sale, and it applies the marginal
+revenue transformation of Fiig and others (2010) before EMSR-b. A test
+shows that a forecast which reads its own sales as demand spirals down,
+and that this one does not. The record is by flight leg and not by
+origin and destination. Overbooking is still missing, with its forecasts
+of no-shows and cancellations. A carrier that holds its
 last seats for its own channels values a request by the channel that
 asked (`inventory.Controller.Value`). A sale on the carrier's own site
 is made on the carrier's own node (jetway v0.1.100).

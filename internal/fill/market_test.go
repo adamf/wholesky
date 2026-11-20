@@ -11,6 +11,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/host"
+	"github.com/adamf/wholesky/internal/rm"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -86,9 +87,16 @@ func usWorld(t *testing.T) *world.Manifest {
 // ultra-low-cost carriers at about three quarters of it (the report's
 // lowest-fare carrier averages 0.749 of its market). Every fare a
 // traveller chose must be one the pricing sells them. This test is what
-// holds tariff's mixRatio and this package's pool where they are: move
-// the ladder, the limits or the travellers and it says which way to move
-// them back.
+// holds tariff's mixRatio, the carriers' levels and this package's pool
+// where they are: move the ladder, the limits or the travellers and it
+// says which way to move them back.
+//
+// The day measured is one the carriers have learned their limits for:
+// 30 days of booking windows are sold first, and each flight's limits on
+// the day come from its own record (internal/rm). The report is of
+// airlines whose revenue management knows its flights, so that is the
+// day to hold against it. On the tariff's fixed limits the same world
+// carries 0.71.
 func TestFillSellsTheReportsFares(t *testing.T) {
 	if raceEnabled {
 		t.Skip("a calibration over a million bookings on one goroutine: CI runs it without the race detector")
@@ -96,8 +104,26 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 	m := usWorld(t)
 	tf := tariff.FromManifest(m)
 	day := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
-	opts := Options{LoadFactor: 0.82, Seed: 3, Day: day, Tariff: tf, Base: tf.BaseFare,
+	mem := rm.New()
+	opts := Options{LoadFactor: 0.82, Day: day, Tariff: tf, Base: tf.BaseFare, RM: mem,
 		Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, 0) }}
+	const learning = 30
+	for d := 0; d < learning; d++ {
+		dry := opts
+		dry.Seed, dry.Dry = 3+int64(d)*7919, true
+		plan, err := Day(context.Background(), m, dry, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d == 0 {
+			if lf := float64(plan.Sold) / float64(plan.Seats); lf < 0.68 || lf > 0.74 {
+				t.Errorf("on the fixed limits the world carries %.3f", lf)
+			}
+		}
+	}
+	// The day measured is sold under the record and is not added to it,
+	// so the dearer day below is sold under the same limits.
+	opts.Seed, opts.Remembered = 3+learning*7919, true
 	got := measure(t, m, tf, opts)
 	lf := float64(got.sold) / float64(got.seats)
 	t.Logf("%d flights, %d seats, %d sold (%.3f), %d records", len(m.Flights), got.seats, got.sold, lf, got.records)
@@ -135,12 +161,12 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 	for _, c := range cs {
 		t.Logf("  class %s %.3f", c, share(c))
 	}
-	// One traveller in ten pays full fare, booking in the last days; a
-	// third and more fly on the deep discounts they bought weeks ahead.
-	if y := share("Y"); y < 0.06 || y > 0.16 {
+	// One traveller in 13 pays full fare, booking in the last days. More
+	// than half fly on the deep discounts they bought weeks ahead.
+	if y := share("Y"); y < 0.05 || y > 0.12 {
 		t.Errorf("full fare is %.3f of travellers", y)
 	}
-	if deep := share("N", "S", "V", "L"); deep < 0.30 || deep > 0.48 {
+	if deep := share("N", "S", "V", "L"); deep < 0.45 || deep > 0.65 {
 		t.Errorf("the deep discounts are %.3f of travellers", deep)
 	}
 	pax := 0

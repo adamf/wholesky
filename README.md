@@ -334,6 +334,13 @@ runs. It writes the books deterministically from a seed, directly into
 Postgres with `COPY` (jetway's `Store.LoadPNRs`), and again after each
 end-of-day purge.
 
+Each flight is sold under the class limits that its own earlier
+departures set. A world with no record of earlier departures sells 21
+days of booking windows before its first day, and writes no booking.
+`-rm-burn-in` sets the number of days, and 0 starts every flight on the
+tariff's fixed limits. `-no-rm-memory` keeps the fixed limits for good.
+With `-state`, the records are in a file beside the state file.
+
 The filled books contain parties weighted as in holiday travel, with
 children and infants, and special service requests at their industry
 rates. The itineraries connect on legs that connect in the schedule, and a
@@ -634,7 +641,13 @@ Here is what works. `go test ./...` proves it on every run.
   marginal seat revenue (EMSR-b) revenue management controller sets the
   ladder from a forecaster. The forecaster reads the booking curve on the
   world's clock, which is the seats sold so far plus the pickup still to
-  come. As a result:
+  come. With `-fill`, each carrier learns the forecast from its own
+  flights. It keeps a record of each flight's booking window, divides the
+  bookings by the time each class was on sale, and adjusts each fare for
+  the travellers who would have paid more.
+  [docs/business.md](docs/business.md#revenue-management) has the method
+  and the test that compares it with a forecast that reads its own
+  sales. As a result:
   - A filled 737 confirms only the seats that remain.
   - It closes its cheap classes while full fare is still open.
   - It waitlists the next party and refuses after that.

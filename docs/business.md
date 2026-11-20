@@ -155,8 +155,10 @@ paper's own examples.
   the lowest regular fare, inside the range of 3.3 to 4.1 in Peter
   Belobaba's lectures. The cheaper classes need 3 to 30 days of advance
   purchase and carry change fees.
-- **Carriers.** A network carrier files at 1.06 of the market level, a
-  low-cost carrier at 0.80 and an ultra-low-cost carrier at 0.62.
+- **Carriers.** A network carrier files at 1.06 of the market level and
+  a low-cost carrier at 0.80. An ultra-low-cost carrier files at 0.50.
+  Its travellers then pay 0.76 of the market's average fare, because it
+  sells its dearer classes on its fuller flights.
 - **Through fares.** A carrier files a through fare over its own
   connection or a partner's at 92 % of the 2 local fares.
 - **Fences.** On long international markets, the 4 cheapest classes of a
@@ -169,18 +171,21 @@ paper's own examples.
 ### Calibration
 
 A test fills a US world of 12 carriers and 12,237 flights and compares
-the result with the report.
+the result with the report. The test first sells 30 days of booking
+windows, so that each flight's class limits come from its own record.
+The report is of airlines that know their flights.
 
 | Measure | Target | Result |
 | --- | --- | --- |
-| Load factor | 0.82 | 0.812 |
-| Fare paid, as a share of the report's line | 1.00 | 1.006 |
-| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.72 |
+| Load factor | 0.82 | 0.825 |
+| Fare paid, as a share of the report's line | 1.00 | 0.997 |
+| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.76 |
 | Travellers who chose a fare that the engine refused | 0 | 0 |
 
 The test fails when a change to the ladder, the class limits or the
 traveller model moves these results. The test output says which constant
-to move.
+to move. On the tariff's fixed class limits the same world fills to
+0.71.
 
 ## Travellers
 
@@ -216,7 +221,7 @@ connection that meets the minimum connecting time. The fare engine
 prices each offer at the lowest fare that the rules, the channel and the
 open classes allow, as of the traveller's own booking date. The booking
 carries that quote. In the test world a carrier that cuts its fares 20 %
-goes from 308 sales to 377. A carrier that raises them 25 % goes to 235.
+goes from 188 sales to 220. A carrier that raises them 25 % goes to 139.
 
 The advance sales use the same model. For each flight the simulator
 draws a pool of travellers and sells to them in the order of their
@@ -225,13 +230,101 @@ booking dates.
 ## Revenue management
 
 Each carrier's inventory nests its booking classes. An EMSR-b controller
-sets the class limits from a forecast of demand by class. The forecast
-reads the booking curve on the world's clock. For a connecting request
-the controller compares the fare with the bid prices of the legs.
+sets the class limits from a forecast of demand by class. For a
+connecting request the controller compares the fare with the bid prices
+of the legs.
 
-The forecast's class mix is the measured mix of the calibration test.
-About 1 traveller in 9 pays full fare. More than 1 in 3 fly in the 4
-cheapest classes. About 1 in 30 flies in the front cabin.
+### The forecast
+
+Each carrier learns its forecast from its own flights. A flight leaves
+once in each day of the world. For each departure the carrier keeps a
+record of the flight's booking window. `internal/rm` holds the records,
+and jetway's `inventory.History` reads them.
+
+- **Time frames.** The booking window has 16 time frames. They are the
+  frames of PODS, with 2 boundaries moved so that each advance purchase
+  day of the tariff begins a frame.
+- **Strategies.** A strategy is the lowest class on sale. For each frame
+  and each strategy, the record holds how long the strategy was in force
+  and what all the classes sold in that time.
+- **Unconstraining.** A closed class takes no bookings. The record
+  divides the bookings by the share of the frame in which they were
+  possible. This is the maximum-likelihood rate of a Poisson stream that
+  was observed for part of the time.
+- **Fare adjustment.** A traveller who would pay a higher fare buys the
+  lower fare when it is on sale. The record gives the demand and the
+  revenue of each strategy. The marginal revenue transformation of Fiig,
+  Isler, Hopperstad and Belobaba (2010) turns these into independent
+  demands at adjusted fares, which EMSR-b can take. A class that takes
+  more revenue from the classes above it than it adds has an adjusted
+  fare below zero. That class stays closed.
+- **Limits.** At the start of each frame, EMSR-b holds back seats from
+  each class for the demand still to come that is worth more.
+- **Memory.** A new departure has the weight of 1 departure in 13.5. The
+  carrier forgets a strategy that it has not used for about 3 weeks, and
+  then tries the class again at its fare.
+
+The carrier sees its own bookings and its own limits. It does not see
+the travellers who looked and did not buy. The booking window has no
+clock finer than a day. The share of a frame is therefore counted in
+travellers who looked, and only the share is kept.
+
+jetway's tests hold the transformation and EMSR-b against tables 1 and 2
+of the paper by Fiig and others.
+
+### Three ways to read a record
+
+A test sells the 942 flights of 1 network carrier for 38 days. Demand is
+1.4 times that of an ordinary day, so that the cabins fill. For the
+first 7 days the carrier uses the tariff's fixed limits and earns $37.3
+million a day. The carrier then reads its record in 1 of 3 ways.
+
+| Reading | Days 9 to 13 | Last 5 days | Change |
+| --- | --- | --- | --- |
+| Sales read as demand | $38.9 million | $37.2 million | −4.3 % |
+| Unconstrained, class by class | $41.3 million | $41.9 million | +1.4 % |
+| Fare adjusted | $42.6 million | $44.0 million | +3.2 % |
+
+- **Sales read as demand.** The forecast for the dear classes falls,
+  the carrier holds fewer seats for them, and the cheap classes take the
+  seats. Full fare goes from 2.5 % of the seats sold to 1.3 %. Revenue
+  is still falling on the last day. This is the spiral-down effect that
+  Cooper, Homem-de-Mello and Kleywegt described in 2006.
+- **Unconstrained.** The fall stops. Buy-down continues. Classes K and L
+  have the same rules, and K costs more. K goes from 16.8 % of the seats
+  sold to 1.9 %, because K sells only while L is closed.
+- **Fare adjusted.** Revenue holds and is 18 % above the fixed limits.
+
+jetway has the same comparison on example 5 of the spiral-down paper.
+The manager's model protects 70 seats of 100, and the best level is 95,
+as in the paper. From 70, sales read as demand end at 7 seats protected.
+Fare adjustment ends at 94.
+
+At the demand of an ordinary day the 3 readings are closer. Fare
+adjustment then earns 4 % more than sales read as demand.
+
+### The start
+
+A flight has no record at first. It sells its first 7 departures under
+the tariff's fixed class limits, and those departures begin the record.
+A new service therefore fills slowly in its first week.
+
+A world with no records sells 21 days of booking windows before its
+first day and writes no booking. The `-rm-burn-in` flag sets the number
+of days. The records are in a file beside the state file, so a world
+that starts again keeps what its flights have taught it.
+
+### The day the world flies
+
+Demand on the day is a small share of real demand, so a flight's record
+has no day of its own to learn from. The day's controller reads the
+booking curve on the world's clock, as if the flight's booking window
+were sold again during the day. Its baseline is the flight's own record:
+the demand of each class over the booking window, at the adjusted fares.
+A flight with no record uses a fixed mix that every flight shares.
+
+On the calibration day, 1 traveller in 13 pays full fare. More than half
+fly in the 4 cheapest classes. About 1 in 40 flies in the front cabin.
 
 A network carrier's narrow-body has a front cabin with 2 seats on each
 side of the aisle: 12 seats on an A320, 16 on a 737-800 and 20 on an
@@ -504,6 +597,18 @@ that takes the `network` department decides for itself.
 
 ## What is missing
 
+- **Sell-up that was never tried.** A carrier's record knows a strategy
+  only after the carrier has used it. A carrier that never closed a
+  class early does not know who would pay more. The first 7 departures
+  on the fixed limits try some strategies. No carrier runs an
+  experiment.
+- **A forecast by origin and destination.** The record is by flight leg.
+  A connecting passenger is in the record of each leg, and the legs do
+  not know that they share the passenger.
+- **Overbooking.** A carrier sells each cabin to its seat count. It does
+  not forecast no-shows or cancellations.
+- **Seasons and days of the week.** Each day has the same schedule and
+  the same demand, so a flight's record holds 1 kind of day.
 - **Direct sales on several machines.** A sale on the carrier's own
   site is made on the carrier's node only when the machine that takes
   the traveller also runs the carrier. On other machines it goes through

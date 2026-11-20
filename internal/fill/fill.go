@@ -38,8 +38,10 @@ import (
 	"hash/fnv"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adamf/jetway/pkg/fare"
@@ -47,6 +49,7 @@ import (
 	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/market"
+	"github.com/adamf/wholesky/internal/rm"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -122,13 +125,33 @@ type Options struct {
 	// priced under the others in its market, under one for a carrier priced
 	// over them. Nil is one.
 	Share func(f world.Flight) float64
+	// RM, when set, is the carriers' revenue management memory. Each
+	// flight's booking window is written to it, frame by frame: which
+	// class was the lowest on sale, for what share of the travellers who
+	// looked, and what was sold. A flight whose record is long enough
+	// (rm.Warm departures) is sold under the limits its own record sets,
+	// worked out again at the start of each time frame. A flight without
+	// one is sold under the tariff's fixed limits. Nil keeps no record and
+	// sells every flight under the fixed limits.
+	RM *rm.Memory
+	// Remembered says the records already hold this day's booking
+	// windows, as when a day is filled a second time: the flights are
+	// sold under the records and nothing is added to them.
+	Remembered bool
+	// Dry sells the day and writes no records: the sink is not called.
+	// The carriers' revenue management still gets its record, which is
+	// what a burn-in is for, and the plan still counts what was sold.
+	Dry bool
 }
 
 // pool is how many travellers consider a flight for each seat it is meant
 // to carry. Some find every fare left too dear and stay at home, so the
 // pool is larger than the load: measured over a filled world at the
-// fares as filed, 100 travellers in the pool put 57 in seats.
-const pool = 1.0 / 0.57
+// fares as filed, with each flight's limits set from its own record, 100
+// travellers in the pool put 80 in seats. On the tariff's fixed limits
+// they put 57 in seats, and the pool was 100 for each 57 while every
+// flight sold that way.
+const pool = 1.0 / 0.80
 
 // Plan is what a fill produced.
 type Plan struct {
@@ -141,6 +164,12 @@ type Plan struct {
 	// Marketed counts the records sold under a marketing carrier's code on
 	// a leg another carrier flies: each is two records, one at each.
 	Marketed int
+	// Sold is the seats sold to the market's travellers, leg by leg, Fares
+	// what they were asked for them in cents at the adult fare, and
+	// Classes the seats by booking class.
+	Sold    int
+	Fares   int64
+	Classes map[string]int
 }
 
 // Sink receives one carrier's records in batches, in a stable order.
@@ -210,11 +239,30 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 	for _, ch := range opts.Channels {
 		channels[ch] = &allocator{a: pnr.NewLocatorAllocator(opts.Secret(ch)), next: counterBase}
 	}
-	for _, code := range codes {
+	plans, errs := make([]Plan, len(codes)), make([]error, len(codes))
+	if opts.Dry {
+		// A dry day writes nothing and shares nothing between carriers, so
+		// the carriers sell side by side.
+		var wg sync.WaitGroup
+		gate := make(chan struct{}, runtime.GOMAXPROCS(0))
+		for i, code := range codes {
+			wg.Add(1)
+			gate <- struct{}{}
+			go func() {
+				defer func() { <-gate; wg.Done() }()
+				plans[i], errs[i] = fillCarrier(ctx, code, byCarrier[code], opts, channels, sink)
+			}()
+		}
+		wg.Wait()
+	}
+	for i, code := range codes {
 		if err := ctx.Err(); err != nil {
 			return plan, err
 		}
-		p, err := fillCarrier(ctx, code, byCarrier[code], opts, channels, sink)
+		p, err := plans[i], errs[i]
+		if !opts.Dry {
+			p, err = fillCarrier(ctx, code, byCarrier[code], opts, channels, sink)
+		}
 		if err != nil {
 			return plan, fmt.Errorf("fill %s: %w", code, err)
 		}
@@ -225,6 +273,14 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 		plan.Seats += p.Seats
 		plan.Connecting += p.Connecting
 		plan.Marketed += p.Marketed
+		plan.Sold += p.Sold
+		plan.Fares += p.Fares
+		if plan.Classes == nil {
+			plan.Classes = map[string]int{}
+		}
+		for c, n := range p.Classes {
+			plan.Classes[c] += n
+		}
 	}
 	return plan, nil
 }
@@ -242,7 +298,7 @@ func (a *allocator) take() string {
 
 // fillCarrier fills one carrier's day.
 func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts Options, channels map[string]*allocator, sink Sink) (Plan, error) {
-	var plan Plan
+	plan := Plan{Classes: map[string]int{}}
 	sort.Slice(flights, func(i, j int) bool {
 		if flights[i].DepMin != flights[j].DepMin {
 			return flights[i].DepMin < flights[j].DepMin
@@ -454,9 +510,103 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		}
 		return false
 	}
+	// Revenue management, cabin by cabin: the record the carrier keeps of
+	// this departure, and the limits its earlier departures set.
+	revman := make([]map[string]*cabinRM, len(flights))
+	rmOf := func(i int, comp string) *cabinRM {
+		if opts.RM == nil {
+			return nil
+		}
+		if c := revman[i][comp]; c != nil {
+			return c
+		}
+		f := flights[i]
+		c := &cabinRM{seats: cabinsOf(i)[comp], at: map[string]int{}}
+		for _, cl := range tariff.Ladder() {
+			if cabinClass(market.CabinOf(cl)) == comp {
+				c.at[cl] = len(c.classes)
+				c.classes = append(c.classes, cl)
+			}
+		}
+		c.fare, c.ap = make([]float64, len(c.classes)), make([]int, len(c.classes))
+		for k := range c.ap {
+			c.ap[k] = -1
+		}
+		for _, r := range rungs(f.From, f.To) {
+			// The class's fare is the one anyone may buy; a contract's
+			// fare in the same class is a discount on it.
+			if k, ok := c.at[r.class]; ok && (c.ap[k] < 0 || (len(r.accts) == 0 && float64(r.amount) > c.fare[k])) {
+				c.fare[k], c.ap[k] = float64(r.amount), r.ap
+			}
+		}
+		// The record is kept in shares of the cabin's highest fare, so a
+		// carrier that moves all its fares does not find its record in
+		// yesterday's money.
+		c.top = 1
+		if len(c.fare) > 0 && c.fare[0] > 0 {
+			c.top = c.fare[0]
+		}
+		c.cab = opts.RM.Cabin(rm.Key(code, f.Number, f.From, comp), c.classes)
+		c.log, c.learned = c.cab.Begin(), c.cab.Learned()
+		for g := range c.book {
+			c.book[g] = make([]int, len(c.classes))
+		}
+		if revman[i] == nil {
+			revman[i] = map[string]*cabinRM{}
+		}
+		revman[i][comp] = c
+		return c
+	}
+	// isOpen reports whether a class has room for a party on a flight: in
+	// the cabin, and under the class's limit. The limit is the tariff's
+	// fixed one, counted on all the cabin has sold, until the flight's own
+	// record sets it. Then it is the seats left at the start of the time
+	// frame, less the seats the record holds back from the class, less
+	// what the frame has sold in the class and below it.
+	isOpen := func(i int, comp, class string, frame, party int) bool {
+		cab := cabinsOf(i)
+		if sold[i][comp]+party > cab[comp] {
+			return false
+		}
+		if c := rmOf(i, comp); c != nil && c.learned {
+			if k, ok := c.at[class]; ok {
+				ctl := c.controls(frame)[k]
+				if ctl.Closed {
+					return false
+				}
+				left := c.seats - int(math.Round(ctl.Protect))
+				for g := 0; g < frame; g++ {
+					left -= c.total[g]
+				}
+				for _, n := range c.book[frame][k:] {
+					left -= n
+				}
+				return left >= party
+			}
+		}
+		limit, ok := limitOf(i, class)
+		if !ok || limit > cab[comp] {
+			limit = cab[comp]
+		}
+		return sold[i][comp]+party <= limit
+	}
+	// lowest is the lowest class on sale in a cabin for a party in a time
+	// frame: the strategy in force, as the carrier's record names it. A
+	// class is on sale when its fare is filed, its advance purchase days
+	// are met through the frame, and it is open.
+	lowest := func(i int, c *cabinRM, comp string, frame, party int) string {
+		for k := len(c.classes) - 1; k >= 0; k-- {
+			if c.ap[k] >= 0 && c.ap[k] <= rm.FrameFrom(frame) && isOpen(i, comp, c.classes[k], frame, party) {
+				return c.classes[k]
+			}
+		}
+		return ""
+	}
 	// choose is the class a traveller buys for the legs: the fare that
 	// costs them least in all among those they can be sold and will pay.
-	choose := func(idx []int, t market.Traveller) string {
+	// looked says, leg by leg, that the carrier's record already has this
+	// traveller's look at the flight.
+	choose := func(idx []int, t market.Traveller, looked []bool) string {
 		shown := rungs(flights[idx[0]].From, flights[idx[0]].To)
 		if len(idx) == 2 {
 			shown = across(flights[idx[0]], flights[idx[1]])
@@ -469,21 +619,29 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 				want.Cabin = ""
 			}
 		}
+		frame := rm.FrameOf(t.Lead)
+		var state [2]string
+		if opts.RM != nil {
+			for li, i := range idx {
+				comp := inventory.CompartmentFor(cabinClass(want.Cabin), cabinsOf(i))
+				c := rmOf(i, comp)
+				state[li] = lowest(i, c, comp, frame, t.Party)
+				if !looked[li] {
+					c.log.Expose(frame, state[li], 1)
+					looked[li] = true
+				}
+			}
+		}
 		var offers []market.Offer
 		var classes []string
+		var amounts []int64
 		for _, r := range shown {
 			if !want.Sells(r.class) || r.ap > t.Lead || !has(r.channels, t.Channel) || (len(r.accts) > 0 && (t.Account == "" || !has(r.accts, t.Account))) {
 				continue
 			}
 			open := true
 			for _, i := range idx {
-				cab := cabinsOf(i)
-				comp := inventory.CompartmentFor(r.class, cab)
-				limit, ok := limitOf(i, r.class)
-				if !ok || limit > cab[comp] {
-					limit = cab[comp]
-				}
-				if sold[i][comp]+t.Party > limit {
+				if !isOpen(i, inventory.CompartmentFor(r.class, cabinsOf(i)), r.class, frame, t.Party) {
 					open = false
 					break
 				}
@@ -493,13 +651,28 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 			}
 			offers = append(offers, market.Offer{Price: r.amount, Refundable: r.refundable, ChangeFee: r.fee, Channel: t.Channel, Depart: t.Preferred})
 			classes = append(classes, r.class)
+			amounts = append(amounts, r.amount)
 		}
 		pick := t.Choose(offers)
 		if pick < 0 {
 			return ""
 		}
+		plan.Sold += t.Party * len(idx)
+		plan.Fares += amounts[pick] * int64(t.Party)
+		plan.Classes[classes[pick]] += t.Party * len(idx)
+		km := 0
 		for _, i := range idx {
-			sold[i][inventory.CompartmentFor(classes[pick], cabinsOf(i))] += t.Party
+			km += max(flights[i].KM, 1)
+		}
+		for li, i := range idx {
+			comp := inventory.CompartmentFor(classes[pick], cabinsOf(i))
+			sold[i][comp] += t.Party
+			if c := rmOf(i, comp); c != nil {
+				// A fare over two legs is the record's by the distance of
+				// each.
+				paid := float64(amounts[pick]) * float64(t.Party) * float64(max(flights[i].KM, 1)) / float64(km)
+				c.sell(frame, state[li], classes[pick], t.Party, paid)
+			}
 		}
 		return classes[pick]
 	}
@@ -599,20 +772,31 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 			// has its load or the pool is spent.
 			for _, t := range travellers(f, target[i]-assigned[i]) {
 				if assigned[i]+t.Party > f.Seats {
+					if opts.RM != nil {
+						// The aircraft is full: the record has a traveller
+						// who found nothing on sale.
+						cabin := t.Cabin
+						if _, ok := cabinsOf(i)[cabin]; !ok {
+							cabin = ""
+						}
+						comp := inventory.CompartmentFor(cabinClass(cabin), cabinsOf(i))
+						rmOf(i, comp).log.Expose(rm.FrameOf(t.Lead), "", 1)
+					}
 					continue
 				}
 				t := t
 				legs, idx := []world.Flight{f}, []int{i}
 				class := ""
+				var looked [2]bool
 				if rng.Float64() < opts.Connecting {
 					if j := onward(i, t.Party); j >= 0 {
-						if class = choose([]int{i, j}, t); class != "" {
+						if class = choose([]int{i, j}, t, looked[:]); class != "" {
 							legs, idx = append(legs, flights[j]), append(idx, j)
 						}
 					}
 				}
 				if class == "" {
-					class = choose(idx, t)
+					class = choose(idx, t, looked[:1])
 				}
 				if class == "" {
 					continue // every fare left is more than they will pay
@@ -622,6 +806,11 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 				}
 				if len(idx) > 1 {
 					plan.Connecting++
+				}
+				if opts.Dry {
+					plan.Records++
+					plan.Passengers += t.Party
+					continue
 				}
 				if err := emit(legs, t.Party, class, &t); err != nil {
 					return plan, err
@@ -669,6 +858,14 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	if err := flush(); err != nil {
 		return plan, err
 	}
+	// The booking windows close: each flight's goes into its record.
+	for _, cabins := range revman {
+		for _, c := range cabins {
+			if !opts.Remembered {
+				c.cab.Record(c.log)
+			}
+		}
+	}
 	codes := make([]string, 0, len(marketedOut))
 	for cr := range marketedOut {
 		codes = append(codes, cr)
@@ -683,6 +880,56 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		}
 	}
 	return plan, nil
+}
+
+// cabinRM is one flight's cabin as its carrier's revenue management has
+// it while the booking window is sold: the record being written, and
+// the controls the flight's earlier departures give.
+type cabinRM struct {
+	cab     *rm.Cabin
+	log     *inventory.Log
+	seats   int
+	classes []string // highest fare first
+	at      map[string]int
+	fare    []float64 // the leg's own fare by class
+	top     float64   // the fare of the cabin's highest class
+	ap      []int     // advance purchase days by class; -1 when not filed
+	learned bool
+	ctl     [rm.Frames][]inventory.Control
+	book    [rm.Frames][]int // seats sold by time frame and class
+	total   [rm.Frames]int   // seats sold by time frame
+}
+
+// controls is how the cabin's classes are sold in a time frame, worked
+// out when the frame is first reached.
+func (c *cabinRM) controls(frame int) []inventory.Control {
+	if c.ctl[frame] == nil {
+		c.ctl[frame] = c.cab.Controls(frame, 1, func(class string) float64 { return c.fare[c.at[class]] / c.top })
+	}
+	return c.ctl[frame]
+}
+
+// sell writes a sale to the record and to the frame's counts.
+func (c *cabinRM) sell(frame int, lowest, class string, seats int, paid float64) {
+	k, ok := c.at[class]
+	if !ok {
+		return
+	}
+	c.book[frame][k] += seats
+	c.total[frame] += seats
+	c.log.Sale(frame, lowest, class, seats, paid/c.top)
+}
+
+// cabinClass is the compartment of a traveller's cabin, as a class that
+// sits in it.
+func cabinClass(cabin string) string {
+	switch cabin {
+	case "F":
+		return "F"
+	case "C":
+		return "C"
+	}
+	return "Y"
 }
 
 // marketedCopy is the marketing carrier's record of a sale on a leg it

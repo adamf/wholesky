@@ -24,9 +24,11 @@ jobs:
         run: go run ./cmd/worldc -countries "United Kingdom,France" -carriers 6 -o /tmp/ci-world.json
       - name: test (race)
         run: go test -race -count=1 -timeout 10m ./...
-      # The fare calibration fills a world of a million bookings and the
-      # market test prices seven thousand travellers, each on one
-      # goroutine. They have nothing for the race detector to find and
-      # take many times as long under it, so they run here.
+      # The fare calibration fills a world of a million bookings after 30
+      # days of booking windows, the revenue management test sells a
+      # carrier's flights for 38 days three times, and the market test
+      # prices seven thousand travellers. They have nothing for the race
+      # detector to find and take many times as long under it, so they
+      # run here.
       - name: the market (no race detector)
-        run: go test -count=1 -run 'TestFillSellsTheReportsFares|TestTheMarketAnswersToFares' ./internal/fill/ ./internal/sim/
+        run: go test -count=1 -timeout 30m -run 'TestFillSellsTheReportsFares|TestAForecastThatReadsItsOwnSalesSpiralsDown|TestTheMarketAnswersToFares' ./internal/fill/ ./internal/sim/

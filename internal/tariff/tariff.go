@@ -56,12 +56,14 @@ const (
 
 // mixRatio is the average fare travellers pay over the lowest regular
 // fare a network carrier files. It is measured, not chosen: the world's
-// travellers (internal/market) buy a filled day over the ladder and the
-// nested limits below, and the ratio is the one at which what they paid
-// averages the report's line. The test of internal/fill holds it there,
-// and says which way to move it when the ladder, the limits or the
-// travellers change.
-const mixRatio = 1.53
+// travellers (internal/market) buy a filled day over the ladder, under
+// the class limits each flight's own record sets (internal/rm), and the
+// ratio is the one at which what they paid averages the report's line.
+// The test of internal/fill holds it there, and says which way to move
+// it when the ladder, the limits or the travellers change. It was 1.53
+// when every flight sold under the fixed limits below: carriers that
+// know their flights fill more seats at lower fares.
+const mixRatio = 1.275
 
 // MixRatio is the average fare travellers pay over the lowest regular
 // fare a network carrier files.
@@ -337,9 +339,12 @@ func (t *Synthetic) Multipliers() (carriers, markets map[string]float64) {
 
 // carrierFare is where a carrier's ladder sits against the market's
 // average: a network carrier a little above it, a low-cost carrier well
-// below, an ultra-low-cost carrier at the report's lowest-fare share and
-// under. Each carrier is a few per cent off its kind, so two carriers of
-// a kind do not file the same fare.
+// below, an ultra-low-cost carrier at half. The ultra-low-cost level is
+// measured as mixRatio is: at half, what such a carrier's travellers pay
+// comes to the report's lowest-fare share, 0.749 of the market, because
+// it sells its dearer classes on its fuller flights. Each carrier is a
+// few per cent off its kind, so two carriers of a kind do not file the
+// same fare.
 func carrierFare(carrier string) float64 { return Level(carrier) }
 
 // Level is where a carrier's fares sit at a multiplier of one, as a
@@ -353,7 +358,7 @@ func Level(carrier string) float64 {
 	case equipment.LowCost:
 		return 0.80 * spread
 	case equipment.UltraLowCost:
-		return 0.62 * spread
+		return 0.50 * spread
 	}
 	return 1.06 * spread
 }
@@ -592,11 +597,13 @@ func (t *Synthetic) TaxesOn(segs []fare.Segment) []fare.Tax {
 
 // Forecast is the revenue management forecaster's view of a cabin: the
 // demand still to come by class, with the fare each sells at, for EMSR-b
-// to set the authorisations from. The class mix is the one the world's
-// travellers buy in, measured over a filled day (internal/fill's test
-// prints it): about one in nine at full fare, one in five in the three
-// classes under it, the rest down the discounts. The total is a little
-// above the cabin -- a flight with less demand than seats needs no
+// to set the authorisations from. It is the forecast for a flight that
+// has no record of its own yet (internal/rm): a new service in its first
+// week, or a world whose carriers keep no record. The class mix is the
+// one the world's travellers buy in on the fixed limits below, measured
+// over a filled day: about one in eleven at full fare, one in eight in
+// the three classes under it, the rest down the discounts. The total is a
+// little above the cabin -- a flight with less demand than seats needs no
 // managing -- and the spread a Poisson's and a quarter, because parties
 // travel together. Only the fare ratios matter to the method, so the
 // ladder's shares of full fare stand in for the market's fares.
@@ -612,9 +619,9 @@ func Forecast(compartment string, seats int) []inventory.ClassDemand {
 	case "C":
 		// The front cabin's mix, measured the same way: most of its
 		// travellers take the fare they can get back.
-		m = []mix{{"J", 0.03}, {"C", 0.63}, {"D", 0.34}}
+		m = []mix{{"J", 0.01}, {"C", 0.62}, {"D", 0.37}}
 	default:
-		m = []mix{{"Y", .116}, {"B", .006}, {"M", .073}, {"H", .105}, {"Q", .159}, {"K", .162}, {"L", .130}, {"V", .047}, {"S", .072}, {"N", .128}}
+		m = []mix{{"Y", .092}, {"B", .004}, {"M", .049}, {"H", .077}, {"Q", .158}, {"K", .179}, {"L", .150}, {"V", .055}, {"S", .083}, {"N", .153}}
 	}
 	total := float64(seats) * 1.1
 	out := make([]inventory.ClassDemand, 0, len(m))
@@ -651,27 +658,44 @@ func PickupPriced(compartment string, seats int, sold map[string]int, remaining 
 		remaining = 1
 	}
 	base := Forecast(compartment, seats)
+	price := func(class string) float64 {
+		if fullFare > 0 {
+			return Share(class) * float64(fullFare)
+		}
+		return Share(class)
+	}
+	for i := range base {
+		base[i].Fare = price(base[i].Class)
+	}
+	return PickupFrom(base, sold, remaining, price)
+}
+
+// PickupFrom is the pickup forecast on any baseline: for each class, what
+// it has sold plus the share of the baseline's demand still to come, at
+// the baseline's fare, with the baseline's spread on what is to come. The
+// baseline is the fixed mix of Forecast, or a flight's own record of its
+// booking window (internal/rm), in which case the fares are the marginal
+// revenues the record gives and a route with more late demand protects
+// more. fare prices a class the baseline does not name.
+func PickupFrom(base []inventory.ClassDemand, sold map[string]int, remaining float64, fare func(class string) float64) []inventory.ClassDemand {
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > 1 {
+		remaining = 1
+	}
 	out := make([]inventory.ClassDemand, 0, len(base))
 	seen := map[string]bool{}
 	for _, c := range base {
 		pickup := c.Mean * remaining
-		mean := float64(sold[c.Class]) + pickup
-		f := c.Fare
-		if fullFare > 0 {
-			f = c.Fare * float64(fullFare)
-		}
-		out = append(out, inventory.ClassDemand{Class: c.Class, Fare: f, Mean: mean, StdDev: math.Sqrt(pickup) * 1.25})
+		out = append(out, inventory.ClassDemand{Class: c.Class, Fare: c.Fare, Mean: float64(sold[c.Class]) + pickup, StdDev: c.StdDev * math.Sqrt(remaining)})
 		seen[c.Class] = true
 	}
-	// A class sold that the mix does not name -- an override, an odd
+	// A class sold that the baseline does not name -- an override, an odd
 	// booking -- is demand all the same, at its ladder fare.
 	for class, n := range sold {
 		if !seen[class] && n > 0 {
-			f := Share(class)
-			if fullFare > 0 {
-				f *= float64(fullFare)
-			}
-			out = append(out, inventory.ClassDemand{Class: class, Fare: f, Mean: float64(n)})
+			out = append(out, inventory.ClassDemand{Class: class, Fare: fare(class), Mean: float64(n)})
 		}
 	}
 	return out

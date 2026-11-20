@@ -84,6 +84,7 @@ type Tenant struct {
 	rushDecision   func(ctx context.Context, f world.Flight, day time.Time, bags int) bool
 	dayPos         func() float64
 	tariff         fare.Tariff
+	learned        func(carrier, flightNum, board, off, compartment string) []inventory.ClassDemand
 	capacity       inventory.Capacity
 	bookingDate    time.Time
 	pendingMu      sync.Mutex
@@ -211,6 +212,13 @@ type Options struct {
 	// the revenue management forecaster to read the booking curve by; nil
 	// forecasts as if the day had not begun.
 	DayPos func() float64
+	// Learned, when set, is the demand a flight's cabin draws over its
+	// booking window, by class, as the carrier's own record of the
+	// flight's past departures has it (internal/rm). The forecaster then
+	// reads the booking curve on that in place of the tariff's fixed mix.
+	// Nil, or a nil answer, keeps the fixed mix: a flight that has not
+	// flown long enough to have a record.
+	Learned func(carrier, flightNum, board, off, compartment string) []inventory.ClassDemand
 	// Tariff prices the forecaster's classes in money, which is what lets
 	// bid-price control hold a connecting passenger's through fare against
 	// the seats it displaces; nil leaves network control off.
@@ -332,6 +340,12 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 				remaining = (float64(leg.dep) - opts.DayPos()) / float64(leg.dep)
 			}
 			full = tariff.FullFare(opts.Tariff, carrier, board, leg.to)
+			if opts.Learned != nil {
+				if base := opts.Learned(carrier, flightNum, board, leg.to, compartment); base != nil {
+					return tariff.PickupFrom(base, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining,
+						func(class string) float64 { return tariff.Share(class) * float64(full) })
+				}
+			}
 		}
 		return tariff.PickupPriced(compartment, seats, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining, full)
 	}}
@@ -467,6 +481,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.openAHL = map[string]*baggage.TracingFile{}
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
+	t.learned = opts.Learned
 	t.channelCost, t.avsSent, t.touched = opts.ChannelCost, map[avail.Key]avail.Status{}, map[string]bool{}
 	t.touchSignal = make(chan struct{}, 1)
 	t.rushDecision = opts.RushDecision

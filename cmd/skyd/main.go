@@ -94,6 +94,8 @@ func run() error {
 		memLimit  = flag.String("memlimit", "", "soft memory limit for the Go runtime, e.g. 3200MiB; empty leaves GOMEMLIMIT alone")
 		fillLF    = flag.Float64("fill", 0, "load factor the day's flights already carry at 00:00, written into the carriers' books before the day runs and after each purge; 0 fills nothing (use with -tenant-dsn on a big world)")
 		refill    = flag.Bool("refill", false, "purge and refill the day at boot even if the books already hold it (to change -fill on a running world)")
+		burnIn    = flag.Int("rm-burn-in", 21, "with -fill: days of booking windows a world with no revenue management record sells, writing nothing, before its first day, so the carriers start with limits learned from their own flights; 0 starts them on the tariff's fixed limits")
+		noRM      = flag.Bool("no-rm-memory", false, "with -fill: carriers keep no record of their flights and sell every day under the tariff's fixed class limits")
 		sellDays  = flag.Int("sell-days", 1, "how many dates demand books for, from the day before the flown one; 1 sells only the day the world flies")
 		gdsDSN    = flag.String("gds-dsn", "", "all/gds: Postgres DSN backing every distribution system's records (one database, one node per system; $ENV names a variable)")
 		tenantDSN = flag.String("tenant-dsn", "", "all/region: Postgres DSN backing every carrier tenant's records (one database, one node per carrier, purged each sim day); $NAME reads the environment")
@@ -173,15 +175,17 @@ func run() error {
 		Carriers: *carriers, Console: *console, Warp: *warp, Log: log, Switches: *switches, DecisionWindow: *decision, NoCrew: *noCrew, NOCAutopilot: *nocAuto, NOCTrials: *nocTrials, LiveWeather: *liveWx, EconomyStart: parseDay(*econStart), External: splitList(*external), PublicSwitch: *pubSwitch, LinkPort: *linkPort, WorldName: *worldName, WorldCode: *worldCode, WorldCity: *worldCity, PublicURL: *publicURL, PeerWorlds: splitList(*peerWorld), WantPeerMovements: *wantMoves, AllowPrivatePeers: *privPeers, StateFile: *stateFile, LinkSecret: *linkSecret,
 		MaxMessages: *maxMsgs, MaxRecords: *maxRecs, AVSInterval: *avsEvery,
 		TenantMaxMessages: *tMaxMsgs, TenantMaxRecords: *tMaxRecs,
-		GDSCount:      *gdsCount,
-		StatsSnapshot: *statsSnap,
-		LinkBind:      *linkBind,
-		TenantDSN:     *tenantDSN,
-		GDSDSN:        *gdsDSN,
-		SellDays:      *sellDays,
-		Fill:          *fillLF,
-		FillSeed:      *seed,
-		Refill:        *refill,
+		GDSCount:        *gdsCount,
+		StatsSnapshot:   *statsSnap,
+		LinkBind:        *linkBind,
+		TenantDSN:       *tenantDSN,
+		GDSDSN:          *gdsDSN,
+		SellDays:        *sellDays,
+		Fill:            *fillLF,
+		FillSeed:        *seed,
+		Refill:          *refill,
+		BurnIn:          *burnIn,
+		NoRevenueMemory: *noRM,
 	}
 	if *gdsList != "" {
 		for _, d := range strings.Split(*gdsList, ",") {

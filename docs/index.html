@@ -524,17 +524,22 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
         <h3>Fares and travellers: who buys which fare</h3>
         <p>A traveller is on business or on leisure. Each has a maximum price and a cost for each fare restriction, for a connection, for the hour of departure and for the channel. A traveller takes the offer that costs least in total. The model and its constants are those of the Passenger Origin Destination Simulator, which Boeing built and MIT uses to compare revenue management systems.</p>
         <p>The fare level comes from the US Department of Transportation's Consumer Airfare Report: $153.00 plus 7.74 cents a mile. A test fills a US world and compares the result with the report.</p>
-        <p>Each carrier's inventory nests its booking classes under an EMSR-b controller. The early leisure travellers take the deep discounts until those close. One traveller in 9 pays full fare.</p>
+        <p>Each carrier's inventory nests its booking classes under an EMSR-b controller. The early leisure travellers take the deep discounts until those close. One traveller in 13 pays full fare.</p>
+        <p>Each carrier learns its forecast from its own flights. It keeps a record of each flight's booking window, by time frame and by the lowest class on sale. It divides the bookings by the time each class was on sale, and it applies the marginal revenue transformation of Fiig and others (2010) before EMSR-b. A test sells one carrier's flights for 38 days at a peak and reads the record in 3 ways. <a href="https://github.com/adamf/wholesky/blob/main/docs/business.md#revenue-management">docs/business.md</a> has the method.</p>
         <div class="tags"><span class="tag spec">fare level · DOT Consumer Airfare Report</span><span class="tag spec">choice model · PODS, published constants</span><span class="tag inf">business share, loyalty · estimates</span></div>
       </div>
       <div>
         <div class="table-wrap"><table>
           <tr><th>measure</th><th>target</th><th>result</th></tr>
-          <tr><td>load factor</td><td class="mono">0.82</td><td class="mono">0.812</td></tr>
-          <tr><td>fare paid, as a share of the report's average</td><td class="mono">1.00</td><td class="mono">1.006</td></tr>
-          <tr><td>ultra-low-cost carriers, as a share of their markets</td><td class="mono">0.749</td><td class="mono">0.72</td></tr>
-          <tr><td>a carrier that cuts its fares 20%, sales in the test world</td><td class="mono"></td><td class="mono">308 → 377</td></tr>
-          <tr><td>a carrier that raises its fares 25%</td><td class="mono"></td><td class="mono">308 → 235</td></tr>
+          <tr><td>load factor</td><td class="mono">0.82</td><td class="mono">0.825</td></tr>
+          <tr><td>fare paid, as a share of the report's average</td><td class="mono">1.00</td><td class="mono">0.997</td></tr>
+          <tr><td>ultra-low-cost carriers, as a share of their markets</td><td class="mono">0.749</td><td class="mono">0.76</td></tr>
+          <tr><td>a carrier that cuts its fares 20%, sales in the test world</td><td class="mono"></td><td class="mono">188 → 220</td></tr>
+          <tr><td>a carrier that raises its fares 25%</td><td class="mono"></td><td class="mono">188 → 139</td></tr>
+          <tr><td>sales read as demand, revenue over 30 days at a peak</td><td class="mono"></td><td class="mono">−4.3%</td></tr>
+          <tr><td>unconstrained class by class</td><td class="mono"></td><td class="mono">+1.4%</td></tr>
+          <tr><td>fare adjusted</td><td class="mono"></td><td class="mono">+3.2%</td></tr>
+          <tr><td>fare adjusted, over the fixed class limits</td><td class="mono"></td><td class="mono">+18%</td></tr>
         </table></div>
       </div>
     </div>
@@ -944,7 +949,7 @@ go run ./cmd/skyd -world europe.json -carriers 12 -demand 8 -warp 240
     <div class="panel one" id="p-missing" role="region" aria-labelledby="missing">
       <div>
         <h3>Missing systems</h3>
-        <p>Several systems are still missing. The interline invoices have their proration, billing and agency memos, but not IATA's IS-XML to carry them. Revenue management has ladders, a booking-curve forecaster and the network programme's bid prices, but no forecast learned from history. There is no Secure Flight-style vetting. A short-shipped bag runs its AHL, OHD and FWD story as a profile, without WorldTracer's own formats. Weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done, while the FAA's CDM ground stops, the slot-swapping dialogue and weather that closes an area outright are not. Crew has Part 117 legality, reserves and cancellations, and no pairings across days. Maintenance and rotation, airport systems, cargo, and Type B over MQ as some carriers still receive it are absent.</p>
+        <p>Several systems are still missing. The interline invoices have their proration, billing and agency memos, but not IATA's IS-XML to carry them. Revenue management has ladders, a forecast that each carrier learns from its own flights and the network programme's bid prices, but no overbooking and no forecast by origin and destination. There is no Secure Flight-style vetting. A short-shipped bag runs its AHL, OHD and FWD story as a profile, without WorldTracer's own formats. Weather systems, EUROCONTROL-style regulations and slots, and late-aircraft chains are done, while the FAA's CDM ground stops, the slot-swapping dialogue and weather that closes an area outright are not. Crew has Part 117 legality, reserves and cancellations, and no pairings across days. Maintenance and rotation, airport systems, cargo, and Type B over MQ as some carriers still receive it are absent.</p>
         <p class="small">The ordered list, with what each would add and exercise, is <a href="https://github.com/adamf/wholesky/blob/main/docs/missing-systems.md">docs/missing-systems.md</a>. The cost of full load is in <a href="https://github.com/adamf/wholesky/blob/main/docs/full-throttle.md">docs/full-throttle.md</a>.</p>
       </div>
     </div>

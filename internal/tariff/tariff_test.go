@@ -56,9 +56,9 @@ func TestLadderPricesFromDistanceAndCloses(t *testing.T) {
 		t.Fatalf("ladder: %+v", fares)
 	}
 	// 562 miles: the market averages 196 dollars. A low-cost carrier's
-	// lowest regular fare is about 100 and its full fare 3.6 times that.
+	// lowest regular fare is about 120 and its full fare 3.6 times that.
 	y, v := fares[4].OneWay.Amount, fares[11].OneWay.Amount
-	if fares[11].Class != "V" || v < 9000 || v > 11500 || y < 3*v || y > 4*v {
+	if fares[11].Class != "V" || v < 10800 || v > 13800 || y < 3*v || y > 4*v {
 		t.Errorf("lowest regular fare %d, full fare %d", v, y)
 	}
 	for i := 1; i < len(fares); i++ {

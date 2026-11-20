@@ -218,7 +218,13 @@ func (t *Tenant) solveNetwork(ctx context.Context) error {
 			}
 			capacity[l] = float64(max(li.seats-total, 0))
 			full := tariff.FullFare(t.tariff, li.f.Carrier, li.f.From, li.f.To)
-			for _, d := range tariff.PickupPriced("Y", li.seats, sold, li.remaining, full) {
+			local := tariff.PickupPriced("Y", li.seats, sold, li.remaining, full)
+			if t.learned != nil {
+				if base := t.learned(li.f.Carrier, li.f.Number, li.f.From, li.f.To, "Y"); base != nil {
+					local = tariff.PickupFrom(base, sold, li.remaining, func(class string) float64 { return tariff.Share(class) * float64(full) })
+				}
+			}
+			for _, d := range local {
 				if d.Mean > 0 && d.Fare > 0 {
 					its = append(its, inventory.Itinerary{Legs: []string{l}, Fare: d.Fare, Demand: d.Mean})
 				}

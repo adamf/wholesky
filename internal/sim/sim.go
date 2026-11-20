@@ -56,6 +56,7 @@ import (
 	"github.com/adamf/wholesky/internal/interline"
 	"github.com/adamf/wholesky/internal/partners"
 	"github.com/adamf/wholesky/internal/revenue"
+	"github.com/adamf/wholesky/internal/rm"
 	"github.com/adamf/wholesky/internal/settle"
 	"github.com/adamf/wholesky/internal/stats"
 	"github.com/adamf/wholesky/internal/tariff"
@@ -253,6 +254,16 @@ type Options struct {
 	// Refill purges and refills the day at boot even when the books already
 	// hold it: the way to change the load factor on a running world.
 	Refill bool
+	// NoRevenueMemory stops the carriers keeping a record of their
+	// flights' booking windows (internal/rm). Every flight is then sold
+	// under the tariff's fixed class limits on every day, and the day's
+	// forecaster reads the booking curve on the tariff's fixed mix.
+	NoRevenueMemory bool
+	// BurnIn is how many days of booking windows a world with no record
+	// sells, without writing a booking, before its first day: the carriers
+	// then begin with what their flights have taught them, and not with a
+	// week on the fixed limits. Zero burns nothing in.
+	BurnIn int
 	// TenantDSN, when set, backs every carrier tenant's records with one
 	// shared Postgres: each tenant is a node view of it, and its message
 	// log stays in bounded memory. Records are purged when the simulated
@@ -325,6 +336,11 @@ type Sim struct {
 	fill       float64
 	fillSeed   int64
 	refill     bool
+	// The carriers' revenue management memory (revman.go).
+	rm     *rm.Memory
+	rmPath string
+	rmBase atomic.Pointer[sync.Map]
+	burn   int
 	// reschedules is Options.Reschedule. rescheduled closes when the
 	// world has stopped its day for a schedule change, and consoleDone
 	// when the console has let go of its address.
@@ -619,6 +635,7 @@ func bootBase(ctx context.Context, m *world.Manifest, opts Options, withSwitch b
 	if opts.StateFile != "" {
 		s.state = &stateKeeper{path: opts.StateFile}
 	}
+	s.initRevenueMemory(opts)
 	s.Airline.OnChange = s.saveState
 	// The flight recorder: every tape line carries the sim clock, every
 	// finished run goes to the disk or the core, and the scorecard is
@@ -860,6 +877,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			InboundDelay:          s.inboundDelay,
 			Connect:               s.connectTime,
 			DepartureDelay:        s.departureDelay,
+			Learned:               s.learned,
 			RushDecision:          s.askRush,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
@@ -1091,6 +1109,21 @@ func (s *Sim) purgeTenants(ctx context.Context, before time.Time) {
 		}
 		msgs += got.Messages
 		recs += got.Records
+		// A carrier's book that is written again for each day gives up
+		// the whole day, as a database gives up the day's partition. The
+		// pre-sold bookings carry the dates they were made on, and the
+		// day the world sells is weeks ahead of the wall clock, so a purge
+		// by time left the late bookers in the book and the next day's
+		// fill met its own locators there.
+		if _, tenant := s.Tenants[code]; tenant && s.fill > 0 && s.tenantDB == nil {
+			if pr, ok := st.(store.Pruner); ok {
+				got, err := pr.PruneRecords(ctx, func(*pnr.PNR) bool { return false })
+				if err != nil {
+					s.log.Warn("end-of-day purge failed", "node", code, "err", err)
+				}
+				recs += got.Records
+			}
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	s.log.Info("end-of-day purge", "before", before.UTC().Format(time.RFC3339), "retired_through", cutoff.Format("2006-01-02"),
@@ -1380,31 +1413,19 @@ func (s *Sim) fillDay(ctx context.Context) {
 		return nil
 	}
 	s.Ledger.Reset()
-	plan, err := fill.Day(ctx, sub, fill.Options{LoadFactor: s.fill, Seed: s.fillSeed, Day: s.BookingDate, Tariff: s.tariff,
-		Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, s.capacity) },
-		// The seats sold before the day are sold to the same travellers
-		// the day's own are: the market's, at the carrier's fares, in the
-		// channels it sells in.
-		Base:    s.baseFare,
-		Mix:     s.mixFor,
-		Offered: func(carrier, channel string) bool { return s.policyOf(carrier).Offered(channel) },
-		Share:   s.shareOf,
-		Seller:  s.seller,
-		Channels: func() []string {
-			var out []string
-			for _, g := range gdsSlots {
-				out = append(out, g.Designator)
-			}
-			return out
-		}(),
-		// A connection sold in advance makes the station's minimum
-		// connecting time, as one sold on the day does.
-		Connect: s.connectTime,
-	}, sink)
+	day := s.today()
+	opts := s.fillOptions(day)
+	opts.Remembered = s.remembered(day)
+	plan, err := fill.Day(ctx, sub, opts, sink)
 	if err != nil {
 		s.log.Error("filling the day failed", "err", err, "records_written", plan.Records)
 		return
 	}
+	if s.rm != nil && !opts.Remembered {
+		s.rm.SetDay(day)
+		s.saveRevenueMemory()
+	}
+	s.rmBase.Store(&sync.Map{})
 	s.ledgerFilled.Store(true)
 	s.log.Info("day filled", "load_factor", s.fill, "carriers", plan.Carriers, "flights", plan.Flights,
 		"records", plan.Records, "passengers", plan.Passengers, "seats", plan.Seats,
@@ -1712,6 +1733,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 			s.log.Info("day already filled; keeping the books", "date", day.Format("2006-01-02"))
 		} else {
 			s.purgeTenants(ctx, time.Now())
+			s.burnIn(ctx)
 			s.fillDay(ctx)
 		}
 	}
