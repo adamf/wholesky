@@ -148,6 +148,10 @@ type Tenant struct {
 	// revenue management hears who came for a closed flight.
 	denied []Denied
 	shown  func(carrier, flightNum, board, compartment string, booked, away int)
+	// carried is the passengers each of the day's departures left with,
+	// as its door counted them. It outlives the departure control record,
+	// which is forgotten when the flight lands.
+	carried map[string]int
 	// The operations desk: which day is being flown, the ICAO indicators
 	// of the airports, and the air traffic services messages received.
 	day     time.Time

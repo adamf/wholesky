@@ -344,7 +344,10 @@ is a denied boarding.
 - **The record.** When a flight's door closes, departure control counts
   each cabin: the bookings, the no-shows, the passengers who flew and
   the passengers who were denied boarding. The carrier keeps the count
-  for each flight, with the same memory as the booking record.
+  for each flight, with the same memory as the booking record. The
+  record takes a count only when the airport had the whole name list
+  and its counter opened. A world that starts in the middle of a day
+  closes some flights without either.
 - **The limit.** The carrier sets the limit of each main cabin from the
   flight's own show-up rate and from how much that rate varies. The
   limit is the one with the least expected cost of denied boardings and

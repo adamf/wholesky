@@ -190,6 +190,7 @@ func (t *Tenant) startGround(accountingCode string) {
 	t.DCS = st
 	t.sortation = map[string]map[string]bool{}
 	t.boarded = map[string]int{}
+	t.carried = map[string]int{}
 	t.cancelled = map[string]string{}
 	t.Gateway.Ground = t
 }
@@ -529,6 +530,7 @@ func (t *Tenant) Missed() []Missed {
 func (t *Tenant) NewDay() {
 	t.groundMu.Lock()
 	t.tracing = Tracing{}
+	t.carried = map[string]int{}
 	t.groundMu.Unlock()
 	t.missedMu.Lock()
 	t.missed = map[string]Missed{}
@@ -1078,8 +1080,20 @@ func (t *Tenant) RushExpected(station string) int {
 // OnClose hook, so an agent closing a flight by hand sends the same set.
 func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	fl := cl.Flight
+	leg, known := t.legOf(fl.Flight, fl.Board)
+	tally := fl.Tally()
+	// The door's count says who came only when the airport had the whole
+	// list and its counter opened. A world that starts after a flight's
+	// check-in hours, or that is still writing the day's bookings when
+	// the name list goes, closes the flight on part of its passengers or
+	// on none. Such a flight is not counted as flown that empty, and the
+	// record of who came does not take it.
+	whole := known && cl.Counts.Boarded > 0 && t.listedAll(leg, fl, tally)
 	t.groundMu.Lock()
 	t.boarded[fl.Flight+"/"+fl.Date] = cl.Counts.Boarded
+	if t.carried != nil && whole {
+		t.carried[fl.Flight+"/"+fl.Date+"/"+fl.Board] = cl.Counts.Boarded
+	}
 	t.groundMu.Unlock()
 
 	var firstErr error
@@ -1109,7 +1123,6 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	}
 	// The passengers turned away at the door are owed what the law says.
 	// The volunteers were counted when they agreed.
-	leg, known := t.legOf(fl.Flight, fl.Board)
 	for _, p := range cl.Denied {
 		if known && !p.Volunteer {
 			t.noteDenied(leg, p)
@@ -1118,8 +1131,8 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	// Revenue management hears who came, cabin by cabin. A passenger who
 	// checked in and did not fly, other than one denied boarding, left
 	// the seat empty as a no-show does.
-	if t.shown != nil && known {
-		for comp, c := range fl.Tally() {
+	if t.shown != nil && whole {
+		for comp, c := range tally {
 			t.shown(leg.Carrier, leg.Number, leg.From, comp, c.Booked, c.NoShows+c.Offloaded)
 		}
 	}
@@ -1145,13 +1158,39 @@ func (t *Tenant) Cancelled(f world.Flight, day time.Time) bool { return t.isCanc
 // Boarded is the departure's boarded count at the door, 0 before it closed.
 func (t *Tenant) Boarded(f world.Flight, day time.Time) int { return t.boardedFor(f, day) }
 
+// listedAll reports whether the airport's list held the flight's
+// bookings: at least 9 in 10 of the seats the carrier's inventory has
+// sold on it. The few sold after the last list went are not on it.
+func (t *Tenant) listedAll(leg world.Flight, fl *dcs.Flight, tally map[string]dcs.Tally) bool {
+	if t.Inventory == nil || t.capacity == nil {
+		return true
+	}
+	cabins, ok := t.capacity(leg.Carrier, leg.Number, fl.Date, leg.From)
+	if !ok {
+		return true
+	}
+	sold, listed := 0, 0
+	for comp := range cabins {
+		for _, n := range t.Inventory.SoldByClass(leg.Carrier, leg.Number, fl.Date, leg.From, comp) {
+			sold += n
+		}
+	}
+	for _, c := range tally {
+		listed += c.Booked
+	}
+	return 10*listed >= 9*sold
+}
+
 // Carried is the passengers a departure left with, as its door counted
-// them. ok is false for a flight departure control has not closed.
+// them. ok is false for a flight departure control has not closed, and
+// for one it closed without the whole list or without a counter. The
+// count is kept until the day ends, after the flight has landed and its
+// departure control record is gone.
 func (t *Tenant) Carried(f world.Flight, day time.Time) (n int, ok bool) {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
 	defer t.groundMu.Unlock()
-	n, ok = t.boarded[key.Flight+"/"+key.Date]
+	n, ok = t.carried[key.Flight+"/"+key.Date+"/"+key.Board]
 	return n, ok
 }
 

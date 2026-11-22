@@ -275,9 +275,10 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			// overbooked had more bookings than seats.
 			if t != nil {
 				if n, ok := t.Carried(f, w.s.BookingDate); ok {
-					booked = min(n, seats)
+					booked = n
 				}
 			}
+			booked = min(booked, seats)
 			sc.Passengers += booked
 			sc.Seats += seats
 			block := f.BlockMin

@@ -177,6 +177,9 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	if c.Volunteers == 0 || c.Volunteers == c.Denied {
 		t.Errorf("%d volunteers among %d denied boardings; this flight has some of each", c.Volunteers, c.Denied)
 	}
+	// The carrier still knows what the flight carried after it has landed
+	// and departure control has forgotten it.
+	tn.Forget(ctx, f, day)
 	if n, ok := tn.Carried(f, day); !ok || n != c.Boarded {
 		t.Errorf("the carrier counts %d carried (%v) and the door counted %d", n, ok, c.Boarded)
 	}
@@ -242,5 +245,144 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	tn.NewDay()
 	if len(tn.Denied()) != 0 {
 		t.Error("a new day began with denied boardings")
+	}
+	if _, ok := tn.Carried(f, day); ok {
+		t.Error("a new day began with the last day's passengers carried")
+	}
+
+	// A flight whose counter never opened. The world started after its
+	// check-in hours, say, and the door closed on a list nobody was
+	// checked in from. Every booking is then a no-show at departure
+	// control, and the carrier's record of who came must not take it.
+	var g world.Flight
+	for _, x := range s.Flights[f.Carrier] {
+		if x.Number != f.Number && x.Marketing == "" && len(host.Cabins(x, s.capacity)) == 1 {
+			g = x
+			break
+		}
+	}
+	if g.Number == "" {
+		t.Fatal("no second flight")
+	}
+	other := s.rm.Cabin(rm.Key(g.Carrier, g.Number, g.From, "Y"), classes)
+	var more []string
+	for i := 0; i < 6; i++ {
+		res, err := s.Book(ctx, g, "Y", 0, fmt.Sprintf("LATE%c", 'A'+i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		more = append(more, res.PNR.RecordLocator)
+	}
+	for _, l := range more {
+		for wait := time.Now().Add(30 * time.Second); ; {
+			if ok, _ := s.Settled(ctx, l); ok {
+				break
+			}
+			if time.Now().After(wait) {
+				t.Fatalf("%s never settled", l)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	gkey := dcs.Key{Flight: g.Carrier + g.Number, Date: wire, Board: g.From}
+	if err := tn.SendPNL(ctx, g, day); err != nil {
+		t.Fatal(err)
+	}
+	for wait := time.Now().Add(30 * time.Second); ; {
+		if fl, err := tn.DCS.Flight(gkey); err == nil && fl.Counts().Listed == 6 {
+			break
+		}
+		if time.Now().After(wait) {
+			t.Fatalf("departure control never listed the 6 on %s", gkey)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := tn.Close(ctx, g, day); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	gl, _ := tn.DCS.Flight(gkey)
+	if gc := gl.Counts(); gc.NoShow != 6 || gc.Boarded != 0 {
+		t.Fatalf("a flight closed with no check-in: %+v; want 6 no-shows", gc)
+	}
+	if got := other.Shown(); got != 0 {
+		t.Errorf("the record of who came took a flight whose counter never opened: %d departures", got)
+	}
+	if n, ok := tn.Carried(g, day); ok {
+		t.Errorf("a flight whose counter never opened is counted as flown with %d passengers", n)
+	}
+
+	// A flight whose list went before most of its bookings were written.
+	// 4 passengers are on the list and 8 more book after it. The 4 are
+	// checked in and fly. The door's count of 4 is not what the flight
+	// carried, and 4 of 4 is not the flight's show-up rate.
+	var h world.Flight
+	for _, x := range s.Flights[f.Carrier] {
+		if x.Number != f.Number && x.Number != g.Number && x.Marketing == "" && len(host.Cabins(x, s.capacity)) == 1 {
+			h = x
+			break
+		}
+	}
+	if h.Number == "" {
+		t.Fatal("no third flight")
+	}
+	part := s.rm.Cabin(rm.Key(h.Carrier, h.Number, h.From, "Y"), classes)
+	book := func(n int, name string) {
+		t.Helper()
+		var locs []string
+		for i := 0; i < n; i++ {
+			res, err := s.Book(ctx, h, "Y", 0, fmt.Sprintf("%s%c", name, 'A'+i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			locs = append(locs, res.PNR.RecordLocator)
+		}
+		for _, l := range locs {
+			for wait := time.Now().Add(30 * time.Second); ; {
+				if ok, _ := s.Settled(ctx, l); ok {
+					break
+				}
+				if time.Now().After(wait) {
+					t.Fatalf("%s never settled", l)
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+		}
+	}
+	book(4, "EARLY")
+	hkey := dcs.Key{Flight: h.Carrier + h.Number, Date: wire, Board: h.From}
+	if err := tn.SendPNL(ctx, h, day); err != nil {
+		t.Fatal(err)
+	}
+	for wait := time.Now().Add(30 * time.Second); ; {
+		if fl, err := tn.DCS.Flight(hkey); err == nil && fl.Counts().Listed == 4 {
+			break
+		}
+		if time.Now().After(wait) {
+			t.Fatalf("departure control never listed the 4 on %s", hkey)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	book(8, "AFTER")
+	hl, _ := tn.DCS.Flight(hkey)
+	for _, p := range hl.Passengers {
+		if _, err := tn.DCS.Accept(ctx, hkey, dcs.AcceptRequest{PassengerID: p.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tn.DCS.Board(ctx, hkey, p.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tn.Close(ctx, h, day); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	hl, _ = tn.DCS.Flight(hkey)
+	if hc := hl.Counts(); hc.Boarded != 4 {
+		t.Fatalf("the 4 on the list: %+v", hc)
+	}
+	if n, ok := tn.Carried(h, day); ok {
+		t.Errorf("a flight closed on a third of its bookings is counted as flown with %d passengers", n)
+	}
+	if got := part.Shown(); got != 0 {
+		t.Errorf("the record of who came took a flight closed on a third of its bookings: %d departures", got)
 	}
 }
