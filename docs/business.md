@@ -362,8 +362,9 @@ is a denied boarding.
   for a seat. When check-in closes, the passengers who wait take the
   seats of the no-shows, in the front cabin when the main cabin is full.
   The agent then asks for volunteers, and 1 seated passenger in 25
-  agrees, which is an estimate. At the door, a passenger who still has
-  no seat is denied
+  agrees, which is an estimate. That gives about 11 volunteers for each
+  passenger turned away. US airlines reported 9 to 1 in 2012 and 33 to 1
+  in 2018. At the door, a passenger who still has no seat is denied
   boarding. The final sales message reports that passenger as denied
   boarding and not as a no-show.
 - **The cost.** A volunteer gets twice the fare, to a limit of $1,075.

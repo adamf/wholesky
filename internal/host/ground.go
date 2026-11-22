@@ -433,9 +433,11 @@ func staysAway(h int, class string) bool {
 
 // volunteerShare is the share of seated passengers who give up the seat
 // for the carrier's offer when it asks. An estimate: with 150 passengers
-// seated, 6 take it, so a flight short of 1 or 2 seats nearly always
-// finds its volunteers. Airlines report 43 volunteers for each passenger
-// turned away against their will (GAO-20-191, for 2018).
+// seated, 6 take it. Worked out once over the oversold flights of a
+// filled US world, which are short of 3.7 seats on average, this share
+// finds a volunteer for 91 in 100 of the passengers without a seat: 11
+// volunteers for each passenger turned away. Airlines reported 9 to 1 in
+// 2012 and 33 to 1 in 2018 (GAO-20-191). A share of 0.06 gives 50 to 1.
 const volunteerShare = 0.04
 
 // volunteers says whether a seated passenger takes the carrier's offer.
