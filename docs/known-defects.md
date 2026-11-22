@@ -69,6 +69,11 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
   from another, and 2 carriers could share a code. Settlement and
   interline billing find a ticket's carrier by its code. Each carrier
   now has its own code, and both kinds of sale use it.
+- **A booking made on the day was dropped before its flight left.** Such
+  a booking has a date and no time on its segment. Retention took its
+  departure as 00:00 and removed it from the carrier's book at 03:00, so
+  the passenger was on no name list. Retention now takes the time from
+  the schedule.
 - **Earlier the same day.** The name list carried waitlisted passengers.
   A booked passenger at a full cabin was refused and reported as a
   no-show. An aircraft change gave 2 passengers 1 seat. The scorecard
@@ -85,10 +90,6 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
   passes while the process is down is skipped. The selling date of a
   synthetic world is the moment of start plus 30 days, with its hour.
   Reported.
-- **Bookings with no departure time are purged early.** A live booking
-  has a date and no time on its segment. Retention takes its departure
-  as 00:00 and removes it after 03:00, before the flight leaves. A test
-  asserts this as intended. Reported by 2 reviewers.
 - **A seat's answer is applied after its moment.** A seat asked about a
   crew answers in real time. At a warp of 60 the cancellation has been
   announced before the answer comes, and the answer still revives the

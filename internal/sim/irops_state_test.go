@@ -282,3 +282,75 @@ func TestEachCarrierHasItsOwnTicketStock(t *testing.T) {
 		}
 	}
 }
+
+// A booking made on the day stays in the books until its flight has
+// left. A traveller books an evening flight. At 05:00 and at noon the
+// carrier and the seller still hold the record. 3 hours after the flight
+// has left, they let it go. The booking has a date and no time, and it
+// was once dropped at 03:00, before the name list was made.
+func TestABookingMadeOnTheDayIsKeptUntilItsFlightLeaves(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	code := m.Carriers[0].Designator
+	var f world.Flight
+	for _, g := range s.Flights[code] {
+		if dep, _ := s.flightDelays(g, s.BookingDate); !s.fate.Of(g).Cancelled && g.Marketing == "" && g.DepMin+dep > 17*60 && g.DepMin+dep < 20*60 {
+			f = g
+			break
+		}
+	}
+	if f.Number == "" {
+		t.Fatal("no evening flight")
+	}
+	s.clock.Sync(time.Now(), 2*60, s.clock.Warp())
+	res, err := s.Book(ctx, f, "Y", 0, "MORNING")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc := res.PNR.RecordLocator
+	for wait := time.Now().Add(20 * time.Second); ; {
+		if ok, _ := s.Settled(ctx, loc); ok {
+			break
+		}
+		if time.Now().After(wait) {
+			t.Fatal("the booking never settled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	tn := s.Tenants[code]
+	wire := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	held := func() (carrier, seller bool) {
+		recs, _ := tn.Store.FindPNRsByFlight(ctx, f.Carrier+f.Number, wire, 100)
+		for _, r := range recs {
+			for _, p := range r.Passengers {
+				if p.Surname == "MORNING" {
+					carrier = true
+				}
+			}
+		}
+		_, err := s.GDSStore.GetPNR(ctx, loc)
+		return carrier, err == nil
+	}
+	if c, g := held(); !c || !g {
+		t.Fatalf("after the sale the carrier holds the record: %v, the seller: %v", c, g)
+	}
+	for _, at := range []float64{5 * 60, 12 * 60} {
+		s.clock.Sync(time.Now(), at, s.clock.Warp())
+		s.retire(ctx)
+		if c, g := held(); !c || !g {
+			t.Fatalf("at %s the booking for the %s flight is gone: carrier holds it %v, seller %v", hhmm(int(at)), hhmm(f.DepMin), c, g)
+		}
+	}
+	dep, _ := s.flightDelays(f, s.BookingDate)
+	s.clock.Sync(time.Now(), float64(f.DepMin+dep+181), s.clock.Warp())
+	s.retire(ctx)
+	if c, g := held(); c || g {
+		t.Errorf("3 hours after the flight left the record is still held: carrier %v, seller %v", c, g)
+	}
+}

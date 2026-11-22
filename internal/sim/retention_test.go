@@ -13,7 +13,18 @@ import (
 func TestRetentionKeepsUntilFlown(t *testing.T) {
 	day := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
 	now := day.Add(15 * time.Hour) // 1500z
-	keep := keepUntilFlown(now.Add(-flownAfter))
+	// The schedule knows 2 flights: one that left at 08:00 and one that
+	// leaves at 20:00.
+	schedule := func(sg pnr.Segment) (int, bool) {
+		switch sg.FlightNum {
+		case "0800":
+			return 8 * 60, true
+		case "2000":
+			return 20 * 60, true
+		}
+		return 0, false
+	}
+	keep := keepUntilFlown(now.Add(-flownAfter), schedule)
 	seg := func(hhmm string) pnr.Segment { return pnr.Segment{Depart: day, DepartTime: hhmm} }
 	cases := []struct {
 		name string
@@ -28,7 +39,13 @@ func TestRetentionKeepsUntilFlown(t *testing.T) {
 		{"tomorrow", pnr.PNR{Segments: []pnr.Segment{{Depart: day.Add(24 * time.Hour), DepartTime: "0600"}}}, true},
 		{"no segments", pnr.PNR{}, true},
 		{"undated segment", pnr.PNR{Segments: []pnr.Segment{{DepartTime: "0600"}}}, true},
-		{"no time on the date", pnr.PNR{Segments: []pnr.Segment{{Depart: day}}}, false},
+		// A booking made on the day has a date and no time. It has
+		// not flown until the schedule says its flight has. It was once
+		// taken as leaving at 00:00 and dropped at 03:00.
+		{"no time, a flight the schedule does not know", pnr.PNR{Segments: []pnr.Segment{{Depart: day}}}, true},
+		{"no time, a flight that leaves tonight", pnr.PNR{Segments: []pnr.Segment{{Depart: day, FlightNum: "2000"}}}, true},
+		{"no time, a flight that left this morning", pnr.PNR{Segments: []pnr.Segment{{Depart: day, FlightNum: "0800"}}}, false},
+		{"no time, the morning flight and the evening one", pnr.PNR{Segments: []pnr.Segment{{Depart: day, FlightNum: "0800"}, {Depart: day, FlightNum: "2000"}}}, true},
 	}
 	for _, tc := range cases {
 		p := tc.p
@@ -36,7 +53,7 @@ func TestRetentionKeepsUntilFlown(t *testing.T) {
 			t.Errorf("%s: keep=%v, want %v", tc.name, got, tc.want)
 		}
 	}
-	if d := departureOf(seg("0930")); !d.Equal(day.Add(9*time.Hour + 30*time.Minute)) {
+	if d := departureOf(seg("0930"), nil); !d.Equal(day.Add(9*time.Hour + 30*time.Minute)) {
 		t.Errorf("departureOf = %v", d)
 	}
 }

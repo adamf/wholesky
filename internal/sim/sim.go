@@ -340,6 +340,10 @@ type Sim struct {
 	rm     *rm.Memory
 	rmPath string
 	rmBase atomic.Pointer[sync.Map]
+	// depOf is each flight by carrier, number and boarding point, for a
+	// booking that carries no departure time.
+	depOf   map[string]world.Flight
+	depOnce sync.Once
 	// acct is each carrier's ticket stock code, made once.
 	acct     map[string]string
 	acctOnce sync.Once
