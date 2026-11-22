@@ -179,11 +179,11 @@ carriers in the test do the same.
 
 | Measure | Target | Result |
 | --- | --- | --- |
-| Load factor, of passengers carried | 0.82 | 0.825 |
+| Load factor, of passengers carried | 0.82 | 0.824 |
 | Fare paid, as a share of the report's line | 1.00 | 1.003 |
 | Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.77 |
 | Bookings that do not come | about 0.10 | 0.095 |
-| Passengers denied boarding in each 10,000 carried | 4.4 in 2018 | 4.4 |
+| Passengers denied boarding in each 10,000 carried | 4.4 in 2018 | 4.1 |
 | Travellers who chose a fare that the engine refused | 0 | 0 |
 
 The targets for the no-shows and the denied boardings are from the
@@ -385,9 +385,9 @@ ways. A busy day has a quarter more travellers than an ordinary day.
 
 | Carrier | Limits over seats | Seats flown full | Seats spoiled | Denied in 10,000 | Fares a day |
 | --- | --- | --- | --- | --- | --- |
-| No overbooking | 0 | 0.796 | 1.50 % | 0 | $43.9 million |
-| A denied boarding counted at 2 fares | 7.2 % | 0.848 | 0.46 % | 2.1 | $44.6 million |
-| A denied boarding counted at 20 fares | 3.4 % | 0.821 | 0.91 % | 0.07 | $44.2 million |
+| No overbooking | 0 | 0.796 | 1.51 % | 0 | $43.9 million |
+| A denied boarding counted at 2 fares | 7.2 % | 0.848 | 0.46 % | 2.2 | $44.6 million |
+| A denied boarding counted at 20 fares | 3.5 % | 0.822 | 0.94 % | 0.02 | $44.2 million |
 
 The carrier that overbooks carries 6.5 % more passengers in the same
 seats and earns 1.7 % more. Its compensation is under 0.1 % of its
