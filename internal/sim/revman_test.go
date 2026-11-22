@@ -80,13 +80,19 @@ func TestCarriersBeginWithWhatTheirFlightsTaughtThem(t *testing.T) {
 				t.Errorf("%s%s draws %.0f over its booking window for %d seats", f.Carrier, f.Number, toCome, seats)
 			}
 			// The ladder the carrier's system sells under is EMSRb on the
-			// flight's record, and is not the fixed mix's ladder.
+			// flight's record, and is not the fixed mix's ladder. It is
+			// nested under the bookings the cabin may hold, which the
+			// carrier set from its record of who came: its seats or more.
 			sold := ten.Inventory.SoldByClass(f.Carrier, f.Number, wire, f.From, "Y")
 			full := tariff.FullFare(s.tariff, f.Carrier, f.From, f.To)
 			price := func(class string) float64 { return tariff.Share(class) * float64(full) }
 			got := ten.Inventory.Levels(f.Carrier, f.Number, wire, f.From, "Y")
-			want := inventory.EMSRb(seats, tariff.PickupFrom(base, sold, 1, price))
-			fixed := inventory.EMSRb(seats, tariff.PickupPriced("Y", seats, sold, 1, full))
+			limit := cab.Limit(seats)
+			if limit < seats || limit > seats+seats/5 {
+				t.Errorf("%s%s may hold %d bookings in %d seats", f.Carrier, f.Number, limit, seats)
+			}
+			want := inventory.EMSRb(limit, tariff.PickupFrom(base, sold, 1, price))
+			fixed := inventory.EMSRb(limit, tariff.PickupPriced("Y", seats, sold, 1, full))
 			level := func(ls []inventory.Level) map[string]int {
 				out := map[string]int{}
 				for _, l := range ls {

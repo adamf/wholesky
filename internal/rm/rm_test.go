@@ -111,3 +111,96 @@ func TestMemoryKeepsItsRecordsAcrossARestart(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// A cabin of 150 seats holds 150 bookings at each departure, and 12 or
+// 18 of them stay away by turns. The show-up rates are 0.92 and 0.88, so
+// the mean is 0.90. Their sample deviation over 8 departures is
+// sqrt(8*0.0004/7) = 0.0214, which is under the 0.0245 of 150
+// independent passengers, sqrt(0.9*0.1/150), so the cabin has 0.0245.
+//
+// With a denied boarding at 2 fares and an empty seat at 1, the cost is
+// least where the cabin overflows on about 1 flight in 3: 0.458
+// deviations over the mean, a show-up rate of 0.9112, which 150 seats
+// meet at 164.6 bookings. The whole limits on each side cost 4.44 seats'
+// worth at 164 and 4.42 at 165, so the limit is 165. At 20 fares it is
+// 159.
+func TestACabinSetsItsLimitFromWhoCame(t *testing.T) {
+	m := New()
+	m.Departures = 1e12 // remembered in full, so the figures are the ones worked above
+	key := Key("UA", "123", "ORD", "Y")
+	c := m.Cabin(key, []string{"Y", "Q"})
+	for d := 0; d < Warm-1; d++ {
+		c.Show(150, 12+6*(d%2))
+	}
+	if _, _, ok := c.ShowRate(150); ok {
+		t.Fatalf("a show-up rate after %d departures; a flight flies %d before it has one", Warm-1, Warm)
+	}
+	if got := c.Authorize(150, 0, DeniedCost, 1); got != 150 {
+		t.Fatalf("with no record of who came the cabin was authorised %d", got)
+	}
+	c.Show(150, 12)
+	c.Show(150, 18)
+	mean, dev, ok := c.ShowRate(150)
+	if !ok || mean < 0.8999 || mean > 0.9001 || dev < 0.02449 || dev > 0.02450 {
+		t.Fatalf("show-up rate %.4f, deviation %.5f, %v; want 0.90 and 0.02449", mean, dev, ok)
+	}
+	if got := c.Authorize(150, 0, DeniedCost, 1); got != 165 {
+		t.Errorf("authorised %d, want 165", got)
+	}
+	if got := c.Limit(150); got != 165 {
+		t.Errorf("the limit in force is %d, want 165", got)
+	}
+	// Another aircraft on the day has its own seats and no more.
+	if got := c.Limit(120); got != 120 {
+		t.Errorf("a cabin of 120 seats was authorised %d under a limit set for 150", got)
+	}
+	// The limit goes with the cabin across a restart, and so does who
+	// came.
+	path := filepath.Join(t.TempDir(), "state.json.rm")
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	back := New()
+	back.Departures = 1e12
+	if err := back.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	got := back.Peek(key)
+	if got == nil || got.Limit(150) != 165 {
+		t.Fatalf("the limit did not come back: %+v", got)
+	}
+	if m2, d2, ok := got.ShowRate(150); !ok || m2 != mean || d2 != dev {
+		t.Errorf("read back a show-up rate of %.4f and %.5f, want %.4f and %.5f", m2, d2, mean, dev)
+	}
+	// A carrier that counts a denied boarding dearer overbooks less.
+	if wary := got.Authorize(150, 0, 20, 1); wary != 159 {
+		t.Errorf("at 20 fares the cabin was authorised %d, want 159", wary)
+	}
+	// A record that says half the passengers stay away is not believed
+	// past a fifth over the seats.
+	wild := m.Cabin(Key("UA", "9", "ORD", "Y"), []string{"Y"})
+	for d := 0; d < Warm; d++ {
+		wild.Show(100, 50)
+	}
+	if got := wild.Authorize(100, 0, DeniedCost, 1); got != 120 {
+		t.Errorf("a cabin whose record says half stay away was authorised %d, want 120", got)
+	}
+	// The classes of a cabin change and its booking record starts again.
+	// Who came does not depend on the classes.
+	again := back.Cabin(key, []string{"Y", "B", "Q"})
+	if again.Departures() != 0 {
+		t.Error("a booking record for other classes was kept")
+	}
+	if m3, _, ok := again.ShowRate(150); !ok || m3 != mean || again.Limit(150) != 159 {
+		t.Errorf("the record of who came was lost with the classes: %.4f %v, limit %d", m3, ok, again.Limit(150))
+	}
+}
+
+// JetBlue and Southwest say they do not overbook.
+func TestWhoOverbooks(t *testing.T) {
+	for carrier, want := range map[string]bool{"UA": true, "DL": true, "NK": true, "B6": false, "WN": false, "wn": false} {
+		if got := Overbooks(carrier); got != want {
+			t.Errorf("%s overbooks: %v, want %v", carrier, got, want)
+		}
+	}
+}

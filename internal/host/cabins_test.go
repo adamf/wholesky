@@ -145,6 +145,23 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	if connected < 200 || connected > 360 {
 		t.Fatalf("%d of 2000 parties connect; about 14 in 100 should", connected)
 	}
+	// Who stays away depends on the fare. Of 2000 parties on a fare that
+	// cannot be refunded about 170 do not come, and of 2000 on full fare
+	// about 340.
+	if noShows < 130 || noShows > 210 {
+		t.Errorf("%d of 2000 parties on a restricted fare do not come; about 8.5 in 100 should", noShows)
+	}
+	flexible := 0
+	for _, pt := range parties {
+		pt.lead = &dcs.Passenger{Class: "Y"}
+		if _, _, ok := tn.arrival(pt, out, day); !ok {
+			flexible++
+		}
+	}
+	if flexible < 290 || flexible > 390 {
+		t.Errorf("%d of 2000 parties on full fare do not come; about 17 in 100 should", flexible)
+	}
+	tn.NewDay()
 	if tn.Misconnected() != 0 {
 		t.Errorf("the inbound is on time and %d passengers missed", tn.Misconnected())
 	}

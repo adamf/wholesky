@@ -10,10 +10,13 @@ import (
 	"github.com/adamf/wholesky/internal/host"
 )
 
-// Oversold is a cabin holding more confirmed seats than it has.
+// Oversold is a cabin holding more confirmed seats than it may: more
+// than its seats, and more than the bookings its carrier authorised when
+// the carrier overbooks it.
 type Oversold struct {
 	Carrier, Flight, Date, Board, Compartment string
 	Seats, Sold                               int
+	Authorized                                int `json:",omitempty"`
 }
 
 // Invariants is what a running world reports about the laws it must obey,
@@ -31,6 +34,10 @@ type Invariants struct {
 	// flight today has: an aircraft substitution, not an oversell, and the
 	// agents' queue knows.
 	Downgauged int `json:"downgauged,omitempty"`
+	// Overbooked counts cabins holding more bookings than seats and no
+	// more than their carrier authorised: overbooking, which the carrier
+	// meant, and the airport resolves.
+	Overbooked int `json:"overbooked,omitempty"`
 }
 
 // OK is whether every law held.
@@ -42,6 +49,7 @@ func (v *Invariants) Merge(o Invariants) {
 	v.Cabins += o.Cabins
 	v.Sold += o.Sold
 	v.Downgauged += o.Downgauged
+	v.Overbooked += o.Overbooked
 	v.Oversold = append(v.Oversold, o.Oversold...)
 }
 
@@ -68,8 +76,12 @@ func checkInventories(tenants map[string]*host.Tenant) Invariants {
 					v.Downgauged++
 					continue
 				}
+				if p.Sold <= p.Authorized {
+					v.Overbooked++
+					continue
+				}
 				v.Oversold = append(v.Oversold, Oversold{Carrier: code, Flight: p.Flight, Date: p.Date, Board: p.Board,
-					Compartment: p.Compartment, Seats: p.Seats, Sold: p.Sold})
+					Compartment: p.Compartment, Seats: p.Seats, Sold: p.Sold, Authorized: p.Authorized})
 			}
 		}
 	}

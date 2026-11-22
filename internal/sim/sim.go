@@ -878,6 +878,8 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			Connect:               s.connectTime,
 			DepartureDelay:        s.departureDelay,
 			Learned:               s.learned,
+			Authorized:            s.authorized,
+			Shown:                 s.shown,
 			RushDecision:          s.askRush,
 			ICAO:                  s.icaoOf,
 			Store:                 tenantStore(c.Designator),
@@ -1429,7 +1431,7 @@ func (s *Sim) fillDay(ctx context.Context) {
 	s.ledgerFilled.Store(true)
 	s.log.Info("day filled", "load_factor", s.fill, "carriers", plan.Carriers, "flights", plan.Flights,
 		"records", plan.Records, "passengers", plan.Passengers, "seats", plan.Seats,
-		"connecting", plan.Connecting, "took", time.Since(started).Round(time.Millisecond).String())
+		"connecting", plan.Connecting, "seats_overbooked", plan.Over, "took", time.Since(started).Round(time.Millisecond).String())
 }
 
 // flightRecords is the globe's drill-through: every booking any channel

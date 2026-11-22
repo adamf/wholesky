@@ -33,6 +33,7 @@ import (
 	"github.com/adamf/jetway/pkg/mvt"
 	"github.com/adamf/jetway/pkg/pnl"
 	"github.com/adamf/jetway/pkg/pnr"
+	"github.com/adamf/jetway/pkg/rescode"
 	"github.com/adamf/jetway/pkg/store"
 	"github.com/adamf/jetway/pkg/transport"
 	"github.com/adamf/jetway/pkg/typeb"
@@ -143,6 +144,10 @@ type Tenant struct {
 	departureDelay func(world.Flight, time.Time) int
 	missedMu       sync.Mutex
 	missed         map[string]Missed
+	// denied is the passengers denied boarding today, and shown is how
+	// revenue management hears who came for a closed flight.
+	denied []Denied
+	shown  func(carrier, flightNum, board, compartment string, booked, away int)
 	// The operations desk: which day is being flown, the ICAO indicators
 	// of the airports, and the air traffic services messages received.
 	day     time.Time
@@ -219,6 +224,16 @@ type Options struct {
 	// Nil, or a nil answer, keeps the fixed mix: a flight that has not
 	// flown long enough to have a record.
 	Learned func(carrier, flightNum, board, off, compartment string) []inventory.ClassDemand
+	// Authorized, when set, is the bookings a flight's cabin may hold, as
+	// the carrier's revenue management set it from its record of who
+	// comes (internal/rm): the cabin's seats, or more where the carrier
+	// overbooks. Nil, or an answer under the seats, sells the seats.
+	Authorized func(carrier, flightNum, board, compartment string, seats int) int
+	// Shown, when set, is told who came for each cabin of a flight when
+	// its door closes: the bookings the cabin held, and how many of them
+	// did not fly because the passenger stayed away. A passenger denied
+	// boarding came, and is not among them.
+	Shown func(carrier, flightNum, board, compartment string, booked, away int)
 	// Tariff prices the forecaster's classes in money, which is what lets
 	// bid-price control hold a connecting passenger's through fare against
 	// the seats it displaces; nil leaves network control off.
@@ -350,6 +365,14 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		return tariff.PickupPriced(compartment, seats, inv.SoldByClass(carrier, flightNum, wireDate, board, compartment), remaining, full)
 	}}
 	inv.Levels = rm.Levels
+	// A cabin the carrier overbooks sells to its authorised capacity, and
+	// its ladder is nested under that.
+	if opts.Authorized != nil {
+		inv.Authorized = func(carrier, flightNum, wireDate, board, compartment string, seats int) int {
+			return max(seats, opts.Authorized(carrier, flightNum, board, compartment, seats))
+		}
+		rm.Authorized = inv.Authorized
+	}
 	// Network control: with the forecast in money, a connecting itinerary
 	// must pay for the seats it displaces on every leg.
 	if opts.Tariff != nil {
@@ -481,7 +504,7 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 	t.openAHL = map[string]*baggage.TracingFile{}
 	t.traced = map[dcs.Key]string{}
 	t.dayPos, t.tariff, t.capacity, t.bookingDate = opts.DayPos, opts.Tariff, capacity, opts.BookingDate
-	t.learned = opts.Learned
+	t.learned, t.shown = opts.Learned, opts.Shown
 	t.channelCost, t.avsSent, t.touched = opts.ChannelCost, map[avail.Key]avail.Status{}, map[string]bool{}
 	t.touchSignal = make(chan struct{}, 1)
 	t.rushDecision = opts.RushDecision
@@ -1032,6 +1055,11 @@ func (t *Tenant) nameItems(ctx context.Context, f world.Flight, day time.Time) (
 				continue
 			}
 			if sg.Board != "" && sg.Board != f.From {
+				continue
+			}
+			// The list is of the passengers who hold a seat. One on the
+			// waitlist, or one the carrier could not seat, is not on it.
+			if sg.Status != "" && !rescode.ActionCode(sg.Status).Confirmed() {
 				continue
 			}
 			onLeg = true

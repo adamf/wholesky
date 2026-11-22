@@ -22,6 +22,12 @@ import (
 // flight draws, in place of the tariff's fixed mix. The records are in a
 // file beside the state file, written after each day is filled, so a
 // world that starts again knows what its flights have taught it.
+//
+// Each record also holds who came. When a flight's door closes, departure
+// control counts each cabin: the bookings it held and the passengers who
+// stayed away. From that the carrier sets how many bookings the main
+// cabin may hold the next time it is sold, at or over its seats. The
+// day's own selling holds the cabin to the limit its fill set.
 
 // initRevenueMemory makes the memory and reads what an earlier run kept.
 func (s *Sim) initRevenueMemory(opts Options) {
@@ -136,6 +142,30 @@ func (s *Sim) burnIn(ctx context.Context) {
 	s.saveRevenueMemory()
 	s.log.Info("revenue management burned in", "days", s.burn, "flights", len(sub.Flights), "cabins", s.rm.Len(),
 		"took", time.Since(started).Round(time.Millisecond).String())
+}
+
+// authorized is the bookings a flight's cabin may hold today: the limit
+// the carrier set when the day was filled, or the seats when it set none
+// or when another aircraft has the flight.
+func (s *Sim) authorized(carrier, flightNum, board, compartment string, seats int) int {
+	if s.rm == nil {
+		return seats
+	}
+	if cab := s.rm.Peek(rm.Key(carrier, flightNum, board, compartment)); cab != nil {
+		return cab.Limit(seats)
+	}
+	return seats
+}
+
+// shown adds a closed flight's cabin to the carrier's record of who
+// came: the bookings it held, and the passengers who stayed away.
+func (s *Sim) shown(carrier, flightNum, board, compartment string, booked, away int) {
+	if s.rm == nil {
+		return
+	}
+	if cab := s.rm.Peek(rm.Key(carrier, flightNum, board, compartment)); cab != nil {
+		cab.Show(booked, away)
+	}
 }
 
 // learned is what a flight's cabin draws over its booking window, by

@@ -31,4 +31,4 @@ jobs:
       # detector to find and take many times as long under it, so they
       # run here.
       - name: the market (no race detector)
-        run: go test -count=1 -timeout 30m -run 'TestFillSellsTheReportsFares|TestAForecastThatReadsItsOwnSalesSpiralsDown|TestTheMarketAnswersToFares' ./internal/fill/ ./internal/sim/
+        run: go test -count=1 -timeout 30m -run 'TestFillSellsTheReportsFares|TestAForecastThatReadsItsOwnSalesSpiralsDown|TestOverbookingFillsTheSeatsNoShowsLeave|TestTheMarketAnswersToFares' ./internal/fill/ ./internal/sim/

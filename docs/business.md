@@ -157,7 +157,7 @@ paper's own examples.
   purchase and carry change fees.
 - **Carriers.** A network carrier files at 1.06 of the market level and
   a low-cost carrier at 0.80. An ultra-low-cost carrier files at 0.50.
-  Its travellers then pay 0.76 of the market's average fare, because it
+  Its travellers then pay 0.77 of the market's average fare, because it
   sells its dearer classes on its fuller flights.
 - **Through fares.** A carrier files a through fare over its own
   connection or a partner's at 92 % of the 2 local fares.
@@ -173,19 +173,28 @@ paper's own examples.
 A test fills a US world of 12 carriers and 12,237 flights and compares
 the result with the report. The test first sells 30 days of booking
 windows, so that each flight's class limits come from its own record.
-The report is of airlines that know their flights.
+The report is of airlines that know their flights. Those airlines
+overbook, and about 1 of their bookings in 10 does not come. The
+carriers in the test do the same.
 
 | Measure | Target | Result |
 | --- | --- | --- |
-| Load factor | 0.82 | 0.825 |
-| Fare paid, as a share of the report's line | 1.00 | 0.997 |
-| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.76 |
+| Load factor, of passengers carried | 0.82 | 0.825 |
+| Fare paid, as a share of the report's line | 1.00 | 1.003 |
+| Ultra-low-cost carriers, as a share of their markets | 0.749 in the report | 0.77 |
+| Bookings that do not come | about 0.10 | 0.095 |
+| Passengers denied boarding in each 10,000 carried | 4.4 in 2018 | 4.4 |
 | Travellers who chose a fare that the engine refused | 0 | 0 |
+
+The targets for the no-shows and the denied boardings are from the
+Government Accountability Office's report on denied boarding
+(GAO-20-191, 2019). The denied boardings are a check and not a fit. No
+constant was moved to meet them.
 
 The test fails when a change to the ladder, the class limits or the
 traveller model moves these results. The test output says which constant
-to move. On the tariff's fixed class limits the same world fills to
-0.71.
+to move. On the tariff's fixed class limits, with no cabin sold past its
+seats, the same world books 0.77 of its seats and flies 0.69 full.
 
 ## Travellers
 
@@ -221,7 +230,7 @@ connection that meets the minimum connecting time. The fare engine
 prices each offer at the lowest fare that the rules, the channel and the
 open classes allow, as of the traveller's own booking date. The booking
 carries that quote. In the test world a carrier that cuts its fares 20 %
-goes from 188 sales to 220. A carrier that raises them 25 % goes to 139.
+goes from 186 sales to 218. A carrier that raises them 25 % goes to 139.
 
 The advance sales use the same model. For each flight the simulator
 draws a pool of travellers and sells to them in the order of their
@@ -274,34 +283,116 @@ of the paper by Fiig and others.
 
 ### Three ways to read a record
 
-A test sells the 942 flights of 1 network carrier for 38 days. Demand is
-1.4 times that of an ordinary day, so that the cabins fill. For the
-first 7 days the carrier uses the tariff's fixed limits and earns $37.3
-million a day. The carrier then reads its record in 1 of 3 ways.
+A test sells the 942 flights of 1 network carrier for 38 days at a
+peak, so that the cabins fill. At the peak 175 travellers consider a
+flight for each 100 seats that it is meant to fill. On an ordinary day
+149 do. No cabin is sold past its seats in this test, so that the 3
+readings differ in the forecast alone. For the first 7 days the carrier
+uses the tariff's fixed limits and earns $35.8 million a day. The
+carrier then reads its record in 1 of 3 ways.
 
 | Reading | Days 9 to 13 | Last 5 days | Change |
 | --- | --- | --- | --- |
-| Sales read as demand | $38.9 million | $37.2 million | −4.3 % |
-| Unconstrained, class by class | $41.3 million | $41.9 million | +1.4 % |
-| Fare adjusted | $42.6 million | $44.0 million | +3.2 % |
+| Sales read as demand | $37.2 million | $35.6 million | −4.3 % |
+| Unconstrained, class by class | $39.4 million | $40.1 million | +1.5 % |
+| Fare adjusted | $40.7 million | $41.8 million | +2.9 % |
 
 - **Sales read as demand.** The forecast for the dear classes falls,
   the carrier holds fewer seats for them, and the cheap classes take the
-  seats. Full fare goes from 2.5 % of the seats sold to 1.3 %. Revenue
+  seats. Full fare goes from 2.4 % of the seats sold to 1.4 %. Revenue
   is still falling on the last day. This is the spiral-down effect that
   Cooper, Homem-de-Mello and Kleywegt described in 2006.
 - **Unconstrained.** The fall stops. Buy-down continues. Classes K and L
   have the same rules, and K costs more. K goes from 16.8 % of the seats
   sold to 1.9 %, because K sells only while L is closed.
-- **Fare adjusted.** Revenue holds and is 18 % above the fixed limits.
+- **Fare adjusted.** Revenue holds and is 17 % above the fixed limits.
 
 jetway has the same comparison on example 5 of the spiral-down paper.
 The manager's model protects 70 seats of 100, and the best level is 95,
 as in the paper. From 70, sales read as demand end at 7 seats protected.
 Fare adjustment ends at 94.
 
-At the demand of an ordinary day the 3 readings are closer. Fare
-adjustment then earns 4 % more than sales read as demand.
+At the demand of an ordinary day the fall is slower. Sales read as
+demand lose 1.9 % in the same 30 days. Fare adjustment then earns 10 %
+more than sales read as demand.
+
+### Overbooking
+
+About 1 booking in 10 does not come for the flight. A carrier that sells
+each cabin to its seat count flies those seats empty on its full
+flights. Most carriers therefore let the main cabin hold more bookings
+than seats.
+
+An empty seat at departure is 1 of 3 things, and the carrier's records
+keep them apart.
+
+- **Unsold.** Nobody booked the seat. The booking record has it as time
+  on sale with no sale.
+- **No-show.** A passenger booked the seat and did not come. Departure
+  control has the name on its list and never accepted the passenger.
+- **Spoiled.** A no-show's seat in a cabin that had reached its limit.
+  The limit turned a booking away, so the seat cost the carrier a fare.
+
+A passenger who came and found no seat is none of the 3. That passenger
+is a denied boarding.
+
+- **Who stays away.** A traveller on a fare that can be refunded stays
+  away from 17 % of bookings. A traveller on a fare that cannot be
+  refunded stays away from 8.5 %. The split is an estimate. The average
+  is 9.5 % of bookings. The Government Accountability Office gives about
+  10 % for US airlines, down from 12 % to 15 % (GAO-20-191).
+- **The record.** When a flight's door closes, departure control counts
+  each cabin: the bookings, the no-shows, the passengers who flew and
+  the passengers who were denied boarding. The carrier keeps the count
+  for each flight, with the same memory as the booking record.
+- **The limit.** The carrier sets the limit of each main cabin from the
+  flight's own show-up rate and from how much that rate varies. The
+  limit is the one with the least expected cost of denied boardings and
+  spoiled seats together. This is the cost-based model of Peter
+  Belobaba's lecture on overbooking (MIT OpenCourseWare 16.75J, lecture
+  19). A spoiled seat costs the cabin's average fare. A denied boarding
+  costs twice that, which is the carrier's offer to a volunteer. No
+  limit is more than 20 % over the seats.
+- **Who overbooks.** JetBlue and Southwest say that they do not
+  overbook, and their cabins sell to the seat count. No carrier
+  overbooks a front cabin. A flight overbooks only after 7 departures
+  are on its record.
+- **At the airport.** jetway's departure control resolves an oversold
+  cabin in 4 steps. A booked passenger who comes to a full cabin waits
+  for a seat. When check-in closes, the passengers who wait take the
+  seats of the no-shows, in the front cabin when the main cabin is full.
+  The agent then asks for volunteers, and 1 seated passenger in 25
+  agrees, which is an estimate. At the door, a passenger who still has
+  no seat is denied
+  boarding. The final sales message reports that passenger as denied
+  boarding and not as a no-show.
+- **The cost.** A volunteer gets twice the fare, to a limit of $1,075.
+  That offer is an estimate. A passenger turned away at a US airport
+  gets what 14 CFR 250.5 gives. On a domestic flight that is nothing
+  when the next flight arrives within 1 hour of the plan. It is twice
+  the fare within 2 hours, to a limit of $1,075, and 4 times the fare
+  after that, to a limit of $2,150. Under Regulation 261 the passenger
+  gets the compensation of Article 7. US law owes nothing when a smaller
+  aircraft took the flight. The scorecard has the total as the cost
+  "denied boarding".
+
+A test sells the 942 flights of 1 network carrier for 38 busy days, in 3
+ways. A busy day has a quarter more travellers than an ordinary day.
+
+| Carrier | Limits over seats | Seats flown full | Seats spoiled | Denied in 10,000 | Fares a day |
+| --- | --- | --- | --- | --- | --- |
+| No overbooking | 0 | 0.796 | 1.50 % | 0 | $43.9 million |
+| A denied boarding counted at 2 fares | 7.2 % | 0.848 | 0.46 % | 2.1 | $44.6 million |
+| A denied boarding counted at 20 fares | 3.4 % | 0.821 | 0.91 % | 0.07 | $44.2 million |
+
+The carrier that overbooks carries 6.5 % more passengers in the same
+seats and earns 1.7 % more. Its compensation is under 0.1 % of its
+fares. A network carrier denies fewer boardings than the industry does,
+because the airport seats an oversold main cabin in the empty seats in
+front.
+
+jetway's tests hold the 3 overbooking models against the worked figures
+of the lecture.
 
 ### The start
 
@@ -321,9 +412,11 @@ has no day of its own to learn from. The day's controller reads the
 booking curve on the world's clock, as if the flight's booking window
 were sold again during the day. Its baseline is the flight's own record:
 the demand of each class over the booking window, at the adjusted fares.
-A flight with no record uses a fixed mix that every flight shares.
+A flight with no record uses a fixed mix that every flight shares. The
+day's selling holds each main cabin to the limit that the carrier set
+when the day was filled.
 
-On the calibration day, 1 traveller in 13 pays full fare. More than half
+On the calibration day, 1 traveller in 11 pays full fare. More than half
 fly in the 4 cheapest classes. About 1 in 40 flies in the front cabin.
 
 A network carrier's narrow-body has a front cabin with 2 seats on each
@@ -605,8 +698,21 @@ that takes the `network` department decides for itself.
 - **A forecast by origin and destination.** The record is by flight leg.
   A connecting passenger is in the record of each leg, and the legs do
   not know that they share the passenger.
-- **Overbooking.** A carrier sells each cabin to its seat count. It does
-  not forecast no-shows or cancellations.
+- **Cancellations before departure.** A booking is never cancelled
+  inside the booking window, so a limit does not fall as the departure
+  comes nearer. The travellers who change their plans late are counted
+  among the no-shows.
+- **A no-show forecast by passenger.** A carrier has 1 show-up rate for
+  each cabin of each flight. It does not forecast by fare, by connection
+  or by passenger.
+- **A no-show's fare.** The carrier keeps the fare of a passenger who
+  did not come, also on a fare that can be refunded.
+- **The passenger after a denied boarding.** The carrier pays the
+  passenger. The simulator does not put the passenger on the later
+  flight.
+- **Empty seats in front.** The limit of a main cabin does not count on
+  the seats that the front cabin will have empty, though the airport
+  uses them.
 - **Seasons and days of the week.** Each day has the same schedule and
   the same demand, so a flight's record holds 1 kind of day.
 - **Direct sales on several machines.** A sale on the carrier's own

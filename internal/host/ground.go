@@ -33,6 +33,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airport"
 	"github.com/adamf/wholesky/internal/equipment"
+	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -381,15 +382,21 @@ func partiesOf(f *dcs.Flight, status dcs.Status) []party {
 // arrival is when a party turns up at the airport, in minutes before the
 // scheduled departure, or false if they never do. It is drawn from the
 // party's identity so it is the same on every tick, and it is where the
-// synthetic behaviour lives: a few in a hundred no-show; a share connect
+// synthetic behaviour lives: about 1 party in 11 does not come, more of
+// those on fares that can be refunded (tariff.NoShow); a share connect
 // off an inbound flight and miss the connection when that flight is late.
 func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut int, inbound *dcs.Connection, ok bool) {
 	h := hashOf(pt.key + f.Carrier + f.Number + day.Format("0102"))
+	class := ""
+	if pt.lead != nil {
+		class = pt.lead.Class
+	}
+	if staysAway(h, class) {
+		return 0, nil, false // no-show
+	}
 	r := h % 100
 	switch {
-	case r < 4:
-		return 0, nil, false // no-show
-	case r < 18:
+	case r < 14:
 		// Connecting off one of this carrier's own arrivals into f.From.
 		inb, found := t.inboundFor(f, h)
 		if !found {
@@ -415,6 +422,48 @@ func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut in
 		return max(min(arrives-10, 170), 0), conn, true
 	}
 	return 46 + (h/100)%125, nil, true // 46..170 minutes before departure
+}
+
+// staysAway says whether a party booked in a class does not come for the
+// flight. The party's own number decides, against the share of its fare's
+// travellers who stay away.
+func staysAway(h int, class string) bool {
+	return (float64((h/13)%10000)+0.5)/10000 < tariff.NoShow(class)
+}
+
+// volunteerShare is the share of seated passengers who give up the seat
+// for the carrier's offer when it asks. An estimate: with 150 passengers
+// seated, 6 take it, so a flight short of 1 or 2 seats nearly always
+// finds its volunteers. Airlines report 43 volunteers for each passenger
+// turned away against their will (GAO-20-191, for 2018).
+const volunteerShare = 0.04
+
+// volunteers says whether a seated passenger takes the carrier's offer.
+func volunteers(p *dcs.Passenger, f world.Flight) bool {
+	h := hashOf(p.Party + fmt.Sprint(p.ID) + f.Number + "offer")
+	return (float64((h/7)%1000)+0.5)/1000 < volunteerShare
+}
+
+// Denied is one passenger denied boarding today: the flight, the class
+// booked, whether the passenger agreed, and the cause.
+type Denied struct {
+	Flight    world.Flight
+	Class     string
+	Voluntary bool
+	Cause     dcs.Oversale
+}
+
+// Denied is the passengers denied boarding today.
+func (t *Tenant) Denied() []Denied {
+	t.missedMu.Lock()
+	defer t.missedMu.Unlock()
+	return append([]Denied(nil), t.denied...)
+}
+
+func (t *Tenant) noteDenied(f world.Flight, p *dcs.Passenger) {
+	t.missedMu.Lock()
+	t.denied = append(t.denied, Denied{Flight: f, Class: p.Class, Voluntary: p.Volunteer, Cause: p.Oversale})
+	t.missedMu.Unlock()
 }
 
 // minimumConnection is the minutes a connection needs at a station whose
@@ -473,7 +522,7 @@ func (t *Tenant) Missed() []Missed {
 }
 
 // NewDay starts the counts that are a day's over: the bag office's
-// files and the missed connections. The day that ended has been closed
+// files, the missed connections and the denied boardings. The day that ended has been closed
 // into the carrier's book with them.
 func (t *Tenant) NewDay() {
 	t.groundMu.Lock()
@@ -481,6 +530,7 @@ func (t *Tenant) NewDay() {
 	t.groundMu.Unlock()
 	t.missedMu.Lock()
 	t.missed = map[string]Missed{}
+	t.denied = nil
 	t.missedMu.Unlock()
 }
 
@@ -683,6 +733,11 @@ func (t *Tenant) CheckIn(ctx context.Context, f world.Flight, day time.Time, min
 			}
 			continue
 		}
+		if len(acc.Passengers) > 0 && acc.Passengers[0].Status != dcs.StatusAccepted {
+			// The cabin is full and the party waits for seats with a claim
+			// to them. Its bags are held until it has them.
+			continue
+		}
 		if len(acc.Tags) > 0 {
 			if err := t.announceBags(ctx, acc.Flight, acc.Passengers[0], ""); err != nil && firstErr == nil {
 				firstErr = err
@@ -737,13 +792,65 @@ func (t *Tenant) OnOffload(ctx context.Context, fl *dcs.Flight, p *dcs.Passenger
 	}
 }
 
-// CloseCheckIn closes the counter; standbys clear into whatever is left.
+// CloseCheckIn closes the counter; standbys clear into whatever is left,
+// the booked passengers who wait for a seat first. If some of those
+// still wait, the agent asks for volunteers.
 func (t *Tenant) CloseCheckIn(ctx context.Context, f world.Flight, day time.Time) error {
 	if t.isCancelled(f, day) {
 		return nil
 	}
-	_, _, err := t.DCS.CloseCheckIn(ctx, flightKey(f, day))
+	key := flightKey(f, day)
+	fl, cleared, err := t.DCS.CloseCheckIn(ctx, key)
+	if err != nil {
+		return err
+	}
+	for _, p := range cleared {
+		if aerr := t.announceBags(ctx, fl, p, ""); aerr != nil && err == nil {
+			err = aerr
+		}
+	}
+	if serr := t.solicit(ctx, f, key, fl); serr != nil && err == nil {
+		err = serr
+	}
 	return err
+}
+
+// solicit asks the seated passengers, in the order they checked in, to
+// give up their seats while booked passengers wait for one. Each who
+// agrees is a denied boarding by agreement. Their seat goes to the
+// passenger who has waited longest, and their bags come off.
+func (t *Tenant) solicit(ctx context.Context, f world.Flight, key dcs.Key, fl *dcs.Flight) error {
+	waiting := fl.Counts().Waiting
+	var firstErr error
+	for _, p := range fl.Passengers {
+		if waiting <= 0 {
+			break
+		}
+		if p.Status != dcs.StatusAccepted || !volunteers(p, f) {
+			continue
+		}
+		v, err := t.DCS.Volunteer(ctx, key, p.ID)
+		if errors.Is(err, dcs.ErrNotOversold) {
+			break
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		t.noteDenied(f, v.Volunteer)
+		if err := t.announceBags(ctx, v.Flight, v.Volunteer, "DEL"); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if v.Seated != nil {
+			waiting--
+			if err := t.announceBags(ctx, v.Flight, v.Seated, ""); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 // Board is one wave of the gate: every accepted passenger whose turn has
@@ -991,6 +1098,29 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 			firstErr = err
 		}
 	}
+	// A passenger who took a seat at the door has bags that were tagged
+	// then.
+	for _, p := range cl.Onloaded {
+		if err := t.announceBags(ctx, fl, p, ""); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	// The passengers turned away at the door are owed what the law says.
+	// The volunteers were counted when they agreed.
+	leg, known := t.legOf(fl.Flight, fl.Board)
+	for _, p := range cl.Denied {
+		if known && !p.Volunteer {
+			t.noteDenied(leg, p)
+		}
+	}
+	// Revenue management hears who came, cabin by cabin. A passenger who
+	// checked in and did not fly, other than one denied boarding, left
+	// the seat empty as a no-show does.
+	if t.shown != nil && known {
+		for comp, c := range fl.Tally() {
+			t.shown(leg.Carrier, leg.Number, leg.From, comp, c.Booked, c.NoShows+c.Offloaded)
+		}
+	}
 	send(checkIn, []string{t.Carrier.TTYAddress, t.watch}, cl.PFS, "PFS")
 	send(checkIn, []string{t.stationAddress(fl.Dest, deptCheckIn)}, cl.PTM, "PTM")
 	send(checkIn, []string{t.stationAddress(fl.Dest, deptCheckIn)}, cl.PSM, "PSM")
@@ -1012,6 +1142,16 @@ func (t *Tenant) Cancelled(f world.Flight, day time.Time) bool { return t.isCanc
 
 // Boarded is the departure's boarded count at the door, 0 before it closed.
 func (t *Tenant) Boarded(f world.Flight, day time.Time) int { return t.boardedFor(f, day) }
+
+// Carried is the passengers a departure left with, as its door counted
+// them. ok is false for a flight departure control has not closed.
+func (t *Tenant) Carried(f world.Flight, day time.Time) (n int, ok bool) {
+	key := flightKey(f, day)
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	n, ok = t.boarded[key.Flight+"/"+key.Date]
+	return n, ok
+}
 
 // boardedFor is the departure's boarded count, for the movement message.
 // A flight departure control never closed -- a boot mid-day, a chaos cut

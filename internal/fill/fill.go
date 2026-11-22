@@ -141,17 +141,30 @@ type Options struct {
 	// Dry sells the day and writes no records: the sink is not called.
 	// The carriers' revenue management still gets its record, which is
 	// what a burn-in is for, and the plan still counts what was sold.
+	// Nobody flies a dry day, so the fill also tells each cabin's record
+	// who came: on a day that is flown, departure control does that.
 	Dry bool
+	// Overbooks reports whether a carrier overbooks. A carrier that does
+	// lets its main cabin hold more bookings than seats, by what the
+	// cabin's record of who came allows (rm.Cabin.Authorize). Nil is
+	// rm.Overbooks: every carrier but the 2 that say they do not. It needs
+	// RM.
+	Overbooks func(carrier string) bool
+	// DeniedCost is what a carrier counts a denied boarding to cost it
+	// when it sets a limit, in units of the cabin's average fare. Zero is
+	// rm.DeniedCost.
+	DeniedCost float64
 }
 
 // pool is how many travellers consider a flight for each seat it is meant
-// to carry. Some find every fare left too dear and stay at home, so the
-// pool is larger than the load: measured over a filled world at the
-// fares as filed, with each flight's limits set from its own record, 100
-// travellers in the pool put 80 in seats. On the tariff's fixed limits
-// they put 57 in seats, and the pool was 100 for each 57 while every
-// flight sold that way.
-const pool = 1.0 / 0.80
+// to fly full. Some find every fare left too dear and stay at home, and
+// some who book do not come, so the pool is larger than the load.
+// Measured over a filled world at the fares as filed, with each flight's
+// limits set from its own record and the main cabins overbooked by the
+// carriers that do so, 100 travellers in the pool make 74 bookings and
+// put 67 passengers in seats. Before any traveller stayed away from a
+// flight, the pool was 100 for each 80.
+const pool = 1.0 / 0.67
 
 // Plan is what a fill produced.
 type Plan struct {
@@ -170,6 +183,13 @@ type Plan struct {
 	Sold    int
 	Fares   int64
 	Classes map[string]int
+	// The day as it would fly, for the seats sold to the market's
+	// travellers. NoShows is the booked passengers who do not come.
+	// Boarded is those who fly. Denied is those who come and have no seat
+	// in any cabin. Spoiled is the seats that leave empty from a cabin
+	// that had reached its limit. Over is the bookings the cabins were
+	// authorised above their seats.
+	NoShows, Boarded, Denied, Spoiled, Over int
 }
 
 // Sink receives one carrier's records in batches, in a stable order.
@@ -210,6 +230,9 @@ func (o Options) defaults() Options {
 	}
 	if o.Day.IsZero() {
 		o.Day = time.Now().UTC().Truncate(24 * time.Hour)
+	}
+	if o.DeniedCost <= 0 {
+		o.DeniedCost = rm.DeniedCost
 	}
 	return o
 }
@@ -275,6 +298,11 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 		plan.Marketed += p.Marketed
 		plan.Sold += p.Sold
 		plan.Fares += p.Fares
+		plan.NoShows += p.NoShows
+		plan.Boarded += p.Boarded
+		plan.Denied += p.Denied
+		plan.Spoiled += p.Spoiled
+		plan.Over += p.Over
 		if plan.Classes == nil {
 			plan.Classes = map[string]int{}
 		}
@@ -311,6 +339,10 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	h := fnv.New64a()
 	h.Write([]byte(code))
 	rng := rand.New(rand.NewSource(opts.Seed ^ int64(h.Sum64())))
+	// Who comes is drawn apart from who books, so a carrier that changes
+	// its limits meets the same travellers.
+	showRng := rand.New(rand.NewSource(opts.Seed ^ int64(h.Sum64()) ^ 0x5bd1e995))
+	overbooks := opts.RM != nil && ((opts.Overbooks == nil && rm.Overbooks(code)) || (opts.Overbooks != nil && opts.Overbooks(code)))
 	own := &allocator{a: pnr.NewLocatorAllocator(opts.Secret(code)), next: counterBase}
 	acct := opts.Accounting(code)
 	var ticketSeq uint64 = 2_000_000_000
@@ -376,8 +408,9 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	// Seats sold per compartment on each flight; the class a party draws
 	// has to fit its cabin on every leg, or it is moved.
 	sold := make([]map[string]int, len(flights))
+	away := make([]map[string]int, len(flights)) // of them, the passengers who will not come
 	for i := range sold {
-		sold[i] = map[string]int{}
+		sold[i], away[i] = map[string]int{}, map[string]int{}
 	}
 	cabins := make([]map[string]int, len(flights))
 	cabinsOf := func(i int) map[string]int {
@@ -522,6 +555,7 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		}
 		f := flights[i]
 		c := &cabinRM{seats: cabinsOf(i)[comp], at: map[string]int{}}
+		c.limit = c.seats
 		for _, cl := range tariff.Ladder() {
 			if cabinClass(market.CabinOf(cl)) == comp {
 				c.at[cl] = len(c.classes)
@@ -548,6 +582,17 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		}
 		c.cab = opts.RM.Cabin(rm.Key(code, f.Number, f.From, comp), c.classes)
 		c.log, c.learned = c.cab.Begin(), c.cab.Learned()
+		// The main cabin may hold more bookings than seats, once the
+		// flight has its record. Carriers do not overbook the cabins in
+		// front. A day sold a second time keeps the limit it had.
+		if comp == "Y" && overbooks && c.learned {
+			if !opts.Remembered {
+				c.limit = c.cab.Authorize(c.seats, 0, opts.DeniedCost, 1)
+			} else {
+				c.limit = c.cab.Limit(c.seats)
+			}
+			plan.Over += c.limit - c.seats
+		}
 		for g := range c.book {
 			c.book[g] = make([]int, len(c.classes))
 		}
@@ -557,6 +602,22 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		revman[i][comp] = c
 		return c
 	}
+	// room is the bookings a cabin may hold: its seats, or its authorised
+	// capacity where the carrier overbooks it. over is what a flight's
+	// cabins may hold above the aircraft's seats.
+	room := func(i int, comp string) int {
+		if c := revman[i][comp]; c != nil {
+			return c.limit
+		}
+		return cabinsOf(i)[comp]
+	}
+	over := func(i int) int {
+		seats, ok := cabinsOf(i)["Y"]
+		if !ok || !overbooks {
+			return 0
+		}
+		return rmOf(i, "Y").limit - seats
+	}
 	// isOpen reports whether a class has room for a party on a flight: in
 	// the cabin, and under the class's limit. The limit is the tariff's
 	// fixed one, counted on all the cabin has sold, until the flight's own
@@ -565,16 +626,17 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	// what the frame has sold in the class and below it.
 	isOpen := func(i int, comp, class string, frame, party int) bool {
 		cab := cabinsOf(i)
-		if sold[i][comp]+party > cab[comp] {
+		c := rmOf(i, comp)
+		if sold[i][comp]+party > room(i, comp) {
 			return false
 		}
-		if c := rmOf(i, comp); c != nil && c.learned {
+		if c != nil && c.learned {
 			if k, ok := c.at[class]; ok {
 				ctl := c.controls(frame)[k]
 				if ctl.Closed {
 					return false
 				}
-				left := c.seats - int(math.Round(ctl.Protect))
+				left := c.limit - int(math.Round(ctl.Protect))
 				for g := 0; g < frame; g++ {
 					left -= c.total[g]
 				}
@@ -660,6 +722,9 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		plan.Sold += t.Party * len(idx)
 		plan.Fares += amounts[pick] * int64(t.Party)
 		plan.Classes[classes[pick]] += t.Party * len(idx)
+		// Whether the party comes for the trip is theirs alone, and the
+		// fare they bought says how likely they are to.
+		stays := showRng.Float64() < tariff.NoShow(classes[pick])
 		km := 0
 		for _, i := range idx {
 			km += max(flights[i].KM, 1)
@@ -667,6 +732,9 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		for li, i := range idx {
 			comp := inventory.CompartmentFor(classes[pick], cabinsOf(i))
 			sold[i][comp] += t.Party
+			if stays {
+				away[i][comp] += t.Party
+			}
 			if c := rmOf(i, comp); c != nil {
 				// A fare over two legs is the record's by the distance of
 				// each.
@@ -770,8 +838,9 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 		if opts.Tariff != nil {
 			// The market: the pool buys in booking order until the flight
 			// has its load or the pool is spent.
+			full := f.Seats + over(i)
 			for _, t := range travellers(f, target[i]-assigned[i]) {
-				if assigned[i]+t.Party > f.Seats {
+				if assigned[i]+t.Party > full {
 					if opts.RM != nil {
 						// The aircraft is full: the record has a traveller
 						// who found nothing on sale.
@@ -858,11 +927,36 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 	if err := flush(); err != nil {
 		return plan, err
 	}
-	// The booking windows close: each flight's goes into its record.
-	for _, cabins := range revman {
-		for _, c := range cabins {
+	// The day as it would fly. A cabin with more passengers than seats
+	// puts the rest in the seats another cabin has empty, as the airport
+	// does when check-in closes, and denies boarding to those still left.
+	if opts.Tariff != nil {
+		for i := range flights {
+			cab := cabinsOf(i)
+			short, empty, spoiled := 0, 0, 0
+			for comp, seats := range cab {
+				d := inventory.Departure{Capacity: seats, Authorized: room(i, comp), Booked: sold[i][comp], NoShows: away[i][comp]}
+				plan.NoShows += d.Booked - d.ShowUps()
+				plan.Boarded += d.Boarded()
+				short += d.Denied()
+				empty += seats - d.Boarded()
+				spoiled += d.Spoiled()
+			}
+			moved := min(short, empty)
+			plan.Boarded += moved
+			plan.Denied += short - moved
+			plan.Spoiled += max(spoiled-moved, 0)
+		}
+	}
+	// The booking windows close: each flight's goes into its record. On
+	// a dry day so does who came, which on a flown day the airport tells.
+	for i, cabins := range revman {
+		for comp, c := range cabins {
 			if !opts.Remembered {
 				c.cab.Record(c.log)
+				if opts.Dry {
+					c.cab.Show(sold[i][comp], away[i][comp])
+				}
 			}
 		}
 	}
@@ -891,6 +985,7 @@ type cabinRM struct {
 	seats   int
 	classes []string // highest fare first
 	at      map[string]int
+	limit   int       // the bookings the cabin may hold: its seats, or more
 	fare    []float64 // the leg's own fare by class
 	top     float64   // the fare of the cabin's highest class
 	ap      []int     // advance purchase days by class; -1 when not filed

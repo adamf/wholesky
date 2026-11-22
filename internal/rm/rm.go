@@ -9,6 +9,12 @@
 // cabin, says which time frame a booking falls in, and writes the
 // records to a file so a restart does not forget them.
 //
+// It also keeps, for each cabin, who came: of the bookings a departure
+// held, how many passengers showed up (inventory.Shows). From that and
+// from what a denied boarding and an empty seat cost, the carrier sets
+// how many bookings the cabin may hold: its authorised capacity, at or
+// over its seats.
+//
 // The carrier sees what an airline sees: its own bookings and its own
 // controls. It does not see the travellers who looked and did not buy.
 // The time a class was on sale within a frame is counted in the
@@ -23,6 +29,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,11 +81,40 @@ const Warm = 7
 // It is the square of the 1.25 the fixed forecast used.
 const Spread = 1.5625
 
+// Over is the most a cabin is overbooked, as a share of its seats. A
+// record that says more is not believed that far.
+const Over = 0.20
+
+// DeniedCost is what a carrier counts a denied boarding to cost it when
+// it sets a cabin's limit, in units of what an empty seat costs it, which
+// is the cabin's average fare. It is 2, because the carrier offers a
+// volunteer twice the fare, and that is also what the law's first tier
+// gives a passenger turned away (14 CFR 250.5). See docs/business.md.
+const DeniedCost = 2.0
+
+// Overbooks reports whether a carrier overbooks. Most do. JetBlue has
+// always said it does not, and Southwest stopped in May 2017. The
+// Government Accountability Office found 2 such airlines among the 7
+// whose documents it read (GAO-20-191).
+func Overbooks(carrier string) bool {
+	switch strings.ToUpper(carrier) {
+	case "B6", "WN":
+		return false
+	}
+	return true
+}
+
 // Cabin is one flight's cabin: its record, and a lock, because the day's
 // selling asks while the next day's is being written.
 type Cabin struct {
 	mu sync.Mutex
 	h  *inventory.History
+	// shows is who came, and limit the bookings the cabin was authorised
+	// when its booking window was last sold, for a cabin of limitSeats
+	// seats. Zero is no limit set.
+	shows      inventory.Shows
+	limit      int
+	limitSeats int
 }
 
 // Memory is every flight's record.
@@ -131,10 +167,19 @@ func (m *Memory) Cabin(key string, classes []string) *Cabin {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if c = m.cabins[key]; c != nil && same(c.h.Classes, classes) {
-		return c
+	old := m.cabins[key]
+	if old != nil && same(old.h.Classes, classes) {
+		return old
 	}
 	c = &Cabin{h: inventory.NewHistory(classes, Frames)}
+	if old != nil {
+		// The classes changed and the booking record starts again. Who
+		// came does not depend on the classes, and is kept.
+		old.mu.Lock()
+		c.shows, c.limit, c.limitSeats = old.shows, old.limit, old.limitSeats
+		old.mu.Unlock()
+	}
+	c.shows.Memory = m.Departures
 	m.dress(c.h, key)
 	m.cabins[key] = c
 	return c
@@ -188,6 +233,76 @@ func (c *Cabin) Learned() bool { return c.Departures() >= Warm }
 
 // Classes are the cabin's booking classes, highest fare first.
 func (c *Cabin) Classes() []string { return c.h.Classes }
+
+// Show adds a departure to the record of who came: the confirmed
+// bookings the cabin held when the flight closed, and how many of them
+// did not fly because the passenger did not come.
+func (c *Cabin) Show(booked, noShows int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.shows.Record(booked, noShows)
+}
+
+// Shown is how many departures the cabin's record of who came holds.
+func (c *Cabin) Shown() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.shows.Departures()
+}
+
+// ShowRate is the cabin's show-up rate: its mean, and its deviation from
+// one departure to the next. The deviation is never under that of a cabin
+// of seats independent passengers, sqrt(p*(1-p)/seats), which is the
+// least a real cabin has. ok is false until the record holds Warm
+// departures.
+func (c *Cabin) ShowRate(seats int) (mean, deviation float64, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.shows.Departures() < Warm {
+		return 0, 0, false
+	}
+	mean, deviation, ok = c.shows.Rate()
+	if !ok || seats <= 0 {
+		return mean, deviation, ok
+	}
+	if least := math.Sqrt(mean * (1 - mean) / float64(seats)); deviation < least {
+		deviation = least
+	}
+	return mean, deviation, true
+}
+
+// Authorize sets how many bookings the cabin may hold for the booking
+// window now to be sold, and returns it. The limit is the one with the
+// least expected cost of denied boardings and empty seats together
+// (inventory.CostBased), given what one of each costs the carrier and
+// the cabin's own show-up rate. A cabin with no record of who came, or
+// with a cost of nothing for an empty seat, is authorised its seats.
+// slack is seats the carrier counts on elsewhere for passengers this
+// cabin cannot seat: the seats it expects empty in the cabin in front.
+func (c *Cabin) Authorize(seats, slack int, deniedCost, spoiledCost float64) int {
+	limit := seats
+	if mean, deviation, ok := c.ShowRate(seats); ok && deniedCost > 0 && spoiledCost > 0 {
+		limit = inventory.CostBased(seats+max(slack, 0), mean, deviation, deniedCost, spoiledCost) - max(slack, 0)
+		limit = min(max(limit, seats), seats+int(float64(seats)*Over))
+	}
+	c.mu.Lock()
+	c.limit, c.limitSeats = limit, seats
+	c.mu.Unlock()
+	return limit
+}
+
+// Limit is the bookings a cabin of seats seats was authorised when its
+// booking window was last sold. A cabin with no limit set, or one set
+// for another number of seats, has its seats: a smaller aircraft on the
+// day is not sold past its own.
+func (c *Cabin) Limit(seats int) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.limit <= 0 || c.limitSeats != seats {
+		return seats
+	}
+	return c.limit
+}
 
 // Begin starts the record of a departure, or of a part of one.
 func (c *Cabin) Begin() *inventory.Log {
@@ -249,11 +364,13 @@ func (m *Memory) Save(path string) error {
 		}
 		c.mu.Lock()
 		b, err := c.h.MarshalBinary()
+		sh, _ := c.shows.MarshalBinary()
+		limit, limitSeats := c.limit, c.limitSeats
 		c.mu.Unlock()
 		if err != nil {
 			return err
 		}
-		if err := enc.Encode(saved{k, b}); err != nil {
+		if err := enc.Encode(saved{Key: k, Record: b, Shows: sh, Limit: limit, LimitSeats: limitSeats}); err != nil {
 			return err
 		}
 	}
@@ -278,6 +395,12 @@ type header struct {
 type saved struct {
 	Key    string
 	Record []byte
+	// Shows is the record of who came, and Limit the authorised capacity
+	// in force for a cabin of LimitSeats seats. A file written before
+	// they were kept has none of them.
+	Shows      []byte
+	Limit      int
+	LimitSeats int
 }
 
 // Load reads the records Save wrote. A file that is not there is an
@@ -316,7 +439,14 @@ func (m *Memory) Load(path string) error {
 			continue // a record cut into other frames is not this world's
 		}
 		m.dress(h, s.Key)
-		cabins[s.Key] = &Cabin{h: h}
+		c := &Cabin{h: h, limit: s.Limit, limitSeats: s.LimitSeats}
+		c.shows.Memory = m.Departures
+		if len(s.Shows) > 0 {
+			if err := c.shows.UnmarshalBinary(s.Shows); err != nil {
+				return fmt.Errorf("rm: %s: %w", s.Key, err)
+			}
+		}
+		cabins[s.Key] = c
 	}
 	m.mu.Lock()
 	m.cabins, m.day, m.dated = cabins, head.Day, head.Dated

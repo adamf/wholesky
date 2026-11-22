@@ -644,12 +644,18 @@ Here is what works. `go test ./...` proves it on every run.
   come. With `-fill`, each carrier learns the forecast from its own
   flights. It keeps a record of each flight's booking window, divides the
   bookings by the time each class was on sale, and adjusts each fare for
-  the travellers who would have paid more.
+  the travellers who would have paid more. About 1 booking in 10 does
+  not come for the flight. Each carrier keeps a record of who came, and
+  most carriers let the main cabin hold more bookings than seats.
   [docs/business.md](docs/business.md#revenue-management) has the method
   and the test that compares it with a forecast that reads its own
   sales. As a result:
-  - A filled 737 confirms only the seats that remain.
+  - A filled 737 confirms only the bookings that its limit leaves.
   - It closes its cheap classes while full fare is still open.
+  - A booked passenger who comes to a full cabin waits for a seat. The
+    agent asks for volunteers. A passenger who still has no seat at the
+    door is denied boarding, is paid what the law gives, and is not
+    reported as a no-show.
   - It waitlists the next party and refuses after that.
   - It turns away a connecting passenger whose through fare does not cover
     the seats taken from the local passengers of two flights (bid-price

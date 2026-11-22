@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/adamf/jetway/pkg/dcs"
+
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/fuel"
@@ -268,6 +270,14 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			}
 		case "departed", "landed":
 			sc.Flown++
+			// The passengers a flight carried are those its door counted.
+			// Some who booked did not come, and a cabin the carrier
+			// overbooked had more bookings than seats.
+			if t != nil {
+				if n, ok := t.Carried(f, w.s.BookingDate); ok {
+					booked = min(n, seats)
+				}
+			}
 			sc.Passengers += booked
 			sc.Seats += seats
 			block := f.BlockMin
@@ -314,6 +324,14 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			sc.Misconnected += m.Pax
 		}
 		sc.Costs["passenger rights"] += w.s.misconnectCost(missed)
+		denied := t.Denied()
+		for _, d := range denied {
+			sc.Denied++
+			if d.Voluntary {
+				sc.Volunteers++
+			}
+		}
+		sc.Costs["denied boarding"] += w.s.deniedCost(denied)
 		tr := t.Tracing()
 		sc.Bags.Mishandled = tr.AHL
 		sc.Costs["bags"] += int64(tr.AHL) * costPerMishandledBag
@@ -385,17 +403,47 @@ func (s *Sim) misconnectCost(missed []host.Missed) int64 {
 	return cents
 }
 
-// owedMisconnect is what the law owes a passenger who missed a
-// connection because the inbound flight was late. The journey began
-// where the inbound flight did and ends where the missed flight goes.
-// The passenger arrives there on the carrier's next flight over the
-// same pair, later that day or the next morning, and that wait is the
-// delay the law counts: under Regulation 261 the delay at the final
-// destination of one booking (Folkerts, C-11/11). The cause is the
-// inbound flight's.
-func (s *Sim) owedMisconnect(m host.Missed) rights.Owed {
-	f, in := m.Flight, m.Inbound
-	wait, first := 0, -1
+// deniedCost is what a carrier pays the passengers it denied boarding,
+// in cents.
+func (s *Sim) deniedCost(denied []host.Denied) int64 {
+	var cents int64
+	for _, d := range denied {
+		cents += s.owedDenied(d)
+	}
+	return cents
+}
+
+// owedDenied is what a carrier pays one passenger denied boarding. A
+// volunteer has the carrier's offer. A passenger turned away has what
+// the law covering the flight gives, by the fare of the class booked and
+// by the wait for the carrier's next flight over the same pair, later
+// that day or the next morning.
+func (s *Sim) owedDenied(d host.Denied) int64 {
+	f := d.Flight
+	var fare int64
+	if s.tariff != nil {
+		for _, x := range s.tariff.Fares(f.Carrier, f.From, f.To) {
+			if x.Class == d.Class && !x.RoundTrip && len(x.Rule.Sale.Accounts) == 0 && x.OneWay.Amount > fare {
+				fare = x.OneWay.Amount
+			}
+		}
+	}
+	if d.Voluntary {
+		return rights.Offer(fare)
+	}
+	wait, overnight := s.nextFlight(f)
+	from, to := s.airports[f.From], s.airports[f.To]
+	reg := rights.Of(from.Country, to.Country, s.carriers[f.Carrier].Country)
+	owed := rights.DeniedBoarding(rights.Bumped{Regime: reg, KM: f.KM, Intra: rights.Intra(reg, from.Country, to.Country),
+		Outbound: reg != rights.US || from.Country == "United States", Fare: fare, Wait: wait, Overnight: overnight,
+		Smaller: d.Cause == dcs.OversaleEquipment})
+	return owed.Compensation + owed.Care
+}
+
+// nextFlight is the wait for the carrier's next flight over the same
+// pair after f, in minutes, and whether it is the next morning's.
+func (s *Sim) nextFlight(f world.Flight) (wait int, overnight bool) {
+	first := -1
 	for _, g := range s.Flights[f.Carrier] {
 		if g.From != f.From || g.To != f.To {
 			continue
@@ -407,14 +455,27 @@ func (s *Sim) owedMisconnect(m host.Missed) rights.Owed {
 			wait = g.DepMin - f.DepMin
 		}
 	}
-	overnight := wait == 0
-	if overnight {
-		// No later flight today: the first one tomorrow.
-		if first < 0 {
-			first = f.DepMin
-		}
-		wait = 24*60 - f.DepMin + first
+	if wait > 0 {
+		return wait, false
 	}
+	// No later flight today: the first one tomorrow.
+	if first < 0 {
+		first = f.DepMin
+	}
+	return 24*60 - f.DepMin + first, true
+}
+
+// owedMisconnect is what the law owes a passenger who missed a
+// connection because the inbound flight was late. The journey began
+// where the inbound flight did and ends where the missed flight goes.
+// The passenger arrives there on the carrier's next flight over the
+// same pair, later that day or the next morning, and that wait is the
+// delay the law counts: under Regulation 261 the delay at the final
+// destination of one booking (Folkerts, C-11/11). The cause is the
+// inbound flight's.
+func (s *Sim) owedMisconnect(m host.Missed) rights.Owed {
+	f, in := m.Flight, m.Inbound
+	wait, overnight := s.nextFlight(f)
 	from, to := s.airports[in.From], s.airports[f.To]
 	reg := rights.Of(from.Country, to.Country, s.carriers[f.Carrier].Country)
 	intra := rights.Intra(reg, from.Country, to.Country)

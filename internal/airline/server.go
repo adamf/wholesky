@@ -93,8 +93,13 @@ type Scorecard struct {
 	// Misconnected is the passengers who missed a connection onto one of
 	// the carrier's departures because their inbound flight was late.
 	Misconnected int `json:"misconnected"`
-	Decisions    int `json:"decisions"`
-	Defaulted    int `json:"defaulted"`
+	// Denied is the passengers with a confirmed booking who came for a
+	// flight and were denied boarding, and Volunteers those of them who
+	// gave up the seat for the carrier's offer.
+	Denied     int `json:"denied"`
+	Volunteers int `json:"volunteers"`
+	Decisions  int `json:"decisions"`
+	Defaulted  int `json:"defaulted"`
 	// Sales is where the carrier's tickets were sold and what the selling
 	// cost and collected.
 	Sales Sales `json:"sales"`

@@ -214,3 +214,96 @@ func For(d Disruption) Owed {
 	}
 	return o
 }
+
+// Bumped is one passenger who held a confirmed seat, came for the flight
+// and was denied boarding against their will.
+type Bumped struct {
+	Regime Regime
+	KM     int
+	// Intra says both ends are in the regime's territory. For United
+	// States law that is a domestic flight.
+	Intra bool
+	// Outbound says the flight leaves from the regime's territory. Part
+	// 250 does not cover a flight that leaves from a foreign airport.
+	Outbound bool
+	// Fare is the passenger's one-way fare to the destination, in US
+	// cents.
+	Fare int64
+	// Wait is how much later than planned the alternative arrives, in
+	// minutes, and Overnight says the passenger waits the night for it.
+	Wait      int
+	Overnight bool
+	// Smaller says a smaller aircraft took the flight.
+	Smaller bool
+}
+
+// The limits of 14 CFR 250.5 as amended on 24 October 2024 (89 FR 84818),
+// in US cents.
+const (
+	bumpedLimit  = 107500
+	bumpedDouble = 215000
+)
+
+// DeniedBoarding is what the law owes a passenger denied boarding
+// against their will.
+//
+// United States law, 14 CFR 250.5: nothing when the alternative arrives
+// within 1 hour of the planned arrival. Twice the fare, to a limit of
+// $1,075, when it arrives less than 2 hours after it on a domestic
+// flight, or less than 4 hours on a flight to another country. 4 times
+// the fare, to a limit of $2,150, when it arrives later than that.
+// Nothing is owed when a smaller aircraft took the flight (250.6(b)), or
+// on a flight that leaves from a foreign airport.
+//
+// Regulation 261, Article 4(3): the compensation of Article 7 at once, by
+// distance, halved when the alternative arrives within 2, 3 or 4 hours.
+// The reason for the denial does not matter.
+//
+// Care is owed under both while the passenger waits.
+func DeniedBoarding(b Bumped) Owed {
+	var o Owed
+	band := band(b.KM, b.Intra)
+	switch b.Regime {
+	case EU261, UK261:
+		o.Compensation = compensation(b.Regime, band)
+		if b.Wait <= []int{120, 180, 240}[band] {
+			o.Compensation /= 2
+		}
+		o.Care = mealCents
+		if b.Overnight {
+			o.Care += hotelCents
+		}
+		o.RefundRight = true
+	case US:
+		o.RefundRight = true
+		if b.Wait >= 180 {
+			o.Care += mealCents
+		}
+		if b.Overnight {
+			o.Care += hotelCents
+		}
+		if b.Smaller || !b.Outbound || b.Wait <= 60 {
+			break
+		}
+		long := 120
+		if !b.Intra {
+			long = 240
+		}
+		if b.Wait < long {
+			o.Compensation = min(2*b.Fare, bumpedLimit)
+		} else {
+			o.Compensation = min(4*b.Fare, bumpedDouble)
+		}
+	default:
+		o.RefundRight = true
+	}
+	return o
+}
+
+// Offer is what a carrier offers a passenger to give up a seat by
+// agreement, in US cents: twice the passenger's one-way fare, to the
+// limit of the law's first tier. No rule sets it and no public figure
+// says what volunteers accept, because a travel credit is reported to
+// the Department of Transportation as no compensation (GAO-20-191). It
+// is an estimate.
+func Offer(fare int64) int64 { return min(2*fare, bumpedLimit) }

@@ -120,8 +120,13 @@ It divides the bookings by the time on sale, and it applies the marginal
 revenue transformation of Fiig and others (2010) before EMSR-b. A test
 shows that a forecast which reads its own sales as demand spirals down,
 and that this one does not. The record is by flight leg and not by
-origin and destination. Overbooking is still missing, with its forecasts
-of no-shows and cancellations. A carrier that holds its
+origin and destination. Each carrier now overbooks its main cabins
+(jetway v0.1.106). It keeps a record of who came for each flight, and it
+sets each cabin's limit by the cost-based model of Belobaba's lecture.
+Departure control makes a booked passenger at a full cabin wait for a
+seat, asks for volunteers, and denies boarding to the rest. It does not
+report those passengers as no-shows. Cancellations before departure and
+a no-show forecast by passenger are still missing. A carrier that holds its
 last seats for its own channels values a request by the channel that
 asked (`inventory.Controller.Value`). A sale on the carrier's own site
 is made on the carrier's own node (jetway v0.1.100).

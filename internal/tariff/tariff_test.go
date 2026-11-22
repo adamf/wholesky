@@ -373,3 +373,23 @@ func TestMarketMultiplierIsOneMarketsAlone(t *testing.T) {
 		t.Error("market restored to the carrier's filing")
 	}
 }
+
+// Who stays away. A fare that can be refunded has twice the no-shows of
+// one that cannot. Over the classes a main cabin sells, the average is
+// 0.092*0.17 + 0.908*0.085 = 0.093 of bookings, against the "about 10
+// percent" of the Government Accountability Office's report (GAO-20-191).
+func TestNoShowByFare(t *testing.T) {
+	for class, want := range map[string]float64{"F": 0.17, "J": 0.17, "C": 0.17, "Y": 0.17, "D": 0.085, "B": 0.085, "Q": 0.085, "N": 0.085, "?": 0.085} {
+		if got := NoShow(class); got != want {
+			t.Errorf("class %s: %.3f of bookings do not come, want %.3f", class, got, want)
+		}
+	}
+	var booked, away float64
+	for _, d := range Forecast("Y", 180) {
+		booked += d.Mean
+		away += d.Mean * NoShow(d.Class)
+	}
+	if rate := away / booked; rate < 0.09 || rate > 0.10 {
+		t.Errorf("over a main cabin's classes %.4f of bookings do not come, want 0.093", rate)
+	}
+}

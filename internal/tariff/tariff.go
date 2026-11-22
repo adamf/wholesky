@@ -62,8 +62,10 @@ const (
 // The test of internal/fill holds it there, and says which way to move
 // it when the ladder, the limits or the travellers change. It was 1.53
 // when every flight sold under the fixed limits below: carriers that
-// know their flights fill more seats at lower fares.
-const mixRatio = 1.275
+// know their flights fill more seats at lower fares. It was 1.275 before
+// any traveller stayed away from a flight and before any cabin was sold
+// past its seats.
+const mixRatio = 1.335
 
 // MixRatio is the average fare travellers pay over the lowest regular
 // fare a network carrier files.
@@ -121,6 +123,34 @@ var ladder = []step{
 	{"V", "VA21", 1.00 / fullOverLowest, fare.Rule{AdvancePurchaseDays: 21, ChangeFee: usd(15000)}, true, false},
 	{"S", "SA21WEB", 0.90 / fullOverLowest, fare.Rule{AdvancePurchaseDays: 21, ChangeFee: usd(15000)}, true, true},
 	{"N", "NA30", 0.80 / fullOverLowest, fare.Rule{AdvancePurchaseDays: 30, NoChanges: true}, true, false},
+}
+
+// The share of booked travellers who do not come for the flight. The
+// Government Accountability Office's report on denied boarding
+// (GAO-20-191, 2019) has no-show rates at about 10 percent of the
+// bookings held at departure, down from 12 to 15, because more tickets
+// are sold with restrictions. No public source gives the rate by fare.
+// The 2 rates here are an estimate: a traveller on a fare that can be
+// refunded stays away twice as often as one on a fare that cannot, and
+// the average over the classes travellers buy is about 0.09. The
+// passengers who miss a connection are counted apart.
+const (
+	noShowFlexible   = 0.17
+	noShowRestricted = 0.085
+)
+
+// NoShow is the share of the travellers booked in a class who do not
+// come for the flight.
+func NoShow(class string) float64 {
+	for _, s := range ladder {
+		if s.class == class {
+			if s.rule.Refundable {
+				return noShowFlexible
+			}
+			return noShowRestricted
+		}
+	}
+	return noShowRestricted
 }
 
 // Ladder is the booking classes in fare order, highest first, for the

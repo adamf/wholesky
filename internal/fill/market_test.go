@@ -18,6 +18,7 @@ import (
 
 // measured is what a filled world sold.
 type measured struct {
+	plan         Plan
 	seats, sold  int
 	records      int
 	class        map[string]int // passengers by class
@@ -68,7 +69,7 @@ func measure(t *testing.T, m *world.Manifest, tf *tariff.Synthetic, opts Options
 	if err != nil {
 		t.Fatal(err)
 	}
-	out.seats = plan.Seats
+	out.seats, out.plan = plan.Seats, plan
 	return out
 }
 
@@ -95,8 +96,10 @@ func usWorld(t *testing.T) *world.Manifest {
 // 30 days of booking windows are sold first, and each flight's limits on
 // the day come from its own record (internal/rm). The report is of
 // airlines whose revenue management knows its flights, so that is the
-// day to hold against it. On the tariff's fixed limits the same world
-// carries 0.71.
+// day to hold against it. Those airlines overbook, and about 1 booking
+// in 10 does not come, so the carriers here do both. On the tariff's
+// fixed limits, with no cabin sold past its seats, the same world flies
+// 0.68 full.
 func TestFillSellsTheReportsFares(t *testing.T) {
 	if raceEnabled {
 		t.Skip("a calibration over a million bookings on one goroutine: CI runs it without the race detector")
@@ -116,8 +119,15 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 			t.Fatal(err)
 		}
 		if d == 0 {
-			if lf := float64(plan.Sold) / float64(plan.Seats); lf < 0.68 || lf > 0.74 {
+			// The first day has no record: fixed limits, and no cabin
+			// sold past its seats.
+			lf := float64(plan.Boarded) / float64(plan.Seats)
+			t.Logf("on the fixed limits the world books %.3f of its seats and flies %.3f", float64(plan.Sold)/float64(plan.Seats), lf)
+			if lf < 0.65 || lf > 0.71 {
 				t.Errorf("on the fixed limits the world carries %.3f", lf)
+			}
+			if plan.Over != 0 || plan.Denied != 0 {
+				t.Errorf("with no record the cabins were authorised %d over their seats and %d passengers were denied boarding", plan.Over, plan.Denied)
 			}
 		}
 	}
@@ -125,10 +135,33 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 	// so the dearer day below is sold under the same limits.
 	opts.Seed, opts.Remembered = 3+learning*7919, true
 	got := measure(t, m, tf, opts)
-	lf := float64(got.sold) / float64(got.seats)
-	t.Logf("%d flights, %d seats, %d sold (%.3f), %d records", len(m.Flights), got.seats, got.sold, lf, got.records)
+	// The report's load factor is of passengers carried, so the load to
+	// hold against it is the passengers who come and have a seat.
+	plan := got.plan
+	lf := float64(plan.Boarded) / float64(got.seats)
+	t.Logf("%d flights, %d seats, %d sold (%.3f), %d records", len(m.Flights), got.seats, got.sold, float64(got.sold)/float64(got.seats), got.records)
+	t.Logf("%d fly (%.3f of the seats), %d do not come (%.3f of the bookings), %d are denied boarding (%.2f in 10,000), %d seats spoil",
+		plan.Boarded, lf, plan.NoShows, float64(plan.NoShows)/float64(plan.Sold), plan.Denied, 1e4*float64(plan.Denied)/float64(plan.Boarded), plan.Spoiled)
+	if plan.Sold != got.sold {
+		t.Errorf("the plan counts %d seats sold and the records hold %d", plan.Sold, got.sold)
+	}
 	if lf < 0.80 || lf > 0.84 {
 		t.Errorf("a world filled to 0.82 carries %.3f: move pool", lf)
+	}
+	// About 10 percent of the bookings held at departure do not come
+	// (GAO-20-191, 2019).
+	if away := float64(plan.NoShows) / float64(plan.Sold); away < 0.08 || away > 0.11 {
+		t.Errorf("%.3f of the bookings do not come: the report has about 0.10", away)
+	}
+	// In 2018, of each 100,000 passengers who boarded, about 44 were
+	// denied boarding, 43 of them by agreement (GAO-20-191). In 2012 it
+	// was about 100. Nothing here was fitted to that: the carriers set
+	// their limits from what a denied boarding and an empty seat cost.
+	if denied := 1e4 * float64(plan.Denied) / float64(plan.Boarded); denied < 2 || denied > 10 {
+		t.Errorf("%.2f passengers in 10,000 are denied boarding: the report has 4.4 in 2018 and 10 in 2012", denied)
+	}
+	if plan.Boarded+plan.Denied+plan.NoShows != plan.Sold {
+		t.Errorf("%d booked, and %d flew, %d were denied and %d did not come", plan.Sold, plan.Boarded, plan.Denied, plan.NoShows)
 	}
 	if got.repriced != 0 {
 		t.Errorf("%d travellers chose a fare the pricing would not sell them", got.repriced)
@@ -161,7 +194,7 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 	for _, c := range cs {
 		t.Logf("  class %s %.3f", c, share(c))
 	}
-	// One traveller in 13 pays full fare, booking in the last days. More
+	// One traveller in 11 pays full fare, booking in the last days. More
 	// than half fly on the deep discounts they bought weeks ahead.
 	if y := share("Y"); y < 0.05 || y > 0.12 {
 		t.Errorf("full fare is %.3f of travellers", y)

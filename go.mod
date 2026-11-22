@@ -3,9 +3,10 @@ module github.com/adamf/wholesky
 go 1.27.0
 
 require (
-	github.com/adamf/jetway v0.1.105
+	github.com/adamf/jetway v0.1.106
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -30,5 +31,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -18,10 +18,11 @@ import (
 // flight's own earlier departures. How it reads those departures decides
 // whether that works.
 //
-// One network carrier's 900 flights are sold for 38 days at a peak: 1.4
-// times the travellers of an ordinary day, so that cabins fill and the
-// limits matter. The first 7 days run on the tariff's fixed limits. The
-// carrier then reads its record in one of 3 ways.
+// One network carrier's 900 flights are sold for 38 days at a peak: 175
+// travellers consider a flight for each 100 seats it is meant to fill,
+// against 149 on an ordinary day, so that cabins fill and the limits
+// matter. The first 7 days run on the tariff's fixed limits. The carrier
+// then reads its record in one of 3 ways.
 //
 // Read as demand, sales feed on themselves. A class that closed sold
 // nothing after it closed, and a traveller who would have paid more
@@ -69,8 +70,11 @@ func TestAForecastThatReadsItsOwnSalesSpiralsDown(t *testing.T) {
 		for d := 0; d < days; d++ {
 			plan, err := Day(context.Background(), one, Options{LoadFactor: 0.82, Seed: 3 + int64(d)*7919, Day: day, Tariff: tf, Base: tf.BaseFare,
 				Cabins: func(f world.Flight) map[string]int { return host.Cabins(f, 0) },
-				Share:  func(world.Flight) float64 { return 1.4 },
-				RM:     mem, Dry: true}, nil)
+				Share:  func(world.Flight) float64 { return 1.75 / pool },
+				// The cabins sell to their seats, so that the 3 readings
+				// differ in the forecast alone.
+				Overbooks: func(string) bool { return false },
+				RM:        mem, Dry: true}, nil)
 			if err != nil {
 				t.Error(err)
 				return r
@@ -134,6 +138,7 @@ func TestAForecastThatReadsItsOwnSalesSpiralsDown(t *testing.T) {
 	// Buy-down. K and L have the same rules and K costs more. Read class
 	// by class, K's demand is what it sold while L was closed.
 	before := mean(sales.upper, 0, rm.Warm)
+	t.Logf("class K on the fixed limits: %.3f of seats", before)
 	if u := unconstrained.upper[days-1]; u > before/4 {
 		t.Errorf("unconstrained, class K is %.3f of seats against %.3f on the fixed limits; buy-down should have taken it", u, before)
 	}
