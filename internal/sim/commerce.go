@@ -12,6 +12,7 @@ import (
 	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/airport"
+	"github.com/adamf/wholesky/internal/dayplan"
 	"github.com/adamf/wholesky/internal/distribution"
 	"github.com/adamf/wholesky/internal/equipment"
 	"github.com/adamf/wholesky/internal/host"
@@ -293,7 +294,7 @@ func (s *Sim) pathsFor(rng *rand.Rand, o, d string) []path {
 	for i := 0; i < len(from) && scanned < 600; i++ {
 		f1 := from[(start+i)%len(from)]
 		scanned++
-		if s.isClosed(f1.From, f1.To) || f1.DepMin < gone {
+		if s.isClosed(f1.From, f1.To) || f1.DepMin < gone || s.notFlying(f1) {
 			continue
 		}
 		if f1.To == d {
@@ -314,7 +315,7 @@ func (s *Sim) pathsFor(rng *rand.Rand, o, d string) []path {
 		for k := range onward {
 			f2 := &onward[k]
 			wait := f2.DepMin - f1.ArrMin
-			if wait < s.connectTime(f1, *f2) || wait > 300 {
+			if wait < s.connectTime(f1, *f2) || wait > 300 || s.notFlying(*f2) {
 				continue
 			}
 			// The same carrier's flight before anyone else's, then the
@@ -581,4 +582,11 @@ func daysToSunday(d time.Time) int {
 		n = 7
 	}
 	return n
+}
+
+// notFlying reports whether the day has cancelled a flight and said so. A
+// traveller is not offered it, alone or in a connection.
+func (s *Sim) notFlying(f world.Flight) bool {
+	_, announced := s.announced.Load(dayplan.Key(f))
+	return announced
 }

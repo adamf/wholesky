@@ -203,8 +203,13 @@ func (t *Tenant) startGround(accountingCode string) {
 func (t *Tenant) CancelFlight(ctx context.Context, f world.Flight, day time.Time, reason string) error {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
-	t.cancelled[key.Flight+"/"+key.Date] = reason
+	t.cancelled[legKey(key)] = reason
 	t.groundMu.Unlock()
+	// A cancelled flight is closed for sale at once. Left open, the
+	// carrier went on confirming seats on it until its counter would have
+	// closed, to passengers whom nobody would move: the queue of bookings
+	// to move was made when the cancellation went out.
+	t.sales(f, day, "UN")
 	c, err := t.DCS.CancelFlight(ctx, key, reason)
 	if errors.Is(err, dcs.ErrFlightNotFound) || errors.Is(err, dcs.ErrFlightClosed) {
 		return nil
@@ -226,7 +231,7 @@ func (t *Tenant) isCancelled(f world.Flight, day time.Time) bool {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
 	defer t.groundMu.Unlock()
-	_, ok := t.cancelled[key.Flight+"/"+key.Date]
+	_, ok := t.cancelled[legKey(key)]
 	return ok
 }
 
@@ -404,6 +409,13 @@ func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut in
 		if !found {
 			break
 		}
+		// The inbound flight was cancelled: the passenger is not here.
+		if t.inboundCancelled != nil && t.inboundCancelled(inb, day) {
+			t.missedMu.Lock()
+			t.missed[pt.key+f.Carrier+f.Number] = Missed{Flight: f, Inbound: inb, Pax: len(pt.pax)}
+			t.missedMu.Unlock()
+			return 0, nil, false
+		}
 		delay, held := 0, 0
 		if t.inboundDelay != nil {
 			delay = t.inboundDelay(inb, day)
@@ -421,7 +433,12 @@ func (t *Tenant) arrival(pt party, f world.Flight, day time.Time) (minutesOut in
 		}
 		arrives := gap - delay + held // minutes before the departure leaves
 		conn := &dcs.Connection{Flight: inb.Carrier + inb.Number, Date: strings.ToUpper(day.Format("02Jan")), Station: f.From, Dest: f.To}
-		return max(min(arrives-10, 170), 0), conn, true
+		// A passenger who makes the connection was checked in where the
+		// journey began, and is taken at the last wave of the counter at
+		// the latest. Returned as under that wave's 46 minutes, a party
+		// with a short connection was never accepted and closed as a
+		// no-show although it had made the flight.
+		return max(min(arrives-10, 170), lastWave), conn, true
 	}
 	return 46 + (h/100)%125, nil, true // 46..170 minutes before departure
 }
@@ -469,6 +486,9 @@ func (t *Tenant) noteDenied(f world.Flight, p *dcs.Passenger) {
 	t.denied = append(t.denied, Denied{Flight: f, Class: p.Class, Voluntary: p.Volunteer, Cause: p.Oversale})
 	t.missedMu.Unlock()
 }
+
+// lastWave is the last wave of the counter, in minutes before departure.
+const lastWave = 46
 
 // minimumConnection is the minutes a connection needs at a station whose
 // own time is not known here.
@@ -803,6 +823,11 @@ func (t *Tenant) CheckIn(ctx context.Context, f world.Flight, day time.Time, min
 			}
 			continue
 		}
+		// A party that is here did not miss the flight. An earlier wave
+		// may have judged that it would, before the flight was held.
+		t.missedMu.Lock()
+		delete(t.missed, pt.key+f.Carrier+f.Number)
+		t.missedMu.Unlock()
 		if len(acc.Passengers) > 0 && acc.Passengers[0].Status != dcs.StatusAccepted {
 			// The cabin is full and the party waits for seats with a claim
 			// to them. Its bags are held until it has them.
@@ -1156,7 +1181,7 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	// record of who came does not take it.
 	whole := known && cl.Counts.Boarded > 0 && t.listedAll(leg, fl, tally)
 	t.groundMu.Lock()
-	t.boarded[fl.Flight+"/"+fl.Date] = cl.Counts.Boarded
+	t.boarded[legKey(fl.Key)] = cl.Counts.Boarded
 	if t.carried != nil && whole {
 		t.carried[fl.Flight+"/"+fl.Date+"/"+fl.Board] = cl.Counts.Boarded
 	}
@@ -1270,7 +1295,7 @@ func (t *Tenant) Carried(f world.Flight, day time.Time) (n int, ok bool) {
 func (t *Tenant) boardedFor(f world.Flight, day time.Time) int {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
-	n, ok := t.boarded[key.Flight+"/"+key.Date]
+	n, ok := t.boarded[legKey(key)]
 	t.groundMu.Unlock()
 	if ok {
 		return n
@@ -1279,15 +1304,50 @@ func (t *Tenant) boardedFor(f world.Flight, day time.Time) int {
 }
 
 // Forget releases a flight's departure control record after it has landed.
+//
+// Everything the carrier holds about this departure goes with it: that it
+// was cancelled, retimed or flown by a smaller aircraft, and its door
+// count. The world flies the same date again tomorrow, so the next
+// departure of the flight has the same key, and what is left here would
+// be taken for its own. A flight retimed once was never retimed again,
+// and a smaller aircraft stayed on the flight for good.
+//
+// A flight number that flies several legs has each leg's state under its
+// own boarding point, so that one leg cancelled or landed does not cancel
+// or forget the others. The sortation system's tags are still by flight
+// number.
 func (t *Tenant) Forget(ctx context.Context, f world.Flight, day time.Time) {
 	key := flightKey(f, day)
 	_ = t.DCS.Forget(ctx, key)
 	t.groundMu.Lock()
-	delete(t.boarded, key.Flight+"/"+key.Date)
+	delete(t.boarded, legKey(key))
 	delete(t.sortation, key.Flight+"/"+key.Date)
-	delete(t.cancelled, key.Flight+"/"+key.Date)
+	delete(t.cancelled, legKey(key))
+	delete(t.retimed, key)
+	delete(t.substituted, key)
 	t.groundMu.Unlock()
+	if t.overrides != nil {
+		t.overrides.clear(f.Carrier, f.Number, f.From)
+	}
+	// Tomorrow's flight of this number is for sale again.
+	t.sales(f, day, "")
 }
+
+// sales forces the answer every class of a flight gives a request, or
+// with an empty status gives the classes back to their ladder.
+func (t *Tenant) sales(f world.Flight, day time.Time, status string) {
+	if t.Inventory == nil {
+		return
+	}
+	wire := strings.ToUpper(day.Format("02Jan"))
+	for _, class := range tariff.Ladder() {
+		t.Inventory.SetOverride(f.Carrier, f.Number, wire, f.From, class, status)
+	}
+}
+
+// legKey names one leg's departure: the flight, the date and where it
+// boards.
+func legKey(k dcs.Key) string { return k.Flight + "/" + k.Date + "/" + k.Board }
 
 // Summary is what the globe's drill-through shows about a departure.
 type Summary struct {

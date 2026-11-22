@@ -137,6 +137,8 @@ type Tenant struct {
 	marketed     map[string]world.Flight
 	codeshares   atomic.Int64
 	inboundDelay func(world.Flight, time.Time) int
+	// inboundCancelled is Options.InboundCancelled.
+	inboundCancelled func(world.Flight, time.Time) bool
 	// connect and departureDelay are Options.Connect and
 	// Options.DepartureDelay; missed is the parties that missed a
 	// connection today, each counted once.
@@ -278,6 +280,9 @@ type Options struct {
 	// a day, so a connecting passenger can miss their onward flight for the
 	// reason people really do. Nil means every inbound is on time.
 	InboundDelay func(f world.Flight, day time.Time) int
+	// InboundCancelled reports whether the day has cancelled a flight. A
+	// passenger who was to connect off it does not come.
+	InboundCancelled func(f world.Flight, day time.Time) bool
 	// AccountingCode is the carrier's three-digit numeric code, which leads
 	// its bag tags. Empty derives a stable stand-in from the designator.
 	AccountingCode string
@@ -469,18 +474,19 @@ func Start(ctx context.Context, c world.Carrier, flights []world.Flight, opts Op
 		flights: flights, marketed: map[string]world.Flight{}, client: client, watch: opts.WatchAddress,
 		distribution: opts.DistributionAddresses,
 		partners:     opts.PartnerAddresses, log: log, bootCtx: ctx,
-		pnlSent:        map[string]map[string]nameItem{},
-		arrivals:       map[dcs.Kind]int{},
-		atsSeen:        map[ats.Type]int{},
-		atfmSeen:       map[atfm.Title]int{},
-		slots:          map[string]string{},
-		atsByFlight:    map[string]map[ats.Type]int{},
-		filed:          map[string]bool{},
-		inboundDelay:   opts.InboundDelay,
-		connect:        opts.Connect,
-		departureDelay: opts.DepartureDelay,
-		missed:         map[string]Missed{},
-		icao:           opts.ICAO,
+		pnlSent:          map[string]map[string]nameItem{},
+		arrivals:         map[dcs.Kind]int{},
+		atsSeen:          map[ats.Type]int{},
+		atfmSeen:         map[atfm.Title]int{},
+		slots:            map[string]string{},
+		atsByFlight:      map[string]map[ats.Type]int{},
+		filed:            map[string]bool{},
+		inboundDelay:     opts.InboundDelay,
+		inboundCancelled: opts.InboundCancelled,
+		connect:          opts.Connect,
+		departureDelay:   opts.DepartureDelay,
+		missed:           map[string]Missed{},
+		icao:             opts.ICAO,
 	}
 	for _, f := range opts.Marketed {
 		t.marketed[strings.TrimLeft(f.MarketingNumber, "0")+"/"+f.From] = f
@@ -1467,6 +1473,12 @@ func (o *equipmentOverrides) get(cr, flightNum, board string) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.by[overrideKey(cr, flightNum, board)]
+}
+
+func (o *equipmentOverrides) clear(cr, flightNum, board string) {
+	o.mu.Lock()
+	delete(o.by, overrideKey(cr, flightNum, board))
+	o.mu.Unlock()
 }
 
 func (o *equipmentOverrides) set(cr, flightNum, board, typ string) {

@@ -61,19 +61,22 @@ func (s *Sim) bookOf(code string) *growth.Book {
 }
 
 // closeDay closes every carrier's day into its book. It runs as the day
-// ends, before the calendar moves.
+// ends, before the calendar moves. The day is scored at its end and not
+// at the clock: the clock has wrapped to the first minute of the next
+// day by the time the wrap is seen, and a day scored there has all its
+// revenue and none of its flying.
 func (s *Sim) closeDay() {
 	if s.econ == nil {
 		return
 	}
 	w := seatWorld{s}
-	pos, _ := w.Clock()
+	pos := float64(dayEnd)
 	day := int(s.econ.day.Load())
 	for code := range s.Tenants {
 		if s.External(code) {
 			continue
 		}
-		sc := w.score(code)
+		sc := w.scoreAt(code, pos)
 		d := growth.Day{Day: day, Revenue: sc.Revenue, Cost: sc.Cost, Flown: sc.Flown, Passengers: sc.Passengers, Seats: sc.Seats}
 		for _, f := range s.Flights[code] {
 			if st := w.flightStatus(f, s.fate.Of(f), pos); st != "departed" && st != "landed" {

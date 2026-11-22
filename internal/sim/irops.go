@@ -35,7 +35,8 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 	// the operator's code or a marketing carrier's.
 	deadDep := -1
 	for _, f := range s.Flights[dead.Carrier] {
-		if sameNum(f.Number, dead.FlightNum) {
+		// A number that flies several legs: the leg the passenger held.
+		if sameNum(f.Number, dead.FlightNum) && (dead.Board == "" || f.From == dead.Board) {
 			deadDep = f.DepMin
 			break
 		}
@@ -48,6 +49,10 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 				}
 			}
 		}
+	}
+	now := 0
+	if s.clock != nil {
+		now = int(s.clock.Pos(time.Now()))
 	}
 	type cand struct {
 		f       world.Flight
@@ -64,6 +69,14 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 			}
 			if f.Actual != nil && f.Actual.Cancelled {
 				continue // the record says this one did not fly either
+			}
+			// Nor one the day has cancelled, nor one at an airport that
+			// is closed: a passenger moved onto it is stranded again, and
+			// its own cancellation has already gone out, so nobody would
+			// move the passenger a second time.
+			fate := s.fate.Of(f)
+			if fate.Cancelled || s.isClosed(f.From, f.To) {
+				continue
 			}
 			isDead := (code == dead.Carrier && sameNum(f.Number, dead.FlightNum)) ||
 				(f.Marketing == dead.Carrier && sameNum(f.MarketingNumber, dead.FlightNum))
@@ -89,7 +102,9 @@ func (s *Sim) alternatives(ctx context.Context, dead pnr.Segment) ([]irops.Candi
 			case s.commerce != nil:
 				tier = 1 + s.commerce.partners.Rank(dead.Carrier, code)
 			}
-			if f.DepMin > deadDep {
+			// Today's flight is an alternative while a passenger can
+			// still check in for it. One that has left is tomorrow's.
+			if f.DepMin > deadDep && now < f.DepMin+fate.DepDelay-checkinCloses {
 				out = append(out, cand{f: f, carrier: carrier, number: number, day: 0, sortBy: tier*10000 + f.DepMin})
 			} else {
 				out = append(out, cand{f: f, carrier: carrier, number: number, day: 1, sortBy: tier*10000 + 1440 + f.DepMin})

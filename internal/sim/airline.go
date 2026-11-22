@@ -229,8 +229,21 @@ func (w seatWorld) Flights(carrier string) []airline.FlightState {
 func (w seatWorld) Score(carrier string) airline.Scorecard { return w.score(carrier) }
 
 func (w seatWorld) score(carrier string) airline.Scorecard {
-	code := strings.ToUpper(carrier)
 	pos, _ := w.Clock()
+	return w.scoreAt(carrier, pos)
+}
+
+// dayEnd is a position past the end of any day's flying: the minute at
+// which every flight of a day that was not cancelled has left and landed,
+// also one that left late or lands after midnight. A day is closed into
+// the book at this position, and not at the clock's, because the clock
+// has already begun the next day when the close runs.
+const dayEnd = 2 * 24 * 60
+
+// scoreAt is a carrier's day as it stands at a position of the clock, in
+// minutes from the day's start.
+func (w seatWorld) scoreAt(carrier string, pos float64) airline.Scorecard {
+	code := strings.ToUpper(carrier)
 	sc := airline.Scorecard{Carrier: code, Costs: map[string]int64{}}
 	t := w.s.Tenants[code]
 	var roster bool

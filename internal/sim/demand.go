@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -465,9 +466,38 @@ func (s *Sim) liveWith(ctx context.Context, gw *gateway.Gateway, st store.Store,
 	}
 }
 
-// accountingCode synthesises the three-digit numeric stock code a ticket is
-// issued against, stable per carrier.
+// accountingCode is the three-digit stock code a carrier's tickets are
+// issued against. A ticket's code names its carrier to settlement and to
+// interline billing, so each carrier of the world has its own: the code
+// starts from a sum of the designator and moves up to the next free one
+// when another carrier has it. Taken from the sum alone, 2 carriers could
+// share a code, and one's tickets settled in the other's statement.
 func (s *Sim) accountingCode(carrier string) string {
+	s.acctOnce.Do(func() {
+		codes := make([]string, 0, len(s.carriers))
+		for code := range s.carriers {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		s.acct = make(map[string]string, len(codes))
+		taken := map[int]bool{}
+		for _, code := range codes {
+			n := stockSum(code)
+			for i := 0; i < 900 && taken[n]; i++ {
+				n = 100 + (n-100+1)%900
+			}
+			taken[n] = true
+			s.acct[code] = fmt.Sprintf("%03d", n)
+		}
+	})
+	if code, ok := s.acct[carrier]; ok {
+		return code
+	}
+	return fmt.Sprintf("%03d", stockSum(carrier))
+}
+
+// stockSum is where a designator's stock code starts: 100 to 999.
+func stockSum(carrier string) int {
 	h := 0
 	for _, r := range carrier {
 		h = h*31 + int(r)
@@ -475,7 +505,7 @@ func (s *Sim) accountingCode(carrier string) string {
 	if h < 0 {
 		h = -h
 	}
-	return fmt.Sprintf("%03d", 100+h%900)
+	return 100 + h%900
 }
 
 type worldFlight = world.Flight

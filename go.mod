@@ -3,7 +3,7 @@ module github.com/adamf/wholesky
 go 1.27.0
 
 require (
-	github.com/adamf/jetway v0.1.107
+	github.com/adamf/jetway v0.1.108
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	gopkg.in/yaml.v3 v3.0.1

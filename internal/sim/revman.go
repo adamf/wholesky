@@ -107,6 +107,10 @@ func (s *Sim) fillOptions(day int64) fill.Options {
 		// connecting time, as one sold on the day does.
 		Connect: s.connectTime,
 		RM:      s.rm,
+		// A ticket sold before the day is on the same stock as one sold
+		// during it, so that settlement and interline billing find its
+		// carrier.
+		Accounting: s.accountingCode,
 	}
 }
 

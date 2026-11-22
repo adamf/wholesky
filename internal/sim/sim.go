@@ -340,7 +340,10 @@ type Sim struct {
 	rm     *rm.Memory
 	rmPath string
 	rmBase atomic.Pointer[sync.Map]
-	burn   int
+	// acct is each carrier's ticket stock code, made once.
+	acct     map[string]string
+	acctOnce sync.Once
+	burn     int
 	// reschedules is Options.Reschedule. rescheduled closes when the
 	// world has stopped its day for a schedule change, and consoleDone
 	// when the console has let go of its address.
@@ -875,6 +878,7 @@ func Boot(ctx context.Context, m *world.Manifest, opts Options) (*Sim, error) {
 			MaxRecords:            tenantMaxRecs,
 			AVSInterval:           opts.AVSInterval,
 			InboundDelay:          s.inboundDelay,
+			InboundCancelled:      s.inboundCancelled,
 			Connect:               s.connectTime,
 			DepartureDelay:        s.departureDelay,
 			Learned:               s.learned,
@@ -1748,6 +1752,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 	s.Settle(ctx)
 	s.Bill(ctx)
 	prev := pos(time.Now()) // no replay of history on boot
+	sky := s.aloftAt(day, prev)
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for {
@@ -1757,10 +1762,23 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		case <-tick.C:
 		}
 		cur := pos(time.Now())
-		if cur < prev {
-			// The day wrapped. What was booked for it has flown or not;
-			// the tenants' books of record start the new day clean.
-			prev = 0
+		switch {
+		case steppedBack(prev, cur):
+			// A step back is not midnight: a peer set this clock to the
+			// core's, or the wall clock moved. Nothing is flown twice, and
+			// the day is not closed in the middle of its afternoon.
+			prev = cur
+		case wrapped(prev, cur):
+			// The day wrapped. Its last minutes are flown first: a tick
+			// that crosses midnight would otherwise drop them. What has
+			// not left or landed by midnight is carried into the morning
+			// with the fate it had. Then the books close and the tenants'
+			// books of record start the new day clean.
+			s.flyFlights(ctx, day, prev, 24*60, sky)
+			sky.overnight(s, day)
+			// The new day starts before its first minute, so that what is
+			// due at 00:00 is in the first window.
+			prev = -1
 			if s.wrapDay(ctx) {
 				return
 			}
@@ -1774,6 +1792,104 @@ func (s *Sim) FlyDay(ctx context.Context) {
 		// Four times a day the fares are filed: the desks see what moved
 		// since the last filing and answer it.
 		s.pricingTicks(ctx, prev, cur)
+		s.flyFlights(ctx, day, prev, cur, sky)
+		prev = cur
+	}
+}
+
+// wrapped reports whether the clock went through midnight between 2
+// readings: it fell by more than half a day. steppedBack reports a
+// smaller fall, which is the clock being set and not a new day.
+func wrapped(prev, cur int) bool     { return cur < prev && prev-cur > 12*60 }
+func steppedBack(prev, cur int) bool { return cur < prev && prev-cur <= 12*60 }
+
+// aloft is a flight that has left and has not landed, or one of
+// yesterday's that leaves after midnight. due is a minute of the clock's
+// day: when it lands, or when it leaves.
+type aloft struct {
+	t                  *host.Tenant
+	f                  world.Flight
+	reg                string
+	due                int
+	depDelay, arrDelay int
+}
+
+// skyState is what the day's loop keeps of the flights between their
+// departure and their arrival. A flight lands because it left, and at the
+// time its own day gave it, whatever the clock or the plan has done
+// since: midnight, a new day's plan, a closed airport behind it.
+type skyState struct {
+	air  map[string]*aloft // left, not landed
+	late map[string]*aloft // yesterday's, still to leave
+}
+
+// aloftAt is the flights in the air at a position of the day, for a
+// world that starts in the middle of one: they land.
+func (s *Sim) aloftAt(day time.Time, pos int) *skyState {
+	sky := &skyState{air: map[string]*aloft{}, late: map[string]*aloft{}}
+	for code, t := range s.Tenants {
+		for _, f := range s.Flights[code] {
+			fate := s.fate.Of(f)
+			if fate.Cancelled && !s.External(code) {
+				continue
+			}
+			depDelay, arrDelay := s.flightDelays(f, day)
+			d, a := f.DepMin+depDelay, f.ArrMin+arrDelay
+			switch {
+			case d <= pos && a > pos:
+				sky.air[dayplan.Key(f)] = &aloft{t: t, f: f, reg: regOf(f), due: a, depDelay: depDelay, arrDelay: arrDelay}
+			case d-24*60 <= pos && a-24*60 > pos:
+				// It left yesterday evening and lands this morning.
+				sky.air[dayplan.Key(f)] = &aloft{t: t, f: f, reg: regOf(f), due: a - 24*60, depDelay: depDelay, arrDelay: arrDelay}
+			}
+		}
+	}
+	return sky
+}
+
+// overnight carries the day that is ending into the morning. A flight in
+// the air lands at its time on the new day's clock. A flight that its
+// delay has pushed past midnight leaves then, with the delay it had: the
+// new day's plan is for the new day's flights.
+func (sky *skyState) overnight(s *Sim, day time.Time) {
+	for _, x := range sky.air {
+		x.due -= 24 * 60
+	}
+	for code, t := range s.Tenants {
+		for _, f := range s.Flights[code] {
+			if s.fate.Of(f).Cancelled && !s.External(code) {
+				continue
+			}
+			depDelay, arrDelay := s.flightDelays(f, day)
+			if d := f.DepMin + depDelay; d > 24*60 {
+				sky.late[dayplan.Key(f)] = &aloft{t: t, f: f, reg: regOf(f), due: d - 24*60, depDelay: depDelay, arrDelay: arrDelay}
+			}
+		}
+	}
+}
+
+// regOf is the registration a flight's aircraft reports under.
+func regOf(f world.Flight) string {
+	if f.Tail != "" {
+		return f.Tail
+	}
+	return fmt.Sprintf("SKY%03d", regHash(f)%1000)
+}
+
+// flyFlights runs what the flights owe the minutes from prev to cur: the
+// cancellations announced, the slots given, each departure's ground
+// story, and the departures and arrivals.
+func (s *Sim) flyFlights(ctx context.Context, day time.Time, prev, cur int, sky *skyState) {
+	// Yesterday's flights that leave after midnight.
+	for key, x := range sky.late {
+		if x.due <= cur {
+			s.departure(ctx, x.t, x.f, day, x.reg, x.depDelay)
+			x.due = x.f.ArrMin + x.arrDelay - 24*60
+			sky.air[key] = x
+			delete(sky.late, key)
+		}
+	}
+	{
 		for code, t := range s.Tenants {
 			// A carrier someone's own node flies: the world still runs the
 			// network side of its day -- the Network Manager's slot, the
@@ -1785,10 +1901,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				if s.isClosed(f.From, f.To) {
 					continue
 				}
-				reg := f.Tail
-				if reg == "" {
-					reg = fmt.Sprintf("SKY%03d", regHash(f)%1000)
-				}
+				reg := regOf(f)
 				depDelay, arrDelay := s.flightDelays(f, day)
 				fate := s.fate.Of(f)
 				cancelled := fate.Cancelled
@@ -1805,10 +1918,19 @@ func (s *Sim) FlyDay(ctx context.Context) {
 					// hears it two hours out, after the counter opened;
 					// nothing departs or arrives, and the manifest is let
 					// go at the hour it would have landed.
-					if w := wrapMin(f.DepMin - cancelledBefore); w > prev && w <= cur {
-						go s.announceCancellation(ctx, t, f, day, fate.Reason)
+					//
+					// A flight that the day cancels later than that is
+					// announced at once: a crew that times out an hour
+					// before departure, a world that starts after the
+					// moment. Left unannounced it kept its flight plan,
+					// its checked-in passengers and its slots.
+					if _, done := s.announced.Load(dayplan.Key(f)); !done {
+						at := f.DepMin - cancelledBefore
+						if w := wrapMin(at); (w > prev && w <= cur) || (at <= prev && prev < f.DepMin+depDelay) {
+							go s.announceCancellation(ctx, t, f, day, fate.Reason)
+						}
 					}
-					if a := f.ArrMin; a > prev && a <= cur {
+					if a := wrapMin(f.ArrMin); a > prev && a <= cur {
 						t.Forget(ctx, f, day)
 					}
 				}
@@ -1880,6 +2002,7 @@ func (s *Sim) FlyDay(ctx context.Context) {
 				}
 				if d := f.DepMin + depDelay; d > prev && d <= cur {
 					s.departure(ctx, t, f, day, reg, depDelay)
+					sky.air[dayplan.Key(f)] = &aloft{t: t, f: f, reg: reg, due: f.ArrMin + arrDelay, depDelay: depDelay, arrDelay: arrDelay}
 				}
 				if f.Actual != nil && f.Actual.Diverted && f.Actual.DivertedTo != "" {
 					// The record says the aircraft landed somewhere else
@@ -1889,13 +2012,30 @@ func (s *Sim) FlyDay(ctx context.Context) {
 						go s.recordedDiversion(ctx, t, f, day, reg)
 					}
 				}
-				if a := f.ArrMin + arrDelay; a > prev && a <= cur {
-					s.arrival(ctx, t, f, day, reg, arrDelay)
-				}
 			}
 		}
-		prev = cur
 	}
+	// What left lands, when its time comes. An aircraft bound for an
+	// airport that has closed went somewhere else: its departure control
+	// record is let go, and nothing arrives at the closed field.
+	for key, x := range sky.air {
+		if x.due > cur {
+			continue
+		}
+		if s.closedAt(x.f.To) {
+			x.t.Forget(ctx, x.f, day)
+		} else {
+			s.arrival(ctx, x.t, x.f, day, x.reg, x.arrDelay)
+		}
+		delete(sky.air, key)
+	}
+}
+
+// closedAt reports whether one airport is closed.
+func (s *Sim) closedAt(iata string) bool {
+	s.closedMu.Lock()
+	defer s.closedMu.Unlock()
+	return s.closed[iata]
 }
 
 // sellingDate is the day the world sells and flies: the recorded day on a
@@ -3240,7 +3380,8 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 // cancelFlightsTouching sends one ASM CNL per affected flight, paced so the
 // cascade is a stream rather than a detonation.
 func (s *Sim) cancelFlightsTouching(iata string) {
-	date := strings.ToUpper(s.BookingDate.Format("02Jan"))
+	ctx := context.Background()
+	reason := "airport " + iata + " closed"
 	n := 0
 	for code, fs := range s.Flights {
 		t := s.Tenants[code]
@@ -3251,16 +3392,18 @@ func (s *Sim) cancelFlightsTouching(iata string) {
 			if f.From != iata && f.To != iata {
 				continue
 			}
-			text := fmt.Sprintf("ASM\nUTC\nCNL\n%s%s/%s\n%s %s",
-				f.Carrier, f.Number, date, f.From, f.To)
-			if err := t.SendSchedule(context.Background(), text); err != nil {
-				s.log.Debug("cancellation not sent", "flight", f.Carrier+f.Number, "err", err)
+			// A flight that has left is not cancelled by what closes
+			// behind it or ahead of it: it flew, or it is in the air and
+			// lands or diverts. Only what has not left is cancelled, and
+			// through the day's plan, so that the cancellation stands
+			// after the airport reopens, the flight plan is withdrawn and
+			// the slots go back.
+			fate := s.fate.Of(f)
+			if fate.Cancelled || s.clock.Pos(time.Now()) >= float64(f.DepMin+fate.DepDelay) {
+				continue
 			}
-			// The airport hears it too: anyone already checked in comes off
-			// with their bags, and the counter takes nobody else.
-			if err := t.CancelFlight(context.Background(), f, s.BookingDate, "airport "+iata+" closed"); err != nil {
-				s.log.Debug("dcs cancellation failed", "flight", f.Carrier+f.Number, "err", err)
-			}
+			s.fate.Update(f, func(pf *dayplan.Flight) { pf.Cancelled, pf.Reason, pf.Code = true, reason, "B" })
+			s.announceCancellation(ctx, t, f, s.BookingDate, reason)
 			n++
 			time.Sleep(8 * time.Millisecond)
 			s.closedMu.Lock()
@@ -3370,6 +3513,11 @@ func tenantConsole(t *host.Tenant, bus *gateway.Bus, log *slog.Logger) *api.Serv
 		Gateway: t.Gateway, Store: t.Store, Bus: bus, Log: log, Console: true,
 		Ground: t.DCS, OnAccept: t.OnAccept, OnOffload: t.OnOffload, OnClose: t.SendClosure,
 	}
+}
+
+// inboundCancelled reports whether the day's plan has cancelled a flight.
+func (s *Sim) inboundCancelled(f world.Flight, day time.Time) bool {
+	return s.fate != nil && s.fate.Of(f).Cancelled
 }
 
 // departureDelay is how late the flight day will send a flight off.

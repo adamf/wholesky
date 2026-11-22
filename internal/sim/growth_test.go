@@ -50,6 +50,13 @@ func TestADayIsClosedIntoTheBook(t *testing.T) {
 		t.Fatalf("a new book: %+v", before)
 	}
 	sc := w.score(code)
+	// The close runs after the clock has wrapped: the wrap is seen on the
+	// first tick of the next day. The day in the book must still be the
+	// whole day that ended, and not the minute the clock stands at.
+	s.clock.Sync(time.Now(), 1, s.clock.Warp())
+	if early := w.score(code); early.Flown >= sc.Flown/2 {
+		t.Fatalf("at 00:01 the scorecard has %d flown of the %d at 23:59", early.Flown, sc.Flown)
+	}
 	s.closeDay()
 	v, _ = w.Finance(code)
 	after := v.(financeView)
@@ -62,8 +69,15 @@ func TestADayIsClosedIntoTheBook(t *testing.T) {
 	// The fleet's rent runs with the clock, so two readings a moment
 	// apart differ by cents.
 	about := func(a, b int64) bool { return a-b < 1000 && b-a < 1000 }
-	if d.Revenue != sc.Revenue || !about(d.Cost, sc.Cost) || d.Profit != d.Revenue-d.Cost || d.Flown != sc.Flown || after.Cash != after.Opening+d.Profit {
-		t.Errorf("the day in the book %+v is not the scorecard's %d and %d, or the cash %d is not the opening %d and the profit", d, sc.Revenue, sc.Cost, after.Cash, after.Opening)
+	// The day in the book is the day at its end: every flight that was
+	// not cancelled has flown, also the few still to leave or land at
+	// 23:59, so it has no fewer flights and no less cost than then.
+	end := w.scoreAt(code, dayEnd)
+	if d.Revenue != end.Revenue || !about(d.Cost, end.Cost) || d.Profit != d.Revenue-d.Cost || d.Flown != end.Flown || after.Cash != after.Opening+d.Profit {
+		t.Errorf("the day in the book %+v is not the day's end %d and %d, or the cash %d is not the opening %d and the profit", d, end.Revenue, end.Cost, after.Cash, after.Opening)
+	}
+	if d.Flown < sc.Flown || d.Cost < sc.Cost || d.Flown > sc.Flown+sc.Remaining || d.Passengers < sc.Passengers {
+		t.Errorf("the day in the book has %d flown and %d of cost; at 23:59 the scorecard had %d flown, %d still to go and %d of cost", d.Flown, d.Cost, sc.Flown, sc.Remaining, sc.Cost)
 	}
 	if after.All.LoadFactor < 0.5 || after.All.LoadFactor > 0.98 || after.All.RASK <= 0 || after.All.CASK <= 0 || d.ASK <= d.RPK {
 		t.Errorf("the units: %+v", after.All)

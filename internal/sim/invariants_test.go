@@ -312,6 +312,10 @@ func TestInvariantCancelledFlightQueuesEveryBooking(t *testing.T) {
 	}
 	settleAll(t, s, locators)
 
+	// The airport closes 3 hours before the flight is due out. A closure
+	// cancels what has not left: a flight that has gone is not cancelled
+	// by what closes behind it.
+	s.clock.Sync(time.Now(), float64(max(f.DepMin-180, 0)), s.clock.Warp())
 	if err := s.chaos("close", f.From); err != nil {
 		t.Fatalf("close %s: %v", f.From, err)
 	}

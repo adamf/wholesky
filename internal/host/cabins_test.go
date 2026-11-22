@@ -146,6 +146,28 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	if connected < 200 || connected > 360 {
 		t.Fatalf("%d of 2000 parties connect; about 14 in 100 should", connected)
 	}
+	// A party that makes the connection is at the counter by its last
+	// wave, 46 minutes out. With 45 minutes in hand over the station's
+	// time it comes late in the hour, and it must still be accepted.
+	// An inbound flight that lands 50 minutes before the departure, at a
+	// station that needs 45: most of its parties make the flight, with 40
+	// minutes in hand at the gate.
+	short := world.Flight{Carrier: "ZZ", Number: "0101", From: "ORD", To: "DEN", DepMin: 390, ArrMin: 550}
+	tight := &Tenant{flights: []world.Flight{short, out}, missed: map[string]Missed{}}
+	made := 0
+	for _, pt := range parties {
+		at, conn, ok := tight.arrival(pt, out, day)
+		if !ok || conn == nil {
+			continue
+		}
+		made++
+		if at < lastWave {
+			t.Fatalf("a connecting party that makes the flight comes %d minutes out, after the counter's last wave at %d: it is never accepted", at, lastWave)
+		}
+	}
+	if made < 50 {
+		t.Fatalf("%d parties made a 50 minute connection; most of about 280 should", made)
+	}
 	// Who stays away depends on the fare. Of 2000 parties on a fare that
 	// cannot be refunded about 170 do not come, and of 2000 on full fare
 	// about 340.
@@ -189,6 +211,18 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	if tn.Misconnected() != 0 {
 		t.Errorf("a new day began with %d missed connections", tn.Misconnected())
 	}
+	// The inbound flight is cancelled. Nobody comes off it, on time or
+	// not, and each of its parties has missed the connection.
+	late = 0
+	tn.inboundCancelled = func(world.Flight, time.Time) bool { return true }
+	if still, gone := run(); still != 0 || gone != noShows+connected {
+		t.Errorf("with the inbound cancelled %d parties still connect and %d are absent; want none and %d", still, gone, noShows+connected)
+	}
+	if got := tn.Misconnected(); got < connected || got > 3*connected {
+		t.Errorf("with the inbound cancelled %d passengers missed; %d parties were to connect", got, connected)
+	}
+	tn.inboundCancelled = nil
+	tn.NewDay()
 	// A late departure waits for them without meaning to.
 	tn.departureDelay = func(world.Flight, time.Time) int { return 120 }
 	if held, _ := run(); held != connected {

@@ -814,6 +814,8 @@ a full airline runs and this world does not.
 [jetway's docs/production-gcp.md](https://github.com/adamf/jetway/blob/main/docs/production-gcp.md)
 works out what it would take to run jetway in production on Google Cloud,
 with production load and high availability.
+[docs/known-defects.md](docs/known-defects.md) lists the faults that a
+review of the logic found, those fixed and those still open.
 
 ## Licence
 
