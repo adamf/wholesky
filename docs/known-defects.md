@@ -1,13 +1,14 @@
 # Known defects
 
 This list is from a review of the simulator's logic on 22 November 2026.
-5 reviewers each read 1 area of the code and traced what happens when a
-day does not go to plan. The review looked for places where the world
-keeps, counts or charges for something that did not happen.
+5 Claude sessions each read 1 area of the code and traced what happens
+when a day does not go to plan. The review looked for places where the
+world keeps, counts or charges for something that did not happen.
 
 The first part lists what was fixed. The second part lists what is open.
-An open item is marked **confirmed** when the fault was read in the code
-a second time, and **reported** when only the first reviewer traced it.
+An open item is marked **reported**: a reviewing session traced it in the
+code, and nobody has reproduced it yet. Each fixed item was read in the
+code a second time before the fix, and has a test that fails without it.
 
 The counts of flights are from the 2 bundled worlds: `world.json` has
 103,688 flights and `thanksgiving.json` has 22,889.
