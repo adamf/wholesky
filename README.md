@@ -708,6 +708,14 @@ Here is what works. `go test ./...` proves it on every run.
 - The connecting passengers of another airline are through-checked over
   interline through check-in (IATCI). Of all connections, one in four is
   interline. The onward seat is on the manifest.
+- Each carrier sells extras from its own price list: checked bags, a bag
+  in the cabin, seats, the internet, food, drinks, a pillow and a
+  blanket. The lists differ as the real carriers' do. JetBlue gives the
+  internet to every passenger, United gives it to a member and sells it
+  to the rest, and Frontier has none and charges for water. The airport
+  counts the sales when the door closes, for the passengers who flew.
+  [docs/business.md](docs/business.md#extras) has the lists and the
+  figures that they are held against.
 - Every international door close tells the state who is on board
   (Advance Passenger Information System (APIS), to the public PAXLST
   guide). It also pushes the records with seats and bags (PNRGOV, to the

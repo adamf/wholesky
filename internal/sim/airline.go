@@ -15,6 +15,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airline"
 	"github.com/adamf/wholesky/internal/dayplan"
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/fuel"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/noc"
@@ -325,6 +326,15 @@ func (w seatWorld) score(carrier string) airline.Scorecard {
 			sc.Misconnected += m.Pax
 		}
 		sc.Costs["passenger rights"] += w.s.misconnectCost(missed)
+		// What the passengers who flew bought beside the seat.
+		sold, _ := t.Extras()
+		if len(sold) > 0 {
+			sc.Extras = sold
+			for _, cents := range sold {
+				sc.Ancillary += cents
+			}
+			sc.Revenue = extras.For(code).Revenue(sc.Revenue, sc.Ancillary)
+		}
 		denied := t.Denied()
 		for _, d := range denied {
 			sc.Denied++

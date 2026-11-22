@@ -48,6 +48,7 @@ import (
 	"github.com/adamf/jetway/pkg/inventory"
 	"github.com/adamf/jetway/pkg/pnr"
 
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/market"
 	"github.com/adamf/wholesky/internal/rm"
 	"github.com/adamf/wholesky/internal/tariff"
@@ -150,6 +151,10 @@ type Options struct {
 	// rm.Overbooks: every carrier but the 2 that say they do not. It needs
 	// RM.
 	Overbooks func(carrier string) bool
+	// International reports whether a flight crosses a border, for the
+	// prices of the extras its passengers buy. Nil is taken from the
+	// manifest's airports.
+	International func(f world.Flight) bool
 	// DeniedCost is what a carrier counts a denied boarding to cost it
 	// when it sets a limit, in units of the cabin's average fare. Zero is
 	// rm.DeniedCost.
@@ -190,6 +195,17 @@ type Plan struct {
 	// that had reached its limit. Over is the bookings the cabins were
 	// authorised above their seats.
 	NoShows, Boarded, Denied, Spoiled, Over int
+	// Extras is what the passengers who come buy beside the seat, in
+	// cents, and ExtrasBy the same by service (internal/extras). Bags is
+	// the bags they check and PaidBags those of them that pay a fee.
+	Extras         int64
+	ExtrasBy       map[string]int64
+	Bags, PaidBags int
+	// Shoppers is the passengers the menu was put to, flight by flight:
+	// those who come.
+	Shoppers int
+	// By is the plan carrier by carrier.
+	By map[string]Plan
 }
 
 // Sink receives one carrier's records in batches, in a stable order.
@@ -250,6 +266,16 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 	for _, f := range m.Flights {
 		byCarrier[f.Carrier] = append(byCarrier[f.Carrier], f)
 	}
+	if opts.International == nil {
+		country := make(map[string]string, len(m.Airports))
+		for _, a := range m.Airports {
+			country[a.IATA] = a.Country
+		}
+		opts.International = func(f world.Flight) bool {
+			a, b := country[f.From], country[f.To]
+			return a != "" && b != "" && a != b
+		}
+	}
 	codes := make([]string, 0, len(byCarrier))
 	for c := range byCarrier {
 		codes = append(codes, c)
@@ -303,6 +329,17 @@ func Day(ctx context.Context, m *world.Manifest, opts Options, sink Sink) (Plan,
 		plan.Denied += p.Denied
 		plan.Spoiled += p.Spoiled
 		plan.Over += p.Over
+		plan.Extras += p.Extras
+		plan.Bags += p.Bags
+		plan.PaidBags += p.PaidBags
+		plan.Shoppers += p.Shoppers
+		if plan.ExtrasBy == nil {
+			plan.ExtrasBy, plan.By = map[string]int64{}, map[string]Plan{}
+		}
+		for k, v := range p.ExtrasBy {
+			plan.ExtrasBy[k] += v
+		}
+		plan.By[code] = p
 		if plan.Classes == nil {
 			plan.Classes = map[string]int{}
 		}
@@ -326,7 +363,8 @@ func (a *allocator) take() string {
 
 // fillCarrier fills one carrier's day.
 func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts Options, channels map[string]*allocator, sink Sink) (Plan, error) {
-	plan := Plan{Classes: map[string]int{}}
+	plan := Plan{Classes: map[string]int{}, ExtrasBy: map[string]int64{}}
+	menu := extras.For(code)
 	sort.Slice(flights, func(i, j int) bool {
 		if flights[i].DepMin != flights[j].DepMin {
 			return flights[i].DepMin < flights[j].DepMin
@@ -734,6 +772,33 @@ func fillCarrier(ctx context.Context, code string, flights []world.Flight, opts 
 			sold[i][comp] += t.Party
 			if stays {
 				away[i][comp] += t.Party
+			}
+			if !stays {
+				// What each passenger who comes buys beside the seat. The
+				// party's bags are on its first passenger and are paid
+				// for once, where the journey begins.
+				f := flights[i]
+				minutes := f.BlockMin
+				if minutes <= 0 {
+					minutes = f.ArrMin - f.DepMin
+				}
+				plan.Shoppers += t.Party
+				for n := 0; n < t.Party; n++ {
+					u := showRng.Uint64()
+					who := extras.Passenger{Class: classes[pick], Cabin: comp, KM: f.KM, Minutes: minutes,
+						International: opts.International != nil && opts.International(f), Continuing: li > 0}
+					if n == 0 && li == 0 {
+						who.Bags = len(menu.Bags(u))
+						plan.Bags += who.Bags
+					}
+					for _, s := range menu.Buy(who, u) {
+						plan.Extras += s.Cents
+						plan.ExtrasBy[s.Code] += s.Cents
+						if s.Code == extras.Bag {
+							plan.PaidBags += s.Units
+						}
+					}
+				}
 			}
 			if c := rmOf(i, comp); c != nil {
 				// A fare over two legs is the record's by the distance of

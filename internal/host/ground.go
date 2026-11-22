@@ -33,6 +33,7 @@ import (
 
 	"github.com/adamf/wholesky/internal/airport"
 	"github.com/adamf/wholesky/internal/equipment"
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/tariff"
 	"github.com/adamf/wholesky/internal/world"
 )
@@ -531,6 +532,7 @@ func (t *Tenant) NewDay() {
 	t.groundMu.Lock()
 	t.tracing = Tracing{}
 	t.carried = map[string]int{}
+	t.extras, t.extraUnits = map[string]int64{}, map[string]int{}
 	t.groundMu.Unlock()
 	t.missedMu.Lock()
 	t.missed = map[string]Missed{}
@@ -687,18 +689,82 @@ func (t *Tenant) onThroughCheckIn(ctx context.Context, peer *gateway.Peer, res *
 	}
 }
 
-// bagsFor decides what a party checks: about six in ten check something,
-// one or two pieces, at real-looking weights.
-func bagsFor(h int) []int {
-	if (h/7)%10 >= 6 {
-		return nil
+// international reports whether a flight crosses a border, where the
+// world has told the carrier each airport's country.
+func (t *Tenant) international(f world.Flight) bool {
+	if t.countryOf == nil {
+		return false
 	}
-	n := 1 + (h/70)%2
-	out := make([]int, 0, n)
-	for i := 0; i < n; i++ {
-		out = append(out, 12+(h/(13*(i+1)))%17)
+	a, b := t.countryOf(f.From), t.countryOf(f.To)
+	return a != "" && b != "" && a != b
+}
+
+// sellExtras counts what the passengers who flew bought beside the seat:
+// their bags at the carrier's price for them, a seat, and what they took
+// on board (internal/extras). It is counted at the door, for the
+// passengers who boarded. A flight that does not fly sells nothing, and a
+// passenger who does not come or is turned away buys nothing: the law
+// has the fee for a service not provided refunded (14 CFR 260.4).
+func (t *Tenant) sellExtras(leg world.Flight, fl *dcs.Flight) {
+	sold, units := extrasOf(leg, fl, t.international(leg))
+	t.groundMu.Lock()
+	if t.extras == nil {
+		t.extras, t.extraUnits = map[string]int64{}, map[string]int{}
 	}
-	return out
+	for code, cents := range sold {
+		t.extras[code] += cents
+		t.extraUnits[code] += units[code]
+	}
+	t.groundMu.Unlock()
+}
+
+// extrasOf is what the passengers who boarded a flight bought beside the
+// seat, in cents and in units by service. A passenger who came off a
+// connecting flight paid for the bags where the journey began.
+func extrasOf(leg world.Flight, fl *dcs.Flight, intl bool) (sold map[string]int64, units map[string]int) {
+	menu := extras.For(leg.Carrier)
+	minutes := leg.BlockMin
+	if minutes <= 0 {
+		minutes = leg.ArrMin - leg.DepMin
+	}
+	sold, units = map[string]int64{}, map[string]int{}
+	for _, p := range fl.Passengers {
+		if p.Status != dcs.StatusBoarded {
+			continue
+		}
+		cabin := p.Compartment
+		if fl.Cabin != nil {
+			cabin = fl.Cabin.CompartmentFor(p.Class)
+		}
+		bags := 0
+		for _, b := range p.Bags {
+			if !b.Offloaded {
+				bags++
+			}
+		}
+		who := extras.Passenger{Class: p.Class, Cabin: cabin, KM: leg.KM, Minutes: minutes, International: intl,
+			Bags: bags, Continuing: p.Inbound != nil}
+		for _, s := range menu.Buy(who, uint64(hashOf(p.Party+"/"+p.Surname+"/"+p.Given+"/"+fl.Flight+"/"+fmt.Sprint(p.ID)))) {
+			sold[s.Code] += s.Cents
+			units[s.Code] += s.Units
+		}
+	}
+	return sold, units
+}
+
+// Extras is what the day's passengers bought beside the seat, in cents
+// by service, and how many of each.
+func (t *Tenant) Extras() (cents map[string]int64, units map[string]int) {
+	t.groundMu.Lock()
+	defer t.groundMu.Unlock()
+	cents, units = map[string]int64{}, map[string]int{}
+	for k, v := range t.extras {
+		cents[k] = v
+	}
+	for k, v := range t.extraUnits {
+		units[k] = v
+	}
+	return cents, units
 }
 
 // CheckIn is one wave of the counter: every listed party that has arrived
@@ -725,7 +791,7 @@ func (t *Tenant) CheckIn(ctx context.Context, f world.Flight, day time.Time, min
 		h := hashOf(pt.key + f.Carrier + f.Number)
 		req := dcs.AcceptRequest{
 			Locator: pt.lead.Locator, Surname: pt.lead.Surname,
-			Bags: bagsFor(h), Onward: t.onwardFor(f, day, h), Inbound: inbound,
+			Bags: extras.For(f.Carrier).Bags(uint64(h)), Onward: t.onwardFor(f, day, h), Inbound: inbound,
 		}
 		if pt.lead.Locator == "" {
 			req.PassengerID = pt.lead.ID
@@ -1113,6 +1179,10 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 		if err := t.announceBags(ctx, fl, p, "DEL"); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	// What the passengers who flew bought beside the seat.
+	if known {
+		t.sellExtras(leg, fl)
 	}
 	// A passenger who took a seat at the door has bags that were tagged
 	// then.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/adamf/jetway/pkg/dcs"
 
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/rights"
 	"github.com/adamf/wholesky/internal/rm"
@@ -153,6 +154,12 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	if err := tn.Board(ctx, f, day, 14); err != nil {
 		t.Fatalf("Board: %v", err)
 	}
+	// Nothing beside the seat is sold until the door closes on the
+	// passengers who flew.
+	if early, _ := tn.Extras(); len(early) != 0 {
+		t.Errorf("extras were sold before the door closed: %v", early)
+	}
+	faresOnly := (seatWorld{s}).score(f.Carrier).Revenue
 	if err := tn.Close(ctx, f, day); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -237,6 +244,45 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 		t.Fatalf("a full fare of %d and %d owed", fare, owed)
 	}
 	sc := (seatWorld{s}).score(f.Carrier)
+	// What the 70 who flew bought beside the seat is on the scorecard,
+	// by service, and is revenue on top of the fares: this carrier is not
+	// an ultra-low-cost one. Every service sold is on the carrier's own
+	// list, and the units of a service sold once are no more than the
+	// passengers.
+	bought, units := tn.Extras()
+	var extra int64
+	menu := extras.For(f.Carrier)
+	for code, cents := range bought {
+		extra += cents
+		offered := false
+		for _, sv := range menu.Catalogue.Services {
+			if sv.Code == code {
+				offered = true
+				if !sv.PerUnit && units[code] > c.Boarded {
+					t.Errorf("%d of %s sold to %d passengers", units[code], code, c.Boarded)
+				}
+			}
+		}
+		if !offered || cents <= 0 || units[code] <= 0 {
+			t.Errorf("sold %d cents and %d units of %s, which is not on %s's list", cents, units[code], code, f.Carrier)
+		}
+	}
+	if extra <= 0 || sc.Ancillary != extra || len(sc.Extras) != len(bought) {
+		t.Errorf("the passengers bought %d cents of extras and the scorecard has %d", extra, sc.Ancillary)
+	}
+	if menu.AllIn || sc.Revenue != faresOnly+extra {
+		t.Errorf("revenue is %d with %d of fares and %d of extras", sc.Revenue, faresOnly, extra)
+	}
+	// The bags that flew are the bags that could pay.
+	flown := 0
+	for _, p := range fl.Passengers {
+		if p.Status == dcs.StatusBoarded && p.Inbound == nil {
+			flown += len(p.Bags)
+		}
+	}
+	if units[extras.Bag] > flown {
+		t.Errorf("%d bags paid a fee and %d flew with passengers who began their journey here", units[extras.Bag], flown)
+	}
 	if sc.Denied != c.Denied || sc.Volunteers != c.Volunteers || sc.Costs["denied boarding"] != owed {
 		t.Errorf("the scorecard has %d denied, %d volunteers and %d cents; want %d, %d and %d (fare %d, wait %d minutes, %s)",
 			sc.Denied, sc.Volunteers, sc.Costs["denied boarding"], c.Denied, c.Volunteers, owed, fare, wait, reg)
@@ -248,6 +294,9 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	}
 	if _, ok := tn.Carried(f, day); ok {
 		t.Error("a new day began with the last day's passengers carried")
+	}
+	if sold, _ := tn.Extras(); len(sold) != 0 {
+		t.Errorf("a new day began with the last day's extras: %v", sold)
 	}
 
 	// A flight whose counter never opened. The world started after its
@@ -309,6 +358,10 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	}
 	if n, ok := tn.Carried(g, day); ok {
 		t.Errorf("a flight whose counter never opened is counted as flown with %d passengers", n)
+	}
+	// Nobody flew, so nobody bought anything.
+	if sold, _ := tn.Extras(); len(sold) != 0 {
+		t.Errorf("a flight that nobody boarded sold extras: %v", sold)
 	}
 
 	// A flight whose list went before most of its bookings were written.

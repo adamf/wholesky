@@ -446,6 +446,97 @@ lowered was counted as having no limit, and it sold to the last seat of
 the cabin (v0.1.101). A carrier's node could not sell its own flight
 (v0.1.100).
 
+## Extras
+
+A fare buys the seat. A carrier also sells checked bags, a bag in the
+cabin, a seat chosen in advance, a seat with more legroom, boarding
+first, the internet, food, drinks, and a pillow and a blanket.
+`internal/extras` holds each carrier's price list and the share of its
+passengers who buy each item. jetway's `pkg/ancillary` reads a price
+list: the rules for a service are tried in order, and the first rule
+that matches the passenger decides.
+
+### What the real carriers earn
+
+- Airlines took about $148 billion in extras in 2024, which was 14.9 %
+  of their revenue (IdeaWorksCompany and CarTrawler). That figure
+  includes the miles that they sell to banks.
+- US carriers took $7.3 billion in baggage fees and $1.0 billion in
+  change fees in 2024, against $185.3 billion in fares (Bureau of
+  Transportation Statistics).
+- American, Delta, United, Frontier and Spirit took $12.4 billion in
+  seat fees from 2018 to 2023. In 2023 United took $1.3 billion in seat
+  fees and $1.2 billion in bag fees. At American in 2018, 45 % of
+  checked bags paid a fee (Senate Permanent Subcommittee on
+  Investigations, 2024).
+- Spirit took $53.01 of fare and $68.57 of other revenue from each
+  passenger on each flight in 2023. Frontier took 62 % of its revenue
+  from extras in 2024.
+
+### The price lists
+
+| Carrier | First bag | Internet | On the cart | Charged for besides |
+| --- | --- | --- | --- | --- |
+| American, United | $50, or $45 in advance | Free to a member, $10 to others | Snack box $10, spirit $11 | Seat on a fare sold with none, legroom, priority |
+| Delta, Alaska | $45 | Free to a member, $10 to others | Snack box $10, spirit $11 | The same |
+| JetBlue | $39, or $49 at the airport | Free to everybody | Snack box $10, drink $10, blanket $10 | Seat on a fare sold with none, legroom |
+| Southwest | $45 | Free to a member, $8 to others | Drink $7, no food | Seat on a fare sold with none, legroom |
+| Frontier and other US ultra-low-cost | $64 in advance, $79 at the airport | None | Snack $9, drink $11, water $4.50 | Cabin bag $59, every seat $22, priority |
+| Ultra-low-cost elsewhere | $32 in advance, $50 at the airport | None | Snack $8, drink $7, water $3.50 | Cabin bag $18, every seat $10 |
+
+The bag prices are those in force in spring 2026, as consumer groups
+listed them. The cart prices are from Delta's and JetBlue's own menus.
+The ultra-low-cost bag price lies between Frontier's average of $59 and
+Spirit's of $71.80 in the Senate report. The seat prices, the blanket
+and the lists for carriers outside the United States are estimates. A long international flight carries the first bag in the
+fare. The front cabins carry 2 bags and the drinks.
+
+United's internet is free to a member of its loyalty scheme, which is
+free to join. A passenger who is not a member pays. JetBlue asks for no
+account.
+
+### Who buys
+
+- **Bags.** Half of a network carrier's parties check 1 or 2 bags, and 4
+  in 10 of an ultra-low-cost carrier's. For 52 % of a network carrier's
+  passengers the bags are free by standing or by the carrier's card.
+- **Seats.** 45 % of the passengers on a fare sold with no seat pay for
+  one. 8.5 % of the main cabin pays for more legroom.
+- **On board.** 8 % buy food and 10 % a drink. A quarter of the
+  passengers who are charged for the internet buy it.
+- **Ultra-low-cost.** Half pay for a bag in the cabin and 55 % for a
+  seat.
+
+Each share is an estimate. A test holds the result against the reports.
+
+| Measure | Report | Simulator |
+| --- | --- | --- |
+| Network carriers, bag fees as a share of fares | 3.9 % (BTS, all US carriers) | 3.9 % |
+| Network carriers, checked bags that pay | 45 % (American, 2018) | 45 % |
+| Network carriers, seat fees over bag fees | 0.65 to 1.1 | 0.88 |
+| Network carriers, extras as a share of fares | no report | 8.2 % |
+| US ultra-low-cost, extras for each passenger | $68.57 (Spirit), about $70 (Frontier) | $67.60 |
+| JetBlue, internet revenue | none | none |
+
+### When the money is counted
+
+The airport counts the extras when a flight's door closes, for the
+passengers who flew. A cancelled flight therefore sells nothing. A
+passenger who did not come or who was denied boarding buys nothing,
+which is what 14 CFR 260.4 requires for a service that was not provided.
+A party pays for its bags once, where its journey begins.
+
+The scorecard has the total as `ancillary` and the parts by service. For
+most carriers the extras are revenue on top of the fares, because the
+fare report leaves fees out.
+
+An ultra-low-cost carrier is different. Its ticket price here is about
+three quarters of a market's average fare, and Spirit's fare and extras
+together were about that share. The ticket price therefore stands for
+all that the passenger spends, and the extras are a part of it. They are
+39 % of it here. Spirit and Frontier report 56 % and 62 %, because their
+passengers spend less in all than the simulator's do.
+
 ## Channels and what a sale costs
 
 `internal/distribution` holds the sellers and the cost of a sale in each
@@ -741,14 +832,22 @@ that takes the `network` department decides for itself.
 - **After a missed connection.** The scorecard counts a passenger who
   misses a connection and charges what the law gives. Nobody rebooks
   the passenger, and the seat on the next flight stays free.
-- **Ancillary revenue.** A ticket has a fare and taxes. Bags, seats and
-  other fees are not sold. The fares are calibrated to a report that
-  excludes fees. US carriers earned 4.6 % more than their fares from
-  bags and changes in 2023. Spirit earned $53.01 of fare and $68.57 of
-  other revenue for each passenger segment. A model with fees needs a
-  lower base fare for the ultra-low-cost carriers, the fee in the price
-  that a traveller compares, and a new calibration. The
-  [research note](research/rm-fares.md) has the figures.
+- **Extras in the price a traveller compares.** A traveller chooses on
+  the fare. The fees that the traveller will pay are not in the
+  comparison.
+- **An ultra-low-cost carrier's base fare.** The simulator has 1 price
+  for an ultra-low-cost ticket, and it stands for the fare and the
+  extras. The real carriers file a base fare near $50 and sell the rest
+  item by item. The carrier's price level also needs a fit to its own
+  reports and not to the fare report.
+- **The documents.** jetway issues an electronic miscellaneous document
+  for a service. The simulator counts each sale and issues no document.
+- **Extras that are not counted.** Change fees, miles sold to banks,
+  holidays, hotels, cars and insurance. Miles are the largest part of a
+  US carrier's other revenue: Delta took $6.8 billion from its card in
+  2023.
+- **Refunds of extras.** A bag fee is not refunded when the bag arrives
+  more than 12 hours late, as 14 CFR 260.5 requires.
 - **Exits.** A carrier does not drop a service, leave a market or fail.
   An incumbent therefore never takes its added flights out again, and
   fares do not return after a fight.

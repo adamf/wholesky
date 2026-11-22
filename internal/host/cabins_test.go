@@ -8,6 +8,7 @@ import (
 	"github.com/adamf/jetway/pkg/dcs"
 
 	"github.com/adamf/wholesky/internal/equipment"
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/world"
 )
 
@@ -198,5 +199,59 @@ func TestALateInboundFlightOnTheDay(t *testing.T) {
 	tn.connect = func(in, out world.Flight) int { return 100 }
 	if strict, _ := run(); strict != 0 {
 		t.Errorf("%d parties were booked across 90 minutes at a station that needs 100", strict)
+	}
+}
+
+// What a flight's passengers bought beside the seat is counted for those
+// who boarded. On an ultra-low-cost carrier nearly every bag pays. 200
+// passengers board with 2 bags each, where their journey begins: bags are
+// sold. 200 more board with 2 bags each off a connecting flight: they
+// paid where they began, and no bag, cabin bag or priority is sold to
+// them here. 200 with bags did not come and 200 were denied boarding:
+// nothing is sold to them.
+func TestExtrasAreSoldToThePassengersWhoFlew(t *testing.T) {
+	leg := world.Flight{Carrier: "F9", Number: "0100", From: "DEN", To: "LAS", KM: 1000, DepMin: 600, ArrMin: 720}
+	flight := func(status dcs.Status, inbound bool) *dcs.Flight {
+		fl := &dcs.Flight{Key: dcs.Key{Flight: "F90100", Date: "26NOV", Board: "DEN"}}
+		for i := 0; i < 200; i++ {
+			p := &dcs.Passenger{ID: i + 1, Surname: fmt.Sprintf("PAX%03d", i), Given: "AMR", Party: fmt.Sprintf("P%03d", i),
+				Class: "Q", Compartment: "Y", Status: status, Bags: []dcs.Bag{{Tag: "1", Weight: 20}, {Tag: "2", Weight: 20}}}
+			if inbound {
+				p.Inbound = &dcs.Connection{Flight: "F90050", Station: "DEN"}
+			}
+			fl.Passengers = append(fl.Passengers, p)
+		}
+		return fl
+	}
+	began, units := extrasOf(leg, flight(dcs.StatusBoarded, false), false)
+	// 3 in 100 have their first bag free by standing, so of 400 bags
+	// about 394 pay.
+	if units[extras.Bag] < 380 || units[extras.Bag] > 400 || began[extras.Bag] < int64(units[extras.Bag])*6400 {
+		t.Errorf("200 passengers with 2 bags each paid for %d bags, %d cents", units[extras.Bag], began[extras.Bag])
+	}
+	if units[extras.CarryOn] < 70 || units[extras.CarryOn] > 130 || units[extras.Seat] == 0 {
+		t.Errorf("%d cabin bags and %d seats sold to 200 passengers; about half pay for each", units[extras.CarryOn], units[extras.Seat])
+	}
+	on, onUnits := extrasOf(leg, flight(dcs.StatusBoarded, true), false)
+	if on[extras.Bag] != 0 || on[extras.CarryOn] != 0 || on[extras.Priority] != 0 {
+		t.Errorf("passengers off a connecting flight paid again: %v", onUnits)
+	}
+	if on[extras.Seat] == 0 || on[extras.Drink] == 0 {
+		t.Errorf("passengers off a connecting flight bought no seat and no drink on this flight: %v", onUnits)
+	}
+	for _, status := range []dcs.Status{dcs.StatusNoShow, dcs.StatusDenied, dcs.StatusOffloaded, dcs.StatusAccepted} {
+		if sold, _ := extrasOf(leg, flight(status, false), false); len(sold) != 0 {
+			t.Errorf("passengers who are %s bought %v", status, sold)
+		}
+	}
+	// A bag that came off is not paid for.
+	off := flight(dcs.StatusBoarded, false)
+	for _, p := range off.Passengers {
+		for i := range p.Bags {
+			p.Bags[i].Offloaded = true
+		}
+	}
+	if sold, _ := extrasOf(leg, off, false); sold[extras.Bag] != 0 {
+		t.Errorf("bags that came off the aircraft paid %d cents", sold[extras.Bag])
 	}
 }

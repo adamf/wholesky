@@ -148,6 +148,10 @@ type Tenant struct {
 	// revenue management hears who came for a closed flight.
 	denied []Denied
 	shown  func(carrier, flightNum, board, compartment string, booked, away int)
+	// extras is what the day's passengers bought beside the seat, in
+	// cents by service, and extraUnits how many of each.
+	extras     map[string]int64
+	extraUnits map[string]int
 	// carried is the passengers each of the day's departures left with,
 	// as its door counted them. It outlives the departure control record,
 	// which is forgotten when the flight lands.

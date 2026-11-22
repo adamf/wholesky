@@ -93,6 +93,14 @@ type Scorecard struct {
 	// Misconnected is the passengers who missed a connection onto one of
 	// the carrier's departures because their inbound flight was late.
 	Misconnected int `json:"misconnected"`
+	// Ancillary is what the carrier's passengers bought beside the seat,
+	// in cents: bags, seats, and what they took on board. Extras is the
+	// same by service. For every carrier but an ultra-low-cost one it is
+	// part of Revenue on top of the fares. An ultra-low-cost carrier's
+	// ticket price stands for the fare and the extras together, so there
+	// it is a part of the fares already counted.
+	Ancillary int64            `json:"ancillary"`
+	Extras    map[string]int64 `json:"extras,omitempty"`
 	// Denied is the passengers with a confirmed booking who came for a
 	// flight and were denied boarding, and Volunteers those of them who
 	// gave up the seat for the carrier's offer.

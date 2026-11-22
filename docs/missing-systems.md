@@ -126,7 +126,11 @@ sets each cabin's limit by the cost-based model of Belobaba's lecture.
 Departure control makes a booked passenger at a full cabin wait for a
 seat, asks for volunteers, and denies boarding to the rest. It does not
 report those passengers as no-shows. Cancellations before departure and
-a no-show forecast by passenger are still missing. A carrier that holds its
+a no-show forecast by passenger are still missing. Each carrier sells
+extras from its own price list (jetway v0.1.107, `pkg/ancillary`): bags,
+seats, the internet, food and drinks, counted at the door for the
+passengers who flew. No document is issued for a sale, and the fee is
+not in the price that a traveller compares. A carrier that holds its
 last seats for its own channels values a request by the channel that
 asked (`inventory.Controller.Value`). A sale on the carrier's own site
 is made on the carrier's own node (jetway v0.1.100).

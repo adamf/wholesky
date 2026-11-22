@@ -2,6 +2,7 @@ package fill
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/equipment"
+	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/host"
 	"github.com/adamf/wholesky/internal/rm"
 	"github.com/adamf/wholesky/internal/tariff"
@@ -171,6 +173,7 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 	if level < 0.97 || level > 1.03 {
 		t.Errorf("travellers paid %.3f of the report's fare: move tariff's mixRatio by that much", level)
 	}
+	extrasAgainstTheReports(t, plan)
 	of := func(model equipment.Model) float64 { b := got.byModel[model]; return b[0] / b[1] }
 	t.Logf("network %.3f, low-cost %.3f, ultra-low-cost %.3f of the line", of(equipment.Network), of(equipment.LowCost), of(equipment.UltraLowCost))
 	if !(of(equipment.Network) > of(equipment.LowCost) && of(equipment.LowCost) > of(equipment.UltraLowCost)) {
@@ -234,5 +237,119 @@ func TestFillSellsTheReportsFares(t *testing.T) {
 			t.Errorf("%s's sales moved when %s changed its fares, and the fill has no rival's share in it", c, big)
 			break
 		}
+	}
+}
+
+// extrasAgainstTheReports holds what the filled day's passengers buy
+// beside the seat against what the real carriers report.
+func extrasAgainstTheReports(t *testing.T, plan Plan) {
+	t.Helper()
+	type sum struct {
+		fares, extras           float64
+		by                      map[string]float64
+		boarded, bags, paidBags float64
+	}
+	add := func(into *sum, p Plan) {
+		if into.by == nil {
+			into.by = map[string]float64{}
+		}
+		into.fares += float64(p.Fares)
+		into.extras += float64(p.Extras)
+		into.boarded += float64(p.Boarded)
+		into.bags += float64(p.Bags)
+		into.paidBags += float64(p.PaidBags)
+		for k, v := range p.ExtrasBy {
+			into.by[k] += float64(v)
+		}
+	}
+	groups := map[string]*sum{}
+	for carrier, p := range plan.By {
+		name := map[equipment.Model]string{equipment.Network: "network", equipment.LowCost: "low-cost", equipment.UltraLowCost: "ultra-low-cost"}[equipment.ModelOf(carrier)]
+		for _, g := range []string{name, carrier, "all"} {
+			if groups[g] == nil {
+				groups[g] = &sum{}
+			}
+			add(groups[g], p)
+		}
+	}
+	var names []string
+	for g := range groups {
+		names = append(names, g)
+	}
+	sort.Strings(names)
+	for _, g := range names {
+		x := groups[g]
+		if x.boarded == 0 {
+			continue
+		}
+		seats := x.by[extras.Seat] + x.by[extras.Legroom]
+		board := x.by[extras.Internet] + x.by[extras.Snack] + x.by[extras.Drink] + x.by[extras.Soft] + x.by[extras.Comfort]
+		t.Logf("  extras %-15s $%6.2f a passenger, %.3f of fares; bags %.3f of fares, %.2f of bags pay; seats %.2f of bags; cabin bags $%.2f, on board $%.2f, internet $%.3f",
+			g, x.extras/100/x.boarded, x.extras/x.fares, x.by[extras.Bag]/x.fares, x.paidBags/math.Max(x.bags, 1), seats/math.Max(x.by[extras.Bag], 1),
+			x.by[extras.CarryOn]/100/x.boarded, board/100/x.boarded, x.by[extras.Internet]/100/x.boarded)
+	}
+	each := func(g, code string) float64 {
+		if groups[g] == nil || groups[g].boarded == 0 {
+			t.Fatalf("no %s in the world", g)
+		}
+		return groups[g].by[code] / 100 / groups[g].boarded
+	}
+	net := groups["network"]
+	// At American in 2018, 45 % of checked bags paid a fee (the Senate
+	// subcommittee's report, 2024).
+	if paid := net.paidBags / net.bags; paid < 0.40 || paid > 0.50 {
+		t.Errorf("%.2f of a network carrier's checked bags pay a fee: the report has 0.45", paid)
+	}
+	// United States carriers took 7.3 billion dollars in baggage fees
+	// against 185.3 billion in fares in 2024: 3.9 % (BTS).
+	if share := net.by[extras.Bag] / net.fares; share < 0.030 || share > 0.050 {
+		t.Errorf("a network carrier's bag fees are %.3f of its fares: the carriers report 0.039", share)
+	}
+	// In 2023 United took 1.3 billion dollars in seat fees and 1.2 in bag
+	// fees. The 5 carriers of the Senate report took 3 billion in seat
+	// fees, about two thirds of their bag fees.
+	if r := (net.by[extras.Seat] + net.by[extras.Legroom]) / net.by[extras.Bag]; r < 0.6 || r > 1.2 {
+		t.Errorf("a network carrier's seat fees are %.2f of its bag fees: the reports have 0.65 to 1.1", r)
+	}
+	if share := net.extras / net.fares; share < 0.06 || share > 0.11 {
+		t.Errorf("a network carrier's extras are %.3f of its fares", share)
+	}
+	// Spirit took 68.57 dollars beside the fare from each passenger on
+	// each flight in 2023, and Frontier about 70 in 2024.
+	if ulcc := groups["ultra-low-cost"]; ulcc.extras/100/ulcc.boarded < 60 || ulcc.extras/100/ulcc.boarded > 80 {
+		t.Errorf("an ultra-low-cost passenger buys $%.2f of extras: Spirit and Frontier report 69 and 70", ulcc.extras/100/ulcc.boarded)
+	}
+	// The carriers differ. JetBlue gives the internet to every passenger
+	// and sells a blanket. United sells the internet to the passenger
+	// who is not a member. Southwest sells no food. Frontier has no
+	// internet, and sells water and a place for a bag in the cabin.
+	if each("B6", extras.Internet) != 0 || each("B6", extras.Comfort) <= 0 {
+		t.Errorf("JetBlue: $%.3f of internet and $%.3f of blankets a passenger; want none and some", each("B6", extras.Internet), each("B6", extras.Comfort))
+	}
+	if v := each("UA", extras.Internet); v <= 0 || v > 0.60 {
+		t.Errorf("United: $%.3f of internet a passenger; want a little, from the passengers who are not members", v)
+	}
+	if each("UA", extras.Comfort) != 0 || each("UA", extras.CarryOn) != 0 {
+		t.Error("United sold a blanket or a place for a bag in the cabin")
+	}
+	if each("WN", extras.Snack) != 0 || each("WN", extras.Drink) <= 0 {
+		t.Errorf("Southwest: $%.3f of food and $%.3f of drinks a passenger; want none and some", each("WN", extras.Snack), each("WN", extras.Drink))
+	}
+	if each("F9", extras.Internet) != 0 || each("F9", extras.Soft) <= 0 || each("F9", extras.CarryOn) < 15 {
+		t.Errorf("Frontier: $%.3f of internet, $%.3f of soft drinks, $%.2f of cabin bags a passenger", each("F9", extras.Internet), each("F9", extras.Soft), each("F9", extras.CarryOn))
+	}
+	// Every sale is on a carrier's own list: nothing is sold that the
+	// list does not have, and the parts add up.
+	var parts int64
+	for _, v := range plan.ExtrasBy {
+		parts += v
+	}
+	if parts != plan.Extras || plan.Extras <= 0 {
+		t.Errorf("the extras by service add up to %d and the total is %d", parts, plan.Extras)
+	}
+	// The menu is put to the passengers who come, and to nobody who
+	// stays away.
+	if plan.Shoppers != plan.Sold-plan.NoShows {
+		t.Errorf("the menu was put to %d passengers; %d booked and %d did not come", plan.Shoppers, plan.Sold, plan.NoShows)
 	}
 }

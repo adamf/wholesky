@@ -696,6 +696,31 @@ func TestGroundStoryFromNameListToLoadsheet(t *testing.T) {
 		if !strings.Contains(string(bsm.Raw), ".N/0") || !strings.Contains(string(bsm.Raw), f.From+"KB"+c.Designator) {
 			t.Errorf("the BSM carries no licence plate or went to the wrong desk:\n%s", bsm.Raw)
 		}
+		// Every passenger with bags has a BSM of their own, and the
+		// sortation system must have heard them all before it reports:
+		// in the timetable that is an hour later, here it is a moment.
+		tagged := 0
+		for _, p := range fl.Passengers {
+			if len(p.Bags) > 0 {
+				tagged++
+			}
+		}
+		for wait := time.Now().Add(20 * time.Second); ; {
+			heard := 0
+			msgs, _ := tn.Store.ListMessages(ctx, store.MessageFilter{Limit: 10000})
+			for _, msg := range msgs {
+				if strings.HasPrefix(msg.Kind, "BSM/") && msg.Direction == store.Inbound {
+					heard++
+				}
+			}
+			if heard >= tagged {
+				break
+			}
+			if time.Now().After(wait) {
+				t.Fatalf("sortation heard %d of %d bag messages", heard, tagged)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 	if err := tn.CloseCheckIn(ctx, f, day); err != nil {
 		t.Fatalf("CloseCheckIn: %v", err)
