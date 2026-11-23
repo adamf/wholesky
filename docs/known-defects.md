@@ -134,6 +134,12 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
   passes while the process is down is skipped. The selling date of a
   synthetic world is the moment of start plus 30 days, with its hour.
   Reported.
+- **The first minute of a day has the books of the day before.** At
+  midnight the new day's bookings are written, and that takes about 1
+  minute of real time. Until it is done, the inventory holds the sold
+  counts of the day before under the limits of the new day. The
+  invariants check then reported 1 cabin as sold 1 past its limit, on 1
+  flown day of 2. Traced once.
 - **A seat's answer is applied after its moment.** A seat asked about a
   crew answers in real time. At a warp of 60 the cancellation has been
   announced before the answer comes, and the answer still revives the
