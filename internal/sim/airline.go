@@ -442,12 +442,18 @@ func (s *Sim) deniedCost(denied []host.Denied) int64 {
 // the law covering the flight gives, by the fare of the class booked and
 // by the wait for the carrier's next flight over the same pair, later
 // that day or the next morning.
+//
+// The fare is that of one direction: 14 CFR 250.5 counts by the fare to
+// the passenger's destination or first stopover. A class sold only as a
+// round trip has a fare for each half, and that half is the fare. Looked
+// up among the one-way fares alone, such a class gave $0: its volunteers
+// were offered nothing, and a passenger turned away had a meal.
 func (s *Sim) owedDenied(d host.Denied) int64 {
 	f := d.Flight
 	var fare int64
 	if s.tariff != nil {
 		for _, x := range s.tariff.Fares(f.Carrier, f.From, f.To) {
-			if x.Class == d.Class && !x.RoundTrip && len(x.Rule.Sale.Accounts) == 0 && x.OneWay.Amount > fare {
+			if x.Class == d.Class && len(x.Rule.Sale.Accounts) == 0 && x.OneWay.Amount > fare {
 				fare = x.OneWay.Amount
 			}
 		}

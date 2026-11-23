@@ -471,7 +471,12 @@ func staysAway(h int, class string) bool {
 const volunteerShare = 0.04
 
 // volunteers says whether a seated passenger takes the carrier's offer.
+// An infant on a lap is not asked: it has no seat to give up. Asked like
+// the others, 1 infant in 25 became a volunteer and was paid as one.
 func volunteers(p *dcs.Passenger, f world.Flight) bool {
+	if p.Type == dcs.PaxInfant {
+		return false
+	}
 	h := hashOf(p.Party + fmt.Sprint(p.ID) + f.Number + "offer")
 	return (float64((h/7)%1000)+0.5)/1000 < volunteerShare
 }
@@ -493,6 +498,11 @@ func (t *Tenant) Denied() []Denied {
 }
 
 func (t *Tenant) noteDenied(f world.Flight, p *dcs.Passenger) {
+	if p.Type == dcs.PaxInfant {
+		// An infant on a lap held no seat. It does not fly when its adult
+		// does not, and nothing is owed to it.
+		return
+	}
 	t.missedMu.Lock()
 	t.denied = append(t.denied, Denied{Flight: f, Class: p.Class, Voluntary: p.Volunteer, Cause: p.Oversale})
 	t.missedMu.Unlock()
@@ -777,7 +787,10 @@ func extrasOf(leg world.Flight, fl *dcs.Flight, intl bool) (sold map[string]int6
 	}
 	sold, units = map[string]int64{}, map[string]int{}
 	for _, p := range fl.Passengers {
-		if p.Status != dcs.StatusBoarded {
+		// An infant on a lap buys nothing: it has no seat to choose and
+		// no fare of its own. The figures for extras are fitted on a day
+		// that is sold by the seat.
+		if p.Status != dcs.StatusBoarded || p.Type == dcs.PaxInfant {
 			continue
 		}
 		cabin := p.Compartment
@@ -965,6 +978,12 @@ func (t *Tenant) solicit(ctx context.Context, f world.Flight, key dcs.Key, fl *d
 		t.noteDenied(f, v.Volunteer)
 		if err := t.announceBags(ctx, v.Flight, v.Volunteer, "DEL"); err != nil && firstErr == nil {
 			firstErr = err
+		}
+		// An infant on the volunteer's lap came off with them.
+		for _, in := range v.With {
+			if err := t.announceBags(ctx, v.Flight, in, "DEL"); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 		if v.Seated != nil {
 			waiting--
@@ -1211,7 +1230,7 @@ func (t *Tenant) SendClosure(ctx context.Context, cl *dcs.Closure) error {
 	t.groundMu.Lock()
 	t.boarded[legKey(fl.Key)] = cl.Counts.Boarded
 	if t.carried != nil && whole {
-		t.carried[fl.Flight+"/"+fl.Date+"/"+fl.Board] = cl.Counts.Boarded
+		t.carried[fl.Flight+"/"+fl.Date+"/"+fl.Board] = inSeats(fl)
 	}
 	t.groundMu.Unlock()
 
@@ -1304,8 +1323,21 @@ func (t *Tenant) listedAll(leg world.Flight, fl *dcs.Flight, tally map[string]dc
 	return 10*listed >= 9*sold
 }
 
-// Carried is the passengers a departure left with, as its door counted
-// them. ok is false for a flight departure control has not closed, and
+// inSeats is the passengers who flew in seats. An infant on a lap is on
+// board and is in the door's count, and is not a passenger carried for a
+// fare: the seats sold and the load factor do not have it.
+func inSeats(fl *dcs.Flight) int {
+	n := 0
+	for _, p := range fl.Passengers {
+		if p.Status == dcs.StatusBoarded && p.Type != dcs.PaxInfant {
+			n++
+		}
+	}
+	return n
+}
+
+// Carried is the passengers a departure left with in seats, as its door
+// counted them. ok is false for a flight departure control has not closed, and
 // for one it closed without the whole list or without a counter. The
 // count is kept until the day ends, after the flight has landed and its
 // departure control record is gone.

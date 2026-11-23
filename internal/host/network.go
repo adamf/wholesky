@@ -216,7 +216,16 @@ func (t *Tenant) solveNetwork(ctx context.Context) error {
 			for _, n := range sold {
 				total += n
 			}
-			capacity[l] = float64(max(li.seats-total, 0))
+			// The cabin's room is the bookings it may still take. Where
+			// the carrier overbooks, that is more than the seats left.
+			// Counted by its seats, a cabin that had sold them all had no
+			// room in the programme, which then priced it at the dearest
+			// fare on the leg while the carrier still wanted to sell it.
+			limit := li.seats
+			if t.Inventory.Authorized != nil {
+				limit = max(limit, t.Inventory.Authorized(li.f.Carrier, li.f.Number, wire, li.f.From, "Y", li.seats))
+			}
+			capacity[l] = float64(max(limit-total, 0))
 			full := tariff.FullFare(t.tariff, li.f.Carrier, li.f.From, li.f.To)
 			local := tariff.PickupPriced("Y", li.seats, sold, li.remaining, full)
 			if t.learned != nil {

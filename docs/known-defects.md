@@ -9,8 +9,9 @@ The first part lists what was fixed. The second part lists what is open.
 An open item is marked **reported**: a reviewing session traced it in the
 code, and nobody has reproduced it yet. Each fixed item was read in the
 code a second time before the fix, and has a test that fails without it.
-3 of the fixed items are faults in the first fixes. The repository's
-owner found them on reading those fixes.
+The repository's owner found the faults in 6 of the fixed items on
+reading the work: 3 in the first fixes of this review, and 3 in the
+overbooking and the extras.
 
 The counts of flights are from the 2 bundled worlds: `world.json` has
 103,688 flights and `thanksgiving.json` has 22,889.
@@ -87,6 +88,26 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
   each name of a party. A full cabin then had no seat for its last
   passenger, who was denied boarding on a flight that was not oversold.
   About 3 % of filled records have an infant. Fixed in jetway v0.1.108.
+- **An overbooked cabin was full when its seats were sold.** The
+  programme that prices the last seat of each leg counted seats, and not
+  the bookings the cabin may hold. A cabin with room for more bookings
+  had none in the programme, which priced it at the dearest fare on the
+  leg. A connecting passenger had to pay more than that fare for a seat
+  that the carrier wanted to sell. The programme now counts the bookings
+  the cabin may hold.
+- **An infant on a lap was a volunteer, a denied boarding and a
+  customer.** The carrier asked each accepted passenger to give up a
+  seat, so 1 infant in 25 at an oversold flight took the offer and was
+  paid. An infant whose adult was turned away was counted and paid as a
+  denied boarding. An infant bought seats, cabin bags and drinks. An
+  infant is now asked nothing, is paid nothing and buys nothing. It
+  comes off with its adult, and it is not in the counts of seats or of
+  passengers carried. Fixed in jetway v0.1.109 and here.
+- **A class sold only as a round trip paid no compensation.** The fare
+  for a denied boarding was looked up among the one-way fares. A class
+  with none gave $0. A volunteer in it was offered nothing, and a
+  passenger turned away was owed a meal. The fare is now that of 1
+  direction of the round trip.
 - **Ticket stock codes did not name the carrier.** The seats sold before
   the day were ticketed on codes from 1 sum and the day's sales on codes
   from another, and 2 carriers could share a code. Settlement and
@@ -163,6 +184,13 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
 
 ## Open: selling
 
+- **An infant booked on the day is not known to the airport.** A
+  booking request can mark a passenger as an infant, and the mark does
+  not reach the carrier. The airport then gives the infant a seat. An
+  agent's own service request for the infant names no passenger, and
+  the airport takes each name of the party for an infant. The day's own
+  sales book no infants, so only a booking made by hand meets this.
+  Traced with a test.
 - **A codeshare seat is confirmed before the operator answers.** The
   marketing carrier sells from its own count, and the operator's refusal
   is never read. Reported.

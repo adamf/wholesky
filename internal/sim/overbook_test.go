@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/adamf/jetway/pkg/dcs"
+	"github.com/adamf/jetway/pkg/pnr"
 
 	"github.com/adamf/wholesky/internal/extras"
 	"github.com/adamf/wholesky/internal/host"
@@ -446,3 +447,196 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 		t.Errorf("the record of who came took a flight closed on a third of its bookings: %d departures", got)
 	}
 }
+
+// A passenger denied boarding is paid by the fare of one direction, also
+// in a class that is sold only as a round trip. 14 CFR 250.5 counts by
+// "the fare to the passenger's destination or first stopover". For a
+// round trip that is the half that was being flown, which is what a
+// round-trip fare's amount is here: 1 fare component.
+//
+// The fare was once looked up among the one-way fares alone. A class
+// with none gave $0, so a volunteer in it was offered nothing, and a
+// passenger turned away was owed a meal and no compensation.
+func TestADeniedBoardingOnARoundTripFareIsPaidByItsHalf(t *testing.T) {
+	m := &world.Manifest{
+		Airports: []world.Airport{
+			{IATA: "JFK", Country: "United States", Lat: 40.64, Lon: -73.78, TZ: "America/New_York"},
+			{IATA: "LHR", Country: "United Kingdom", Lat: 51.47, Lon: -0.45, TZ: "Europe/London"},
+		},
+		Carriers: []world.Carrier{{Designator: "AA", Country: "United States", Hub: "JFK"}},
+		Flights: []world.Flight{
+			{Carrier: "AA", Number: "0100", From: "JFK", To: "LHR", DepMin: 1080, ArrMin: 1500, KM: 5540},
+			{Carrier: "AA", Number: "0102", From: "JFK", To: "LHR", DepMin: 1260, ArrMin: 1680, KM: 5540},
+		},
+	}
+	s := &Sim{tariff: tariff.FromManifest(m), Flights: map[string][]world.Flight{"AA": m.Flights},
+		carriers: map[string]world.Carrier{"AA": m.Carriers[0]},
+		airports: map[string]world.Airport{"JFK": m.Airports[0], "LHR": m.Airports[1]}}
+	f := m.Flights[0]
+
+	// A class with a round-trip fare and no one-way fare, and one sold
+	// one way.
+	oneWay, half := map[string]int64{}, map[string]int64{}
+	for _, x := range s.tariff.Fares("AA", "JFK", "LHR") {
+		if len(x.Rule.Sale.Accounts) > 0 {
+			continue
+		}
+		if x.RoundTrip {
+			half[x.Class] = max(half[x.Class], x.OneWay.Amount)
+		} else {
+			oneWay[x.Class] = max(oneWay[x.Class], x.OneWay.Amount)
+		}
+	}
+	var class string
+	for c, amount := range half {
+		if oneWay[c] == 0 && amount > 0 && 2*amount < 107500 && (class == "" || c < class) {
+			class = c
+		}
+	}
+	if class == "" || oneWay["Y"] == 0 {
+		t.Fatalf("no class of AA JFK-LHR is sold only as a round trip under the limit, or Y has no one-way fare: round trip %v, one way %v", half, oneWay)
+	}
+
+	// A volunteer has the carrier's offer: twice the fare of the half.
+	if got, want := s.owedDenied(host.Denied{Flight: f, Class: class, Voluntary: true}), 2*half[class]; got != want {
+		t.Errorf("a volunteer in class %s, sold only as a round trip at %d a direction, is offered %d; want %d", class, half[class], got, want)
+	}
+	// A passenger turned away, with the next flight 3 hours later: twice
+	// the fare, and a meal.
+	law := rights.DeniedBoarding(rights.Bumped{Regime: rights.US, KM: f.KM, Outbound: true, Fare: half[class], Wait: 180})
+	if law.Compensation != 2*half[class] || law.Care == 0 {
+		t.Fatalf("the law gives %+v for a fare of %d and 3 hours; the test wants twice the fare and a meal", law, half[class])
+	}
+	if got := s.owedDenied(host.Denied{Flight: f, Class: class, Cause: dcs.OversaleSold}); got != law.Compensation+law.Care {
+		t.Errorf("a passenger turned away in class %s is owed %d; want %d of compensation and %d of care", class, got, law.Compensation, law.Care)
+	}
+	// A class sold one way is paid by its one-way fare, as before.
+	if got, want := s.owedDenied(host.Denied{Flight: f, Class: "Y", Voluntary: true}), min(2*oneWay["Y"], 107500); got != want {
+		t.Errorf("a volunteer in Y at %d is offered %d; want %d", oneWay["Y"], got, want)
+	}
+}
+
+// Families with an infant on a lap, from the booking to the count of
+// who flew. 6 parties of 2 adults and an infant book 2 seats each. The
+// airport lists 18 names, 6 of them infants, and seats the 12 adults.
+// The door counts everyone on board. The carrier counts the passengers
+// it carried in seats, and revenue management's count of the cabin has
+// the 12 bookings: an infant is in neither. Nobody is denied boarding.
+func TestAnInfantOnALapFromBookingToTheCount(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	m := smallWorld(t)
+	s, err := Boot(ctx, m, Options{GDSCount: 1, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	var f world.Flight
+	for _, c := range m.Carriers {
+		for _, g := range s.Flights[c.Designator] {
+			if cabins := host.Cabins(g, s.capacity); len(cabins) == 1 && g.Marketing == "" && g.DepMin > 8*60 && g.DepMin < 20*60 && cabins["Y"] >= 60 && f.Number == "" {
+				f = g
+			}
+		}
+	}
+	if f.Number == "" {
+		t.Fatal("no flight with one cabin")
+	}
+	tn, day := s.Tenants[f.Carrier], s.BookingDate
+	wire := strings.ToUpper(day.Format("02Jan"))
+	s.clock.Sync(time.Now(), float64(f.DepMin-200), s.clock.Warp())
+	// The records are in the carrier's book as the day's fill writes
+	// them: 3 names, 2 seats, and the infant named in a service request.
+	for i := 0; i < 6; i++ {
+		surname := fmt.Sprintf("FAMILY%c", 'A'+i)
+		rec := &pnr.PNR{RecordLocator: fmt.Sprintf("FAM%c%02d", 'A'+i, i), Status: pnr.StatusTicketed,
+			Passengers: []pnr.Passenger{
+				{Ref: 1, Surname: surname, Given: "PA", Title: "MR", Type: pnr.PaxAdult},
+				{Ref: 2, Surname: surname, Given: "MA", Title: "MRS", Type: pnr.PaxAdult},
+				{Ref: 3, Surname: surname, Given: "BABY", Title: "INF", Type: pnr.PaxInfant, Infant: true}},
+			Segments: []pnr.Segment{{Ref: 1, Type: pnr.SegmentAir, Carrier: f.Carrier, FlightNum: f.Number, Class: "Y", Depart: day, WireDate: wire,
+				DepartTime: hhmmDigits(f.DepMin), Board: f.From, Off: f.To, Status: "HK", Seats: 2}},
+			SSRs: []pnr.SSR{{Code: "INFT", Carrier: f.Carrier, Status: "HK", Count: 1, PaxRef: 3, Text: surname + "/BABY"}},
+		}
+		if err := tn.Store.CreatePNR(ctx, rec, nil); err != nil {
+			t.Fatal(err)
+		}
+		tn.Inventory.Seed(rec.Segments[0])
+	}
+	sold := 0
+	for _, n := range tn.Inventory.SoldByClass(f.Carrier, f.Number, wire, f.From, "Y") {
+		sold += n
+	}
+	if sold != 12 {
+		t.Fatalf("6 parties of 2 adults and an infant hold %d seats; want 12", sold)
+	}
+
+	key := dcs.Key{Flight: f.Carrier + f.Number, Date: wire, Board: f.From}
+	if err := tn.SendPNL(ctx, f, day); err != nil {
+		t.Fatal(err)
+	}
+	for wait := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if fl, err := tn.DCS.Flight(key); err == nil && fl.Counts().Listed == 18 {
+			break
+		}
+		if time.Now().After(wait) {
+			fl, err := tn.DCS.Flight(key)
+			if err != nil {
+				t.Fatalf("departure control never opened the flight: %v", err)
+			}
+			t.Fatalf("departure control lists %d names; want 18", fl.Counts().Listed)
+		}
+	}
+	for _, out := range []int{150, 120, 90, 60, 46} {
+		if err := tn.CheckIn(ctx, f, day, out); err != nil {
+			t.Fatalf("CheckIn at %d: %v", out, err)
+		}
+	}
+	if err := tn.CloseCheckIn(ctx, f, day); err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []int{30, 20, 14} {
+		if err := tn.Board(ctx, f, day, out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tn.Close(ctx, f, day); err != nil {
+		t.Fatal(err)
+	}
+	fl, err := tn.DCS.Flight(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infants, onLaps, seated := 0, 0, 0
+	for _, p := range fl.Passengers {
+		if p.Type == dcs.PaxInfant {
+			infants++
+			if p.Seat != "" {
+				t.Errorf("the infant %s has seat %s", p.Display(), p.Seat)
+			}
+			if p.Status == dcs.StatusBoarded {
+				onLaps++
+			}
+		} else if p.Status == dcs.StatusBoarded {
+			seated++
+		}
+	}
+	c := fl.Counts()
+	if infants != 6 || onLaps == 0 || c.Boarded != seated+onLaps {
+		t.Fatalf("the airport has %d infants, %d of them on board, and the door counts %d on board with %d in seats; want 6 infants, some on board", infants, onLaps, c.Boarded, seated)
+	}
+	if n, ok := tn.Carried(f, day); !ok || n != seated {
+		t.Errorf("the carrier counts %d carried (%v); want the %d passengers in seats, and not the %d infants on laps", n, ok, seated, onLaps)
+	}
+	y := fl.Tally()["Y"]
+	if y.Booked != 12 || y.Boarded != seated {
+		t.Errorf("revenue management's count of the cabin: %+v; want 12 booked and %d boarded", y, seated)
+	}
+	if c.Denied != 0 || len(tn.Denied()) != 0 {
+		t.Errorf("%d denied boarding at the door and %d on the carrier's list; want none", c.Denied, len(tn.Denied()))
+	}
+	t.Logf("%s%s: 18 names, %d infants; %d on board, %d of them in seats", f.Carrier, f.Number, infants, c.Boarded, seated)
+}
+
+// hhmmDigits is a minute of the day as a record's segment has it: 0730.
+func hhmmDigits(minute int) string { return fmt.Sprintf("%02d%02d", minute/60%24, minute%60) }

@@ -289,3 +289,66 @@ func TestExtrasAreSoldToThePassengersWhoFlew(t *testing.T) {
 		t.Errorf("bags that came off the aircraft paid %d cents", sold[extras.Bag])
 	}
 }
+
+// An infant on a lap buys nothing beside the seat, and is not asked to
+// give up a seat. 200 adults fly, each with an infant on the lap. They
+// buy what the same 200 adults buy with no infants. The carrier's
+// figures for extras are fitted on a day sold by the seat, and an infant
+// has none. Of 2,000 infants at a full cabin none takes the carrier's
+// offer, and 1 adult in 25 does.
+func TestALapInfantBuysNothingAndGivesUpNoSeat(t *testing.T) {
+	leg := world.Flight{Carrier: "F9", Number: "0100", From: "DEN", To: "LAS", KM: 1000, DepMin: 600, ArrMin: 720}
+	flight := func(infants bool) *dcs.Flight {
+		fl := &dcs.Flight{Key: dcs.Key{Flight: "F90100", Date: "26NOV", Board: "DEN"}}
+		for i := 0; i < 200; i++ {
+			party := fmt.Sprintf("P%03d", i)
+			fl.Passengers = append(fl.Passengers, &dcs.Passenger{ID: i + 1, Surname: fmt.Sprintf("PAX%03d", i), Given: "AMR", Party: party,
+				Class: "Q", Compartment: "Y", Status: dcs.StatusBoarded, Seat: "10A", Bags: []dcs.Bag{{Tag: "1", Weight: 20}}})
+			if infants {
+				fl.Passengers = append(fl.Passengers, &dcs.Passenger{ID: 1000 + i, Surname: fmt.Sprintf("PAX%03d", i), Given: "BABYINF", Party: party,
+					Type: dcs.PaxInfant, Class: "Q", Compartment: "Y", Status: dcs.StatusBoarded})
+			}
+		}
+		return fl
+	}
+	alone, aloneUnits := extrasOf(leg, flight(false), false)
+	with, withUnits := extrasOf(leg, flight(true), false)
+	if len(alone) == 0 || aloneUnits[extras.Seat] == 0 {
+		t.Fatalf("200 adults bought %v", aloneUnits)
+	}
+	for code, cents := range with {
+		if cents != alone[code] || withUnits[code] != aloneUnits[code] {
+			t.Errorf("%s: 200 adults with infants on their laps bought %d for %d cents, and the same adults alone %d for %d cents",
+				code, withUnits[code], cents, aloneUnits[code], alone[code])
+		}
+	}
+
+	asked := func(typ dcs.PassengerType) int {
+		n := 0
+		for i := 0; i < 2000; i++ {
+			p := &dcs.Passenger{ID: i + 1, Surname: fmt.Sprintf("PAX%04d", i), Given: "A", Party: fmt.Sprintf("P%04d", i), Type: typ,
+				Class: "Q", Status: dcs.StatusAccepted}
+			if volunteers(p, leg) {
+				n++
+			}
+		}
+		return n
+	}
+	// The carrier counts the passengers it carried in seats, and pays a
+	// denied boarding to a passenger who held one.
+	if n := inSeats(flight(true)); n != 200 {
+		t.Errorf("200 adults with infants on their laps are %d passengers in seats; want 200", n)
+	}
+	tn := &Tenant{}
+	tn.noteDenied(leg, &dcs.Passenger{ID: 1, Surname: "PAX", Given: "BABYINF", Type: dcs.PaxInfant, Class: "Q"})
+	tn.noteDenied(leg, &dcs.Passenger{ID: 2, Surname: "PAX", Given: "AMR", Class: "Q"})
+	if got := tn.Denied(); len(got) != 1 {
+		t.Errorf("an adult and the infant on his lap did not fly, and the carrier has %d denied boardings to pay; want 1", len(got))
+	}
+	if n := asked(dcs.PaxInfant); n != 0 {
+		t.Errorf("%d of 2,000 infants on laps took the offer to give up a seat they do not have", n)
+	}
+	if n := asked(dcs.PaxAdult); n < 50 || n > 110 {
+		t.Errorf("%d of 2,000 adults took the offer; want about 80, 1 in 25", n)
+	}
+}

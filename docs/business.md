@@ -241,7 +241,8 @@ booking dates.
 Each carrier's inventory nests its booking classes. An EMSR-b controller
 sets the class limits from a forecast of demand by class. For a
 connecting request the controller compares the fare with the bid prices
-of the legs.
+of the legs. A leg's room is the bookings its cabin may still take,
+which is more than the seats left where the carrier overbooks.
 
 ### The forecast
 
@@ -370,8 +371,13 @@ is a denied boarding.
   in 2018. At the door, a passenger who still has no seat is denied
   boarding. The final sales message reports that passenger as denied
   boarding and not as a no-show.
+- **An infant on a lap** holds no seat. It is not asked to give one up,
+  it is not a denied boarding, and it is in none of the counts of the
+  cabin. It comes off with its adult.
 - **The cost.** A volunteer gets twice the fare, to a limit of $1,075.
-  That offer is an estimate. A passenger turned away at a US airport
+  That offer is an estimate. The fare is that of 1 direction. For a
+  class that is sold only as a round trip, it is the half that was being
+  flown. A passenger turned away at a US airport
   gets what 14 CFR 250.5 gives. On a domestic flight that is nothing
   when the next flight arrives within 1 hour of the plan. It is twice
   the fare within 2 hours, to a limit of $1,075, and 4 times the fare
@@ -524,7 +530,8 @@ The airport counts the extras when a flight's door closes, for the
 passengers who flew. A cancelled flight therefore sells nothing. A
 passenger who did not come or who was denied boarding buys nothing,
 which is what 14 CFR 260.4 requires for a service that was not provided.
-A party pays for its bags once, where its journey begins.
+A party pays for its bags once, where its journey begins. An infant on a
+lap buys nothing.
 
 The scorecard has the total as `ancillary` and the parts by service. For
 most carriers the extras are revenue on top of the fares, because the
