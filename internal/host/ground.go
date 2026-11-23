@@ -192,8 +192,19 @@ func (t *Tenant) startGround(accountingCode string) {
 	t.sortation = map[string]map[string]bool{}
 	t.boarded = map[string]int{}
 	t.carried = map[string]int{}
-	t.cancelled = map[string]string{}
+	t.cancelled = map[string]cancelMark{}
 	t.Gateway.Ground = t
+}
+
+// cancelMark is a cancellation the airport has heard: why, and which
+// departure, so that the day's end can give the flight back. past says
+// that the hour the flight would have landed has gone: the airport has
+// let the departure go, and the flight is still closed for sale.
+type cancelMark struct {
+	reason string
+	f      world.Flight
+	day    time.Time
+	past   bool
 }
 
 // CancelFlight is the airport hearing that a flight will not fly: departure
@@ -203,7 +214,7 @@ func (t *Tenant) startGround(accountingCode string) {
 func (t *Tenant) CancelFlight(ctx context.Context, f world.Flight, day time.Time, reason string) error {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
-	t.cancelled[legKey(key)] = reason
+	t.cancelled[legKey(key)] = cancelMark{reason: reason, f: f, day: day}
 	t.groundMu.Unlock()
 	// A cancelled flight is closed for sale at once. Left open, the
 	// carrier went on confirming seats on it until its counter would have
@@ -231,8 +242,8 @@ func (t *Tenant) isCancelled(f world.Flight, day time.Time) bool {
 	key := flightKey(f, day)
 	t.groundMu.Lock()
 	defer t.groundMu.Unlock()
-	_, ok := t.cancelled[legKey(key)]
-	return ok
+	m, ok := t.cancelled[legKey(key)]
+	return ok && !m.past
 }
 
 // NameList implements gateway.Ground: reservations' PNL or ADL arriving at
@@ -548,16 +559,33 @@ func (t *Tenant) Missed() []Missed {
 // NewDay starts the counts that are a day's over: the bag office's
 // files, the missed connections and the denied boardings. The day that ended has been closed
 // into the carrier's book with them.
+//
+// A cancellation is a day's too. The flight that was cancelled is let
+// go, and the next day's flight of the same number is for sale again and
+// is the new day's plan's to fly or to cancel. The world flies the same
+// date each day, so the 2 flights have the same key, and a cancellation
+// that outlived its day closed the next day's flight with no check-in.
 func (t *Tenant) NewDay() {
 	t.groundMu.Lock()
 	t.tracing = Tracing{}
 	t.carried = map[string]int{}
 	t.extras, t.extraUnits = map[string]int64{}, map[string]int{}
+	lifted := t.cancelled
+	t.cancelled = map[string]cancelMark{}
 	t.groundMu.Unlock()
 	t.missedMu.Lock()
 	t.missed = map[string]Missed{}
 	t.denied = nil
 	t.missedMu.Unlock()
+	for _, m := range lifted {
+		if !m.past {
+			// Still held at midnight: a flight that would have landed
+			// after it. One let go earlier has nothing left here, and
+			// what is under its key now is the next flight's.
+			t.Forget(context.Background(), m.f, m.day)
+		}
+		t.sales(m.f, m.day, "")
+	}
 }
 
 // inboundFor picks one of the carrier's arrivals into f.From that a
@@ -1305,12 +1333,17 @@ func (t *Tenant) boardedFor(f world.Flight, day time.Time) int {
 
 // Forget releases a flight's departure control record after it has landed.
 //
-// Everything the carrier holds about this departure goes with it: that it
-// was cancelled, retimed or flown by a smaller aircraft, and its door
-// count. The world flies the same date again tomorrow, so the next
-// departure of the flight has the same key, and what is left here would
-// be taken for its own. A flight retimed once was never retimed again,
-// and a smaller aircraft stayed on the flight for good.
+// What the carrier holds about this departure goes with it: that it was
+// retimed or flown by a smaller aircraft, and its door count. The world
+// flies the same date again tomorrow, so the next departure of the flight
+// has the same key, and what is left here would be taken for its own. A
+// flight retimed once was never retimed again, and a smaller aircraft
+// stayed on the flight for good.
+//
+// A cancellation does not go with it. The flight that lands in the
+// morning left yesterday, and a cancellation under its key is today's:
+// the landing once took it, and today's cancelled flight went back on
+// sale. A cancellation ends with its day, in NewDay.
 //
 // A flight number that flies several legs has each leg's state under its
 // own boarding point, so that one leg cancelled or landed does not cancel
@@ -1322,15 +1355,28 @@ func (t *Tenant) Forget(ctx context.Context, f world.Flight, day time.Time) {
 	t.groundMu.Lock()
 	delete(t.boarded, legKey(key))
 	delete(t.sortation, key.Flight+"/"+key.Date)
-	delete(t.cancelled, legKey(key))
 	delete(t.retimed, key)
 	delete(t.substituted, key)
 	t.groundMu.Unlock()
 	if t.overrides != nil {
 		t.overrides.clear(f.Carrier, f.Number, f.From)
 	}
-	// Tomorrow's flight of this number is for sale again.
-	t.sales(f, day, "")
+}
+
+// ForgetCancelled releases a cancelled flight at the hour it would have
+// landed: its departure control record, and the airport's note that it
+// will not fly. A flight in the first hours of a day has its name list
+// sent the evening before, and that note would stop the list of the next
+// day's flight. The flight stays closed for sale until the day ends.
+func (t *Tenant) ForgetCancelled(ctx context.Context, f world.Flight, day time.Time) {
+	t.Forget(ctx, f, day)
+	k := legKey(flightKey(f, day))
+	t.groundMu.Lock()
+	if m, ok := t.cancelled[k]; ok {
+		m.past = true
+		t.cancelled[k] = m
+	}
+	t.groundMu.Unlock()
 }
 
 // sales forces the answer every class of a flight gives a request, or

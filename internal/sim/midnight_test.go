@@ -19,12 +19,19 @@ import (
 // 01:00, on time in the day's plan, and returns it.
 func lateFlight(t *testing.T, s *Sim, code string, depDelay int) world.Flight {
 	t.Helper()
+	return flightAt(t, s, code, 23*60, depDelay)
+}
+
+// flightAt makes one of a carrier's flights leave at a minute of the day
+// and land 2 hours later, with a delay in the day's plan, and returns it.
+func flightAt(t *testing.T, s *Sim, code string, depMin, depDelay int) world.Flight {
+	t.Helper()
 	fs := s.Flights[code]
 	if len(fs) == 0 {
 		t.Fatalf("%s has no flights", code)
 	}
 	f := &fs[0]
-	f.DepMin, f.ArrMin, f.BlockMin = 23*60, 25*60, 120
+	f.DepMin, f.ArrMin, f.BlockMin = depMin, depMin+120, 120
 	s.fate.Update(*f, func(pf *dayplan.Flight) {
 		pf.Cancelled, pf.Reason, pf.Code = false, "", ""
 		pf.DepDelay, pf.ArrDelay, pf.CTOT = depDelay, depDelay, 0

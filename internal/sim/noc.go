@@ -968,18 +968,43 @@ func (s *Sim) newDay() {
 		s.econ.day.Add(1)
 		s.saveState()
 	}
-	if s.Workforce != nil && s.fate != nil {
-		s.Workforce.NextDay()
+	s.turn.Lock()
+	if s.fate != nil {
+		// The plan is worked out again with or without a crew model. A
+		// world with none kept yesterday's plan, so a flight that a
+		// closed airport or a seat had cancelled stayed cancelled on
+		// every later day.
+		if s.Workforce != nil {
+			s.Workforce.NextDay()
+		}
 		s.fate.Rebuild(s.Manifest, delayFor)
-		_, _, sum := s.fate.Picture()
-		s.log.Info("new day staffed", "duties", sum.Duties, "reserves", sum.Reserves, "crew cancellations", sum.TimedOut)
+		if s.Workforce != nil {
+			_, _, sum := s.fate.Picture()
+			s.log.Info("new day staffed", "duties", sum.Duties, "reserves", sum.Reserves, "crew cancellations", sum.TimedOut)
+		}
 	}
 	// The ground's counts are a day's: the bag office's files and the
-	// missed connections were closed into the books with the day.
+	// missed connections were closed into the books with the day. So are
+	// the cancellations: each carrier lets yesterday's go.
 	for _, t := range s.Tenants {
 		t.NewDay()
 	}
 	s.announced.Clear()
+	s.turn.Unlock()
+	// An airport that is still closed cancels the new day's flights as it
+	// cancelled yesterday's. The new plan has them flying, and the day's
+	// loop passes over a flight at a closed airport: left alone they were
+	// neither flown nor cancelled.
+	s.closedMu.Lock()
+	var shut []string
+	for iata := range s.closed {
+		shut = append(shut, iata)
+	}
+	s.closedMu.Unlock()
+	sort.Strings(shut)
+	for _, iata := range shut {
+		go s.cancelFlightsTouching(iata)
+	}
 	s.noc.mu.Lock()
 	s.noc.asked = map[string]bool{}
 	s.noc.events = nil

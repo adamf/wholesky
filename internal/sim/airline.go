@@ -789,7 +789,20 @@ func (s *Sim) readyForImprovement(ctx context.Context, t *host.Tenant, f world.F
 // ASM CNL to distribution (and the marketing carrier's for a codeshare),
 // the airport's departure control told, the flight plan withdrawn. Once
 // per departure however many times the day asks.
+//
+// A cancellation is announced whole within one day, and only while the
+// day's plan holds it. The day's end waits for an announcement that is
+// on its way. One that starts after midnight finds the new day's plan,
+// and says nothing unless that plan cancels the flight too. Without
+// this, an announcement begun in the last minute of a day could mark the
+// flight cancelled at the airport after the day's cancellations had been
+// let go, and the mark then stood all the next day.
 func (s *Sim) announceCancellation(ctx context.Context, t *host.Tenant, f world.Flight, day time.Time, reason string) {
+	s.turn.RLock()
+	defer s.turn.RUnlock()
+	if s.fate != nil && !s.fate.Of(f).Cancelled {
+		return
+	}
 	if _, done := s.announced.LoadOrStore(dayplan.Key(f), true); done {
 		return
 	}

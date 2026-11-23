@@ -22,9 +22,9 @@ import (
 // flight has the same key.
 //
 //   - A cancelled flight is closed for sale at once, and no traveller is
-//     offered it. When the departure is forgotten, at the hour it would
-//     have landed, tomorrow's flight is for sale again and is not
-//     cancelled.
+//     offered it. At the hour it would have landed the airport lets the
+//     departure go. The flight stays closed for sale until the day ends,
+//     and tomorrow's flight is for sale again and is not cancelled.
 //   - A flight number that flies 2 legs: cancelling one leg does not
 //     cancel the other.
 //   - A flight retimed today can be retimed again tomorrow, and a smaller
@@ -89,9 +89,32 @@ func TestADeparturesStateIsItsOwn(t *testing.T) {
 	if open(h) != avail.Open || tn.Cancelled(h, day) {
 		t.Error("another flight was closed or cancelled with it")
 	}
-	// The hour it would have landed: the departure is forgotten.
-	sky := s.aloftAt(day, f.ArrMin-1)
-	s.flyFlights(ctx, day, f.ArrMin-1, f.ArrMin, sky)
+	// The hour it would have landed: the airport lets the departure go.
+	// The flight is still closed for sale, because the day sells 1 date
+	// and this is still that day.
+	dep, arr := s.flightDelays(f, day)
+	sky := s.aloftAt(day, f.DepMin+dep-1)
+	s.flyFlights(ctx, day, f.DepMin+dep-1, f.ArrMin+arr-1, sky)
+	if !tn.Cancelled(f, day) {
+		t.Error("the airport let the cancelled flight go before the hour it would have landed")
+	}
+	s.flyFlights(ctx, day, f.ArrMin+arr-1, f.ArrMin+arr, sky)
+	if tn.Cancelled(f, day) {
+		t.Error("the airport still has the cancelled flight after the hour it would have landed")
+	}
+	// A world that starts between the 2 hours knows the flight is to be
+	// let go, and when.
+	if x := s.aloftAt(day, f.DepMin+dep+1).gone[dayplan.Key(f)]; x == nil || x.due != f.ArrMin+arr {
+		t.Errorf("a world that starts after the cancelled flight's time has it as %+v; want let go at minute %d", x, f.ArrMin+arr)
+	}
+	if x := s.aloftAt(day, f.DepMin+dep-1).gone[dayplan.Key(f)]; x != nil {
+		t.Error("a world that starts before the cancelled flight's time already has it past")
+	}
+	if got := open(f); got != avail.Closed {
+		t.Errorf("after the hour it would have landed, the cancelled flight is %v for sale; want closed until the day ends", got)
+	}
+	// The day ends.
+	tn.NewDay()
 	if tn.Cancelled(f, day) {
 		t.Error("tomorrow's flight is cancelled by today's cancellation")
 	}

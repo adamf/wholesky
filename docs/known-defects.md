@@ -9,6 +9,8 @@ The first part lists what was fixed. The second part lists what is open.
 An open item is marked **reported**: a reviewing session traced it in the
 code, and nobody has reproduced it yet. Each fixed item was read in the
 code a second time before the fix, and has a test that fails without it.
+3 of the fixed items are faults in the first fixes. The repository's
+owner found them on reading those fixes.
 
 The counts of flights are from the 2 bundled worlds: `world.json` has
 103,688 flights and `thanksgiving.json` has 22,889.
@@ -47,6 +49,26 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
   it until its counter would have closed, and travellers were offered
   it. A cancellation now closes every class, and the flight is for sale
   again the next day.
+- **A cancellation did not end with its day.** A cancellation ended at
+  the hour the flight would have landed, taken as a minute of the day.
+  For a flight due in after midnight, that minute came before the
+  cancellation and never after it. At a closed airport it was passed
+  over. The flight stayed cancelled and closed for sale all the next
+  day, with no check-in. A cancellation and its stop-sell now end at
+  midnight. An announcement that is on its way at midnight goes out
+  first, and one that starts after midnight reads the new day's plan.
+- **A landing reopened a cancelled flight.** A flight that lands in the
+  morning left the day before. Its landing took today's cancellation of
+  the same number with it, and today's flight went back on sale. A
+  landing now releases only the departure that landed.
+- **A closure's cancellations stood on later days, or on none.** A world
+  with no crew model kept the plan of the day before. A flight that a
+  closure or a seat cancelled stayed cancelled each day after. An
+  airport still closed at midnight left the new day's flights neither
+  flown nor cancelled. The plan is now worked out again each day, and a
+  closed airport cancels each day's flights. A flight that comes due at
+  a closed airport before its cancellation has gone out is cancelled at
+  that minute.
 - **Reprotection offered flights that could not be boarded.** The
   alternatives for a stranded passenger included flights that the day
   had cancelled, flights at a closed airport and flights that had left.
@@ -152,6 +174,11 @@ The counts of flights are from the 2 bundled worlds: `world.json` has
 - **A new service can take another service's flight numbers** at a later
   restart, and with them its booking record. Reported.
 - **The pricing desks forget their open fights at a restart.** Reported.
+- **A cut that is taken back is read as a fare increase.** A carrier
+  cuts a fare, no rival answers, and the carrier goes back. The desks
+  record the going back as the lead of an increase. The carrier's next
+  cut in that market is read as that increase withdrawn, and no rival
+  answers it. Traced in a test that failed 1 run in 10.
 
 ## Open: money
 

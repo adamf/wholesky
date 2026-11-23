@@ -130,7 +130,7 @@ type Tenant struct {
 	sortation    map[string]map[string]bool // flight/date -> tags the sortation system holds
 	boarded      map[string]int             // flight/date -> boarded count at close
 	arrivals     map[dcs.Kind]int
-	cancelled    map[string]string // flight/date -> why it will not fly
+	cancelled    map[string]cancelMark // flight/date/board -> the day's cancellation
 	flightsByNum map[string]world.Flight
 	// marketed are the legs this carrier sells but does not fly, by
 	// marketing number and boarding point.

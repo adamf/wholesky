@@ -85,7 +85,14 @@ func TestAnOversoldFlightFromBookingToScorecard(t *testing.T) {
 	}
 	before, _, _ := cab.ShowRate(seats)
 
-	// Sell to the limit, and try 1 more.
+	// Sell to the limit, and try 1 more. The cabin is sold in the last
+	// minutes of its selling window. Earlier in the day the carrier holds
+	// its last seats back from a distribution system, for a sale of its
+	// own that pays no booking fee, and lets them go as the flight's time
+	// comes. The world's clock is the wall clock: with it left alone,
+	// this test sold 1 to 5 seats short in the hours before the flight's
+	// time, and passed after it.
+	s.clock.Sync(time.Now(), float64(max(f.DepMin-46, 0)), s.clock.Warp())
 	var locs []string
 	for i := 0; i < limit+1; i++ {
 		res, err := s.Book(ctx, f, "Y", 0, fmt.Sprintf("OVER%c%c", 'A'+i/26, 'A'+i%26))

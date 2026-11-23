@@ -140,17 +140,19 @@ func TestRivalsAnswerAFareChange(t *testing.T) {
 	if err := s.Airline.SetManual(mv.Carrier, token, "pricing", true); err != nil {
 		t.Fatal(err)
 	}
+	// A desk lets 1 cut in 10 or in 20 go. The cutter then cuts a little
+	// deeper, and the desk reads that as a new cut. The test once took
+	// the cut back and cut again. The desk read the taking back as the
+	// lead of a fare increase and the next cut as that increase
+	// withdrawn, so after 1 cut let go it answered none of the next 19,
+	// and the test failed 1 run in 10.
 	var asked []airline.Decision
-	for try := 0; try < 20 && len(asked) == 0; try++ {
-		w.Act(ctx, cutter, airline.Action{Kind: "fares", From: a, To: b, Multiplier: 0.8}) //nolint:errcheck
+	for try := 0; try < 6 && len(asked) == 0; try++ {
+		w.Act(ctx, cutter, airline.Action{Kind: "fares", From: a, To: b, Multiplier: 0.8 - 0.02*float64(try)}) //nolint:errcheck
 		proposals := file()
 		for wait := time.Now().Add(2 * time.Second); len(asked) == 0 && len(proposals) > 0 && time.Now().Before(wait); {
 			time.Sleep(20 * time.Millisecond)
 			asked = s.Airline.Inbox(mv.Carrier)
-		}
-		if len(asked) == 0 {
-			w.Act(ctx, cutter, airline.Action{Kind: "fares", From: a, To: b, Multiplier: 1}) //nolint:errcheck
-			file()
 		}
 	}
 	if len(asked) == 0 {
